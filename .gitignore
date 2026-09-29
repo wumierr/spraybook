@@ -10,11 +10,14 @@ desktop.ini
 *.swo
 *~
 
-# Node（如果未来引入构建工具）
+# Node
 node_modules/
 npm-debug.log*
 yarn-error.log*
-package-lock.json
+
+# 运行数据（SQLite 数据库与备份，绝不进 git）
+data/
+backups/
 
 # Android Studio / Gradle 构建产物
 # APK 输出
