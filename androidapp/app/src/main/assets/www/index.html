@@ -54,7 +54,7 @@
     <div class="header-left">
       <span class="app-logo" aria-hidden="true">🚁</span>
       <h1><span class="t-full">无人机作业计算器</span><span class="t-short">打药计算器</span></h1>
-      <span class="app-version">v4.5</span>
+      <span class="app-version">v4.7</span>
     </div>
     <div class="header-actions">
       <button id="presetBtn" class="icon-btn" title="预设管理" aria-label="预设管理">📚</button>
@@ -439,8 +439,10 @@
       <div id="woRefill" class="wo-refill" style="display:none;"></div>
       <div id="woSettlement" class="wo-settlement"><!-- farmer settlement injected --></div>
       <div id="workOrderQuick" class="wo-plot-list"><!-- 农户/逐地块/备注 JS 注入 --></div>
+      <div id="syncStatusRow" class="wo-sync-row hint" hidden></div>
       <div class="modal-actions">
         <button class="btn btn-secondary" id="copyWorkOrder">📋 复制纯文本工单</button>
+        <button class="btn btn-secondary" id="syncWorkOrder">☁️ 同步到账本</button>
         <button class="btn btn-primary" data-close>完成</button>
       </div>
     </div>
@@ -483,6 +485,7 @@
   <script src="js/data.js"></script>
   <script src="js/calculator.js"></script>
   <script src="js/storage.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/app.js"></script>
 
