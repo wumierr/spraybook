@@ -22,7 +22,7 @@ const EXPECTED_TABLES = [
   // 复式记账
   'accounts', 'journal_entries', 'journal_lines',
   // 审计/导入
-  'edit_logs', 'import_batches', 'raw_import_rows'
+  'edit_logs', 'import_batches', 'raw_import_rows', 'settings'
 ];
 
 test('001+seed 建齐五层 24 表（另 schema_migrations）', () => {
@@ -32,7 +32,7 @@ test('001+seed 建齐五层 24 表（另 schema_migrations）', () => {
   for (const t of EXPECTED_TABLES) {
     assert.ok(rows.includes(t), `缺表: ${t}`);
   }
-  assert.strictEqual(rows.length, EXPECTED_TABLES.length + 1, '应恰好 24 业务表 + schema_migrations');
+  assert.strictEqual(rows.length, EXPECTED_TABLES.length + 1, '应恰好 25 业务表 + schema_migrations');
 });
 
 test('foreign_key_check 无孤儿（外键显式且开启）', () => {

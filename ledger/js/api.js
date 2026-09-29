@@ -59,7 +59,13 @@
     importRowPatch: (id, b) => Api.patch('/api/import/rows/' + id, b),
     importApply: (id) => Api.post('/api/import/batches/' + id + '/apply', {}),
     importRecon: (id) => Api.get('/api/import/batches/' + id + '/reconciliation'),
-    importOpening: (b) => Api.post('/api/import/opening', b)
+    importOpening: (b) => Api.post('/api/import/opening', b),
+    // M7 主数据
+    masterList: (t) => Api.get('/api/master/' + t),
+    masterCreate: (t, b) => Api.post('/api/' + t, b),
+    masterPatch: (t, id, b) => Api.patch('/api/' + t + '/' + id, b),
+    settings: () => Api.get('/api/settings'),
+    saveSettings: (b) => Api.put('/api/settings', b)
   };
 
   if (typeof window !== 'undefined') window.LedgerApi = Api;
