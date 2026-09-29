@@ -1,5 +1,4 @@
 @echo off
 chcp 65001 >nul 2>&1
-title Drone Spray Calculator - Open
-cd /d "%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\serve.ps1" open
+start "" http://127.0.0.1:8080/ledger/
+start "" http://127.0.0.1:8080/

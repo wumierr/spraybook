@@ -71,6 +71,12 @@
 - `PATCH /:id`、`POST /:id/void`（作废=反向分录，不删记录）——receipts/payments/advances 均支持
 - `POST /api/splits` manual_splits 手工分成登记
 
+## 3. 数据库字段补充（003 迁移）
+
+- `parties.village TEXT` / `parties.team TEXT`：客户地址**村名与队伍名分开存**（例：彰冠红拉12队 → village=彰冠红拉, team=12；通安金桂村 → village=通安金桂村, team=null）。业务键唯一索引 = (name, phone, village, team)。
+- `jobs.referral_name TEXT`：业务来源（拉单人）快照，提成/分成依据。
+- `receipts.collector_name TEXT`：收款经手人快照。
+
 ## 4. 复式记账
 
 `GET /api/journal?from=&to=&ref_type=&ref_id=` → journal_entries + lines（借/贷分列、附科目名）；每条 entry 服务层断言 `SUM(debit)=SUM(credit)`。

@@ -85,9 +85,18 @@ if (require.main === module) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const db = initDb(DB_FILE);
   const app = buildApp(db);
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[spraybook] listening on http://0.0.0.0:${PORT}`);
     console.log(`[spraybook] 计算器: http://<本机IP>:${PORT}/  记账后台: http://<本机IP>:${PORT}/ledger/  API: /api/health`);
+  });
+  server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+      console.error(`[spraybook] 端口 ${PORT} 已被占用——服务可能已在运行。`);
+      console.error(`[spraybook] 直接打开 http://127.0.0.1:${PORT}/ledger/ ，或先运行 3-停止服务.bat`);
+    } else {
+      console.error('[spraybook] 启动失败:', err.message);
+    }
+    process.exit(1);
   });
 }
 

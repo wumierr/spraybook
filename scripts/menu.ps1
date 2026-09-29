@@ -23,11 +23,11 @@ function Show-Menu {
     }
     Write-Host ''
     Write-Host '   ── 本地 ──────────────────────────────────────────────' -ForegroundColor DarkCyan
-    Write-Host '    1  启动服务并打开网页'
+    Write-Host '    1  启动服务并打开网页（计算器 + 记账后台）'
     Write-Host '    2  只打开网页'
     Write-Host '    3  停止服务'
     Write-Host '    4  查看服务状态'
-    Write-Host '    5  启动服务（局域网可访问，手机同 WiFi 能打开）'
+    Write-Host '    5  重新生成单文件离线版 standalone'
     Write-Host ''
     Write-Host '   ── 发布 ──────────────────────────────────────────────' -ForegroundColor DarkCyan
     Write-Host '    6  推送到 GitHub（本地优先）'
@@ -56,11 +56,15 @@ while ($true) {
     Show-Menu
     $choice = Read-Host '   请选择'
     switch ($choice.Trim().ToUpper()) {
-        '1' { Invoke-Script 'serve.ps1' @('start') }
-        '2' { Invoke-Script 'serve.ps1' @('open') }
-        '3' { Invoke-Script 'serve.ps1' @('stop') }
-        '4' { Invoke-Script 'serve.ps1' @('status') }
-        '5' { Invoke-Script 'serve.ps1' @('start', '-Lan') }
+        '1' { & cmd /c "`"$ProjectRoot\1-启动服务并打开网页.bat`"" }
+        '2' { & cmd /c "`"$ProjectRoot\2-打开网页.bat`"" }
+        '3' { & cmd /c "`"$ProjectRoot\3-停止服务.bat`"" }
+        '4' {
+            $l = netstat -aon | Select-String ':8080\s.*LISTENING'
+            if ($l) { Write-Host '   spraybook 服务运行中 (PID ' ($l -split '\s+')[-1] ')' -ForegroundColor Green }
+            else { Write-Host '   spraybook 服务未运行' -ForegroundColor DarkGray }
+        }
+        '5' { & node (Join-Path $PSScriptRoot 'build-standalone.js') }
         '6' {
             $msg = Read-Host '   提交说明（直接回车用默认）'
             if ($msg.Trim()) { Invoke-Script 'push-github.ps1' @('-Message', $msg) }
