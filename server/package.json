@@ -1,0 +1,16 @@
+{
+  "name": "spraybook-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "spraybook 一体化后端：Express API + better-sqlite3，同时托管计算器（根）与记账后台（/ledger）",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "db:reset": "node db/reset.js",
+    "test": "node --test ../tests/server/"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2"
+  }
+}
