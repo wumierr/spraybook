@@ -374,6 +374,81 @@
     </div>`;
   }
 
+  /* ---------- 页签：导入（M8） ---------- */
+  const importState = { batchId: null, rows: [] };
+
+  function renderImport() {
+    return `<div class="lg-panel">
+      <h2>上传历史 Excel（.xlsx，月度记账表格式）</h2>
+      <div class="lg-form">
+        <label>文件<input type="file" id="impFile" accept=".xlsx"></label>
+        <span class="hint" style="color:var(--muted);font-size:12px">解析后先复核再落库；同文件重复上传会被拒绝</span>
+      </div>
+      <div id="impStats"></div>
+    </div>
+    <div class="lg-panel">
+      <h2>批次</h2>
+      <table class="lg-table"><thead><tr><th>批次</th><th>文件</th><th>状态</th><th>导入时间</th><th>操作</th></tr></thead>
+      <tbody id="impBatches"><tr><td colspan="5">加载中…</td></tr></tbody></table>
+    </div>
+    <div class="lg-panel" id="impRowsPanel" style="display:none">
+      <h2>行级复核（确认后才能落库；建议对照纸表/原 Excel）</h2>
+      <div style="margin-bottom:8px">
+        <button class="lg-btn" data-act="imp-filter" data-st="">全部</button>
+        <button class="lg-btn" data-act="imp-filter" data-st="pending">待复核</button>
+        <button class="lg-btn primary" data-act="imp-confirm-all">确认全部待复核</button>
+        <button class="lg-btn primary" data-act="imp-apply">落库已确认行</button>
+        <button class="lg-btn" data-act="imp-recon">对账报告</button>
+      </div>
+      <div id="impRecon"></div>
+      <table class="lg-table"><thead><tr>
+        <th>sheet/行</th><th>类型</th><th>姓名</th><th>村/队</th><th>日期</th><th>应收</th><th>实收</th><th>复核提示</th><th>操作</th>
+      </tr></thead><tbody id="impRows"><tr><td colspan="9">—</td></tr></tbody></table>
+    </div>`;
+  }
+
+  async function loadImportBatches() {
+    const batches = await Api.importBatches();
+    const tb = document.getElementById('impBatches');
+    tb.innerHTML = batches.map(b => `<tr>
+      <td>#${b.id}</td><td>${esc(b.filename)}</td>
+      <td>${b.status === 'applied' ? tag('已落库') : b.status === 'reviewing' ? tag('待确认', 'warn') : tag(b.status)}</td>
+      <td>${(b.imported_at || '').slice(0, 16).replace('T', ' ')}</td>
+      <td><button class="lg-btn" data-act="imp-open" data-id="${b.id}">打开复核</button></td>
+    </tr>`).join('') || '<tr><td colspan="5">暂无批次</td></tr>';
+    if (batches.length && !importState.batchId) {
+      importState.batchId = batches[0].id;
+      await loadImportRows(batches[0].id);
+    }
+  }
+
+  async function loadImportRows(batchId, status) {
+    importState.batchId = batchId;
+    document.getElementById('impRowsPanel').style.display = '';
+    importState.rows = await Api.importRows(batchId, status);
+    const rows = importState.rows.map(r => {
+      const p = r.parsed || {};
+      const isJob = p.kind === 'job';
+      const pp = p.parsed || {};
+      return `<tr>
+        <td>${esc(r.sheet_name)} / ${r.row_no}</td>
+        <td>${isJob ? '作业' : '支出'}</td>
+        <td>${esc(pp.name || pp.category_raw || '—')}</td>
+        <td>${esc(pp.village || '')}${pp.team ? '/' + esc(pp.team) + '队' : ''}</td>
+        <td>${esc(pp.date || '—')}</td>
+        <td class="num">${isJob ? Core.fmtYuan(pp.receivable_cents) : '—'}</td>
+        <td class="num">${isJob ? Core.fmtYuan(pp.paid_cents) : Core.fmtYuan(pp.amount_cents)}</td>
+        <td>${(p.needs_review || []).length ? tag(p.needs_review.map(n => n.code).join(','), 'warn') : tag('OK')}</td>
+        <td>${r.status === 'confirmed' ? tag('已确认') : r.status === 'rejected' ? tag('已拒绝', 'err') : actions(
+          `<button class="lg-btn primary" data-act="imp-row-confirm" data-id="${r.id}">确认</button>`,
+          `<button class="lg-btn danger" data-act="imp-row-reject" data-id="${r.id}">拒绝</button>`
+        )}</td>
+      </tr>` +
+      ((p.needs_review || []).length ? `<tr><td colspan="9" class="lg-detail">${esc(r.raw_text)}</td></tr>` : '');
+    }).join('');
+    document.getElementById('impRows').innerHTML = rows || '<tr><td colspan="9">无行</td></tr>';
+  }
+
   /* ---------- 渲染调度 ---------- */
   const state = { tab: 'jobs', _advances: [] };
 
@@ -400,6 +475,9 @@
       $main.innerHTML = renderSplits(await Api.splits());
     } else if (tab === 'journal') {
       $main.innerHTML = renderJournal(await Api.journal());
+    } else if (tab === 'import') {
+      $main.innerHTML = renderImport();
+      await loadImportBatches();
     }
     refreshSummary();
   }
@@ -589,6 +667,58 @@
       }
       case 'adv-void':
         confirmThen(`作废预收/预支 ${btn.dataset.no}？`, () => Api.voidFinance('advances', id));
+        break;
+      case 'imp-upload': {
+        const f = document.getElementById('impFile').files[0];
+        if (!f) return toast('先选 .xlsx 文件', true);
+        const rd = new FileReader();
+        rd.onload = () => {
+          const b64 = rd.result.split(',')[1];
+          run(async () => {
+            const d = await Api.importParse(f.name, b64);
+            importState.batchId = d.batch_id;
+            document.getElementById('impStats').innerHTML =
+              `<div class="lg-detail">批次 #${d.batch_id}：作业 ${d.stats.jobs} / 支出 ${d.stats.expenses} / 跳过 ${d.stats.skipped} / <b>需复核 ${d.review_count}</b>。原始列合计：应收 ${Core.fmtYuan(Math.round(d.raw_totals.receivable * 100))} · 实收 ${Core.fmtYuan(Math.round(d.raw_totals.paid * 100))} · 支出 ${Core.fmtYuan(Math.round(d.raw_totals.expense * 100))}</div>`;
+            await loadImportBatches();
+            await loadImportRows(d.batchId);
+            return d;
+          }, '解析完成，请复核');
+        };
+        rd.readAsDataURL(f);
+        break;
+      }
+      case 'imp-open':
+        importState.batchId = Number(btn.dataset.id);
+        document.getElementById('impRowsPanel').style.display = '';
+        loadImportRows(importState.batchId);
+        break;
+      case 'imp-filter':
+        loadImportRows(importState.batchId, btn.dataset.st || undefined);
+        break;
+      case 'imp-row-confirm':
+        run(() => Api.importRowPatch(Number(btn.dataset.id), { action: 'confirm' })).then(() => loadImportRows(importState.batchId));
+        break;
+      case 'imp-row-reject':
+        run(() => Api.importRowPatch(Number(btn.dataset.id), { action: 'reject' })).then(() => loadImportRows(importState.batchId));
+        break;
+      case 'imp-confirm-all':
+        confirmThen('确认全部待复核行？（对照清单后再点）', async () => {
+          const rows = await Api.importRows(importState.batchId, 'pending');
+          for (const r of rows) await Api.importRowPatch(r.id, { action: 'confirm' });
+          return rows.length;
+        }).then(n => { if (n) { toast('已确认 ' + n + ' 行'); loadImportRows(importState.batchId); } });
+        break;
+      case 'imp-apply':
+        confirmThen('落库已确认行到正式账本？（不可自动撤销，作废需逐笔处理）', () => Api.importApply(importState.batchId))
+          .then(r => { if (r) { toast('落库完成 ' + JSON.stringify(r)); loadImportRows(importState.batchId); loadImportBatches(); } });
+        break;
+      case 'imp-recon':
+        run(async () => Api.importRecon(importState.batchId)).then(rec => {
+          if (rec) {
+            document.getElementById('impRecon').innerHTML =
+              `<div class="lg-detail ${rec.balanced ? 'lg-balance' : ''}">对账：作业 ${rec.staged.jobs} / 支出 ${rec.staged.expenses}；应收 diff ${Core.fmtYuan(rec.diff.receivable_cents)} · 实收 diff ${Core.fmtYuan(rec.diff.paid_cents)} · 支出 diff ${Core.fmtYuan(rec.diff.expense_cents)} —— ${rec.balanced ? '✓ 全部对平' : '✗ 有差异'}</div>`;
+          }
+        });
         break;
       case 'sp-save': {
         const amount = Core.yuanInputToCents(document.getElementById('spAmount').value);
