@@ -22,6 +22,12 @@ function getActive(db, table, id) {
 
 /* ---------------- 收款 ---------------- */
 
+/**
+ * 收款（M6 双模式）：
+ *  - 挂单笔：bill_id 给定 → 核销该账单（兼容 P0），可带 from_advance_id 预收抵扣
+ *  - 按客户：bill_id 空、party_id 给定 → 对该客户全部未清账单按最早顺序 FIFO
+ *    自动核销（分摊明细写 receipts.allocations），剩余金额自动生成客户预收 advance
+ */
 function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_at, note, from_advance_id }) {
   if (!party_id) throw new ApiError('VALIDATION', 'party_id 必填');
   if (!Number.isInteger(amount_cents) || amount_cents <= 0) {
@@ -30,6 +36,9 @@ function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_a
   const bill = bill_id ? getActive(db, 'bills', bill_id) : null;
   if (bill) {
     if (bill.status === 'void') throw new ApiError('INVALID_STATE', '账单已作废，不可收款');
+    if (bill.party_id && party_id !== bill.party_id) {
+      throw new ApiError('VALIDATION', 'party_id 与账单客户不一致');
+    }
     const payable = bill.amount_cents + bill.adjust_cents;
     if (bill.paid_cents + amount_cents > payable) {
       throw new ApiError('VALIDATION',
@@ -45,54 +54,82 @@ function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_a
     if (advance.balance_cents < amount_cents) {
       throw new ApiError('VALIDATION', `预收余额 ${advance.balance_cents} 分不足抵扣 ${amount_cents} 分`);
     }
+    if (!bill) throw new ApiError('VALIDATION', '预收抵扣必须指定 bill_id（按客户收款走现金模式）');
   }
+
   const now = nowISO();
   const tx = db.transaction(() => {
     const receipt_no = nextBizNo(db, 'receipts', 'receipt_no', 'R');
-    const info = db.prepare(
-      `INSERT INTO receipts (receipt_no, bill_id, party_id, from_advance_id, amount_cents, method, occurred_at, note, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`)
-      .run(receipt_no, bill_id || null, party_id, from_advance_id || null, amount_cents,
-        method || 'cash', occurred_at || now, note || null, now, now);
-    const rid = info.lastInsertRowid;
+    const cashCode = method === 'wechat' ? '1002' : method === 'alipay' ? '1003' : method === 'bank' ? '1004' : '1001';
+    const journalLines = [];
+    let allocations = null;
+    let remainderAdvanceId = null;
 
-    // 账单回写：paid_cents / status
     if (bill) {
+      // ---- 模式1：挂单笔 ----
       const paid = bill.paid_cents + amount_cents;
       const payable = bill.amount_cents + bill.adjust_cents;
-      const status = paid >= payable ? 'paid' : 'partial';
       db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
-        .run(paid, status, now, bill.id);
-    }
-    // 预收抵扣：扣余额 + 流水
-    if (advance) {
-      const balance = advance.balance_cents - amount_cents;
-      db.prepare('UPDATE advances SET balance_cents = ?, status = ?, updated_at = ? WHERE id = ?')
-        .run(balance, balance <= 0 ? 'closed' : 'partial', now, advance.id);
-      db.prepare(
-        `INSERT INTO advance_usages (advance_id, amount_cents, ref_type, ref_id, occurred_at, note, status, created_at)
-         VALUES (?, ?, 'receipt', ?, ?, ?, 'active', ?)`)
-        .run(advance.id, amount_cents, rid, occurred_at || now, '预收抵扣 ' + receipt_no, now);
-    }
-    // 分录：钱进来（现金/微信等）借，应收贷；纯预收抵扣（无现金流）→ 借 1123 预收
-    const cashCode = method === 'wechat' ? '1002' : method === 'alipay' ? '1003' : method === 'bank' ? '1004' : '1001';
-    const lines = [];
-    if (advance) {
-      lines.push({ account_code: '1123', direction: 'debit', amount_cents, party_id, memo: '预收抵扣 ' + receipt_no });
+        .run(paid, paid >= payable ? 'paid' : 'partial', now, bill.id);
+      if (advance) {
+        const balance = advance.balance_cents - amount_cents;
+        db.prepare('UPDATE advances SET balance_cents = ?, status = ?, updated_at = ? WHERE id = ?')
+          .run(balance, balance <= 0 ? 'closed' : 'partial', now, advance.id);
+        db.prepare(
+          `INSERT INTO advance_usages (advance_id, amount_cents, ref_type, ref_id, occurred_at, note, status, created_at)
+           VALUES (?, ?, 'receipt', ?, ?, ?, 'active', ?)`)
+          .run(advance.id, amount_cents, receipt_no, occurred_at || now, '预收抵扣 ' + receipt_no, now);
+        journalLines.push({ account_code: '1123', direction: 'debit', amount_cents, party_id, memo: '预收抵扣 ' + receipt_no });
+      } else {
+        journalLines.push({ account_code: cashCode, direction: 'debit', amount_cents, party_id, memo: '收款 ' + receipt_no });
+      }
+      journalLines.push({ account_code: '1122', direction: 'credit', amount_cents, party_id, memo: '核销应收 ' + bill.bill_no });
     } else {
-      lines.push({ account_code: cashCode, direction: 'debit', amount_cents, party_id, memo: '收款 ' + receipt_no });
+      // ---- 模式2：按客户 FIFO 核销全部未清账单，余额转预收 ----
+      const openBills = db.prepare(
+        `SELECT * FROM bills WHERE party_id = ? AND status IN ('unpaid','partial') ORDER BY id`).all(party_id);
+      let remaining = amount_cents;
+      allocations = [];
+      for (const b of openBills) {
+        if (remaining <= 0) break;
+        const unpaid = (b.amount_cents + b.adjust_cents) - b.paid_cents;
+        if (unpaid <= 0) continue;
+        const use = Math.min(unpaid, remaining);
+        remaining -= use;
+        allocations.push({ bill_id: b.id, bill_no: b.bill_no, amount_cents: use });
+        const paid = b.paid_cents + use;
+        db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
+          .run(paid, paid >= b.amount_cents + b.adjust_cents ? 'paid' : 'partial', now, b.id);
+        journalLines.push({ account_code: '1122', direction: 'credit', amount_cents: use, party_id, memo: '核销应收 ' + b.bill_no });
+      }
+      journalLines.push({ account_code: cashCode, direction: 'debit', amount_cents, party_id, memo: '收款 ' + receipt_no });
+      if (remaining > 0) {
+        const advance_no = nextBizNo(db, 'advances', 'advance_no', 'A');
+        const info = db.prepare(
+          `INSERT INTO advances (advance_no, party_id, direction, amount_cents, balance_cents, occurred_at, note, status, opening, created_at, updated_at)
+           VALUES (?, ?, 'prepaid_by_customer', ?, ?, ?, ?, 'open', 0, ?, ?)`)
+          .run(advance_no, party_id, remaining, remaining, occurred_at || now, '收款余额转预收 ' + receipt_no, now, now);
+        remainderAdvanceId = info.lastInsertRowid;
+        journalLines.push({ account_code: '1123', direction: 'credit', amount_cents: remaining, party_id, memo: '余额转预收 ' + advance_no });
+      }
     }
-    if (bill) {
-      lines.push({ account_code: '1122', direction: 'credit', amount_cents, party_id, memo: '核销应收 ' + bill.bill_no });
-    } else {
-      // 无账单收款 = 新增客户预收（直接进预收账款贷方）
-      lines.push({ account_code: '1123', direction: 'credit', amount_cents, party_id, memo: '预收款 ' + receipt_no });
-    }
+
+    const allocPayload = allocations
+      ? JSON.stringify({ items: allocations, remainder_advance_id: remainderAdvanceId })
+      : null;
+    const info = db.prepare(
+      `INSERT INTO receipts (receipt_no, bill_id, party_id, from_advance_id, amount_cents, method, occurred_at, note, status, allocations, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`)
+      .run(receipt_no, bill ? bill.id : null, party_id, from_advance_id || null, amount_cents,
+        method || 'cash', occurred_at || now, note || null, allocPayload, now, now);
+    const rid = info.lastInsertRowid;
+
     postEntry(db, {
       event_type: 'receipt', ref_type: 'receipt', ref_id: rid,
-      occurred_at: occurred_at || now, memo: '收款 ' + receipt_no, lines
+      occurred_at: occurred_at || now, memo: '收款 ' + receipt_no, lines: journalLines
     });
-    logEdit(db, { table: 'receipts', recordId: rid, action: 'create', after: { receipt_no, bill_id, amount_cents, from_advance_id } });
+    logEdit(db, { table: 'receipts', recordId: rid, action: 'create',
+      after: { receipt_no, bill_id: bill ? bill.id : null, amount_cents, from_advance_id, allocations, remainderAdvanceId } });
     return rid;
   });
   return getActive(db, 'receipts', tx());
@@ -282,12 +319,33 @@ function voidFinanceRecord(db, table, id) {
       .get(table.replace(/s$/, ''), id);
     if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '作废 ' + row[noCol] });
     // 2) 回滚业务副作用
-    if (table === 'receipts' && row.bill_id) {
-      const bill = getActive(db, 'bills', row.bill_id);
-      const paid = bill.paid_cents - row.amount_cents;
-      const payable = bill.amount_cents + bill.adjust_cents;
-      db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
-        .run(paid, paid <= 0 ? 'unpaid' : 'partial', now, bill.id);
+    if (table === 'receipts') {
+      // 分摊明细（按客户收款）优先：逐张账单回退 + 余额预收联动作废
+      let allocPayload = null;
+      try { allocPayload = row.allocations ? JSON.parse(row.allocations) : null; } catch (e) { allocPayload = null; }
+      const items = Array.isArray(allocPayload) ? allocPayload : (allocPayload && allocPayload.items) || [];
+      if (items.length) {
+        for (const a of items) {
+          const bill = getActive(db, 'bills', a.bill_id);
+          const paid = bill.paid_cents - a.amount_cents;
+          db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
+            .run(paid, paid <= 0 ? 'unpaid' : 'partial', now, bill.id);
+        }
+        const restId = allocPayload && allocPayload.remainder_advance_id;
+        if (restId) {
+          const rest = db.prepare('SELECT * FROM advances WHERE id = ?').get(restId);
+          if (rest && rest.status !== 'void' && rest.balance_cents === rest.amount_cents) {
+            // 余额预收未被使用过 → 联动作废；已被抵扣则留给人工处理（保留余额，记 edit_log）
+            db.prepare("UPDATE advances SET status = 'void', balance_cents = 0, updated_at = ? WHERE id = ?").run(now, restId);
+          }
+        }
+      } else if (row.bill_id) {
+        const bill = getActive(db, 'bills', row.bill_id);
+        const paid = bill.paid_cents - row.amount_cents;
+        const payable = bill.amount_cents + bill.adjust_cents;
+        db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
+          .run(paid, paid <= 0 ? 'unpaid' : 'partial', now, bill.id);
+      }
     }
     if (table === 'advances') {
       const used = db.prepare(

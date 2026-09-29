@@ -143,12 +143,19 @@ function confirmSettlement(db, id) {
       const bill_no = nextBizNo(db, 'bills', 'bill_no', 'B');
       insBill.run(bill_no, id, it.party_id, it.farmer_name, amount, now, it.note || null, now, now);
     }
-    // 2) 自动分录：借 应收 / 贷 作业收入 + 药收入
-    const lines = [
-      { account_code: '1122', direction: 'debit', amount_cents: s.total_receivable_cents, job_id: s.job_id, memo: '应收 ' + s.settlement_no },
-      { account_code: '6001', direction: 'credit', amount_cents: s.total_spray_fee_cents, job_id: s.job_id, memo: '作业收入' },
-      { account_code: '6002', direction: 'credit', amount_cents: s.total_pesticide_fee_cents, job_id: s.job_id, memo: '药收入' }
-    ];
+    // 2) 自动分录：借 应收 / 贷 作业收入 + 药收入（逐分项挂 party_id，供按客户报表）
+    const lines = [];
+    for (const it of s.items) {
+      if ((it.spray_fee_cents || 0) > 0) {
+        lines.push({ account_code: '6001', direction: 'credit', amount_cents: it.spray_fee_cents, party_id: it.party_id, job_id: s.job_id, memo: '作业收入 ' + it.farmer_name });
+      }
+      if ((it.pesticide_fee_cents || 0) > 0) {
+        lines.push({ account_code: '6002', direction: 'credit', amount_cents: it.pesticide_fee_cents, party_id: it.party_id, job_id: s.job_id, memo: '药收入 ' + it.farmer_name });
+      }
+    }
+    if (s.total_receivable_cents > 0) {
+      lines.push({ account_code: '1122', direction: 'debit', amount_cents: s.total_receivable_cents, job_id: s.job_id, memo: '应收 ' + s.settlement_no });
+    }
     const entryId = postEntry(db, {
       event_type: 'settlement_confirm', ref_type: 'settlement', ref_id: id,
       occurred_at: now, memo: '结算确认 ' + s.settlement_no + '（作业 ' + job.job_no + '）', lines

@@ -7,6 +7,7 @@ const express = require('express');
 const settlements = require('../services/settlements');
 const finance = require('../services/finance');
 const journal = require('../services/journal');
+const reports = require('../services/reports');
 
 function createLedgerRouter(db) {
   const router = express.Router();
@@ -81,6 +82,23 @@ function createLedgerRouter(db) {
       `SELECT id, type, name, phone, village, team, default_price_cents FROM parties
        WHERE deleted_at IS NULL AND enabled = 1 ORDER BY type, name`).all();
     res.json({ ok: true, data });
+  });
+
+  /* ---------- 报表（M6） ---------- */
+  router.get('/reports/summary', (req, res) => {
+    res.json({ ok: true, data: reports.summary(db, { from: req.query.from, to: req.query.to }) });
+  });
+  router.get('/reports/by-month', (req, res) => {
+    res.json({ ok: true, data: reports.byMonth(db, { from: req.query.from, to: req.query.to }) });
+  });
+  router.get('/reports/by-customer', (req, res) => {
+    res.json({ ok: true, data: reports.byCustomer(db, { from: req.query.from, to: req.query.to }) });
+  });
+  router.get('/reports/by-job', (req, res) => {
+    res.json({ ok: true, data: reports.byJob(db, { from: req.query.from, to: req.query.to }) });
+  });
+  router.get('/parties/:id/balance', (req, res) => {
+    res.json({ ok: true, data: reports.partyBalance(db, Number(req.params.id)) });
   });
 
   /* ---------- 复式记账查询 ---------- */
