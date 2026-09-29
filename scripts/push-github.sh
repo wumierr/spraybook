@@ -11,7 +11,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-REPO_DEFAULT="https://github.com/wumierr/Drone-SprayandLift-Calculator.git"
+REPO_DEFAULT="https://github.com/wumierr/spraybook.git"
 MSG="${1:-}"
 FORCE=0
 for a in "$@"; do [ "$a" = "--force" ] && FORCE=1; done

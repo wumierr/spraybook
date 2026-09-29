@@ -2,7 +2,7 @@
 chcp 65001 >nul 2>&1
 title Push to GitHub
 
-set REPO=https://github.com/wumierr/Drone-SprayandLift-Calculator.git
+set REPO=https://github.com/wumierr/spraybook.git
 
 if not exist .git (
     git init
