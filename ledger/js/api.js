@@ -51,7 +51,15 @@
     voidFinance: (table, id) => Api.post('/api/' + table + '/' + id + '/void'),
     journal: () => Api.get('/api/journal'),
     summary: () => Api.get('/api/summary'),
-    parties: () => Api.get('/api/parties')
+    parties: () => Api.get('/api/parties'),
+    // M8 导入
+    importParse: (filename, base64) => Api.post('/api/import/parse', { filename, base64 }),
+    importBatches: () => Api.get('/api/import/batches'),
+    importRows: (id, status) => Api.get('/api/import/batches/' + id + '/rows' + (status ? '?status=' + status : '')),
+    importRowPatch: (id, b) => Api.patch('/api/import/rows/' + id, b),
+    importApply: (id) => Api.post('/api/import/batches/' + id + '/apply', {}),
+    importRecon: (id) => Api.get('/api/import/batches/' + id + '/reconciliation'),
+    importOpening: (b) => Api.post('/api/import/opening', b)
   };
 
   if (typeof window !== 'undefined') window.LedgerApi = Api;
