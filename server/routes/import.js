@@ -11,6 +11,7 @@ const ExcelJS = require('exceljs');
 const { parseWorkbook, applyJobRow, applyExpenseRow, cellVal } = require('../services/importExcel');
 const { ApiError } = require('../services/apiError');
 const { logEdit, nextBizNo } = require('../services/audit');
+const { postEntry } = require('../services/journal');
 
 function createImportRouter(db) {
   const router = express.Router();
@@ -210,7 +211,7 @@ function createImportRouter(db) {
   });
 
   /* ---- M5.5 手工期初兜底：Excel 外旧账补录（opening 凭证走期初权益 4103） ---- */
-  router.post('/opening', (req, res) => {
+  router.post('/import/opening', (req, res) => {
     const { party_id, kind, amount_cents, occurred_at, note } = req.body || {};
     if (!party_id || !Number.isInteger(amount_cents) || amount_cents <= 0) {
       throw new ApiError('VALIDATION', 'party_id 与正整数 amount_cents 必填');
@@ -224,7 +225,7 @@ function createImportRouter(db) {
         const billNo = nextBizNo(db, 'bills', 'bill_no', 'B');
         const info = db.prepare(
           `INSERT INTO bills (bill_no, settlement_id, party_id, farmer_name, amount_cents, adjust_cents, paid_cents, status, issued_at, note, opening, created_at, updated_at)
-           VALUES (?, 0, ?, (SELECT name FROM parties WHERE id = ?), ?, 0, 0, 'unpaid', ?, ?, 1, ?, ?)`)
+           VALUES (?, NULL, ?, (SELECT name FROM parties WHERE id = ?), ?, 0, 0, 'unpaid', ?, ?, 1, ?, ?)`)
           .run(billNo, party_id, party_id, amount_cents, occurred_at || now, '期初补录：' + (note || '旧账'), now, now);
         postEntry(db, {
           event_type: 'opening', ref_type: 'bill', ref_id: info.lastInsertRowid,

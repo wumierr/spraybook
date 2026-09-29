@@ -38,6 +38,13 @@ function migrate(db) {
   for (const f of files) {
     if (applied.has(f)) continue;
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf8');
+    if (sql.includes('-- spraybook:no-tx')) {
+      // 表重建类迁移：PRAGMA foreign_keys 不能在事务内切换，整文件裸执行
+      db.exec(sql);
+      db.prepare('INSERT INTO schema_migrations(name, applied_at) VALUES (?, ?)')
+        .run(f, new Date().toISOString());
+      continue;
+    }
     const tx = db.transaction(() => {
       db.exec(sql);
       db.prepare('INSERT INTO schema_migrations(name, applied_at) VALUES (?, ?)')

@@ -15,6 +15,7 @@ const { ApiError } = require('./services/apiError');
 const { createJobsRouter } = require('./routes/jobs');
 const { createLedgerRouter } = require('./routes/ledger');
 const { createImportRouter } = require('./routes/import');
+const { createMasterdataRouter } = require('./routes/masterdata');
 
 const ROOT = path.join(__dirname, '..');      // 仓库根（计算器所在）
 const DATA_DIR = process.env.SPRAYBOOK_DATA_DIR || path.join(ROOT, 'data');
@@ -45,6 +46,7 @@ function buildApp(db) {
   app.use('/api', createJobsRouter(db));
   app.use('/api', createLedgerRouter(db));
   app.use('/api', createImportRouter(db));
+  app.use('/api', createMasterdataRouter(db));
 
   app.use('/api', (req, res) => {
     res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: `未知 API: ${req.method} ${req.path}` } });

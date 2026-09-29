@@ -449,6 +449,64 @@
     document.getElementById('impRows').innerHTML = rows || '<tr><td colspan="9">无行</td></tr>';
   }
 
+  /* ---------- 页签：主数据（M7） ---------- */
+  async function renderMasterData() {
+    if (!parties.length) { try { parties = await Api.parties(); } catch (e) { parties = []; } }
+    const settings = await Api.settings().catch(() => ({}));
+    const bootstrap = await Api.get('/api/bootstrap').catch(() => null);
+    const balMap = new Map((bootstrap ? bootstrap.parties : []).map(p => [p.id, p]));
+    const custRows = parties.filter(p => p.type === 'customer').map(p0 => {
+      const b = balMap.get(p0.id) || {};
+      return `<tr>
+        <td>${esc(p0.name)}</td>
+        <td>${esc(p0.village || '—')}${p0.team ? '/' + esc(p0.team) + '队' : ''}</td>
+        <td>${esc(p0.phone || '—')}</td>
+        <td class="num">${p0.default_price_cents ? Core.fmtYuan(p0.default_price_cents) : '—'}</td>
+        <td class="num">${Core.fmtYuan(b.receivable_cents || 0)}</td>
+        <td class="num">${Core.fmtYuan(b.prepaid_cents || 0)}</td>
+        <td>${b.last_job ? esc((b.last_job.date || '') + ' ' + (b.last_job.price_yuan ? b.last_job.price_yuan.toFixed(1) + '元/亩' : '')) : '—'}</td>
+        <td>${actions(
+          `<button class="lg-btn" data-act="md-edit" data-id="${p0.id}" data-name="${esc(p0.name)}">编辑</button>`,
+          p0.enabled ? `<button class="lg-btn danger" data-act="md-disable" data-id="${p0.id}" data-name="${esc(p0.name)}">停用</button>` : ''
+        )}</td>
+      </tr>`;
+    }).join('');
+    const chems = (bootstrap ? bootstrap.chemicals : []).map(c => `<tr>
+        <td>${esc(c.name)}</td><td>${esc(c.key || '—')}</td>
+        <td class="num">${c.water_per_mu ?? '—'}</td>
+        <td class="num">${c.pesticide_water_per_set ?? '—'}</td>
+        <td class="num">${c.price_cents_per_set ? Core.fmtYuan(c.price_cents_per_set) : '—'}</td>
+      </tr>`).join('');
+    return `<div class="lg-panel">
+      <h2>设置</h2>
+      <div class="lg-form">
+        <label>记账人（写入 edit_logs 与工单 operator）<input id="mdOperator" value="${esc(settings.operator || 'local')}"></label>
+        <button class="lg-btn primary" data-act="md-save-operator">保存</button>
+      </div>
+    </div>
+    <div class="lg-panel">
+      <h2>期初补录（Excel 之外的旧账；生成 opening 单据 + 期初权益凭证）</h2>
+      <div class="lg-form">
+        <label>客户<select id="opParty">${parties.filter(p => p.type === 'customer').map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
+        <label>类型<select id="opKind"><option value="receivable">旧欠款（应收）</option><option value="prepaid">客户预收</option><option value="worker_advance">员工预支</option></select></label>
+        <label>金额(元)<input id="opAmount" type="number" step="0.01" min="0.01"></label>
+        <label>说明<input id="opNote" placeholder="如：2025 年旧账"></label>
+        <button class="lg-btn primary" data-act="op-save">补录</button>
+      </div>
+    </div>
+    <div class="lg-panel">
+      <h2>客户（同步自计算器/导入；编辑=电话/村/队/默认单价）</h2>
+      <table class="lg-table"><thead><tr>
+        <th>姓名</th><th>村/队</th><th>电话</th><th>默认单价</th><th>欠款(元)</th><th>预收(元)</th><th>最近作业</th><th>操作</th>
+      </tr></thead><tbody>${custRows}</tbody></table>
+    </div>
+    <div class="lg-panel">
+      <h2>药品/用药类型（计算器类型库镜像；编辑暂走计算器端）</h2>
+      <table class="lg-table"><thead><tr><th>名称</th><th>key</th><th>水量/亩</th><th>兑水/套</th><th>药价/套</th></tr></thead>
+      <tbody>${chems || '<tr><td colspan="5">暂无（首次计算器同步后生成）</td></tr>'}</tbody></table>
+    </div>`;
+  }
+
   /* ---------- 渲染调度 ---------- */
   const state = { tab: 'jobs', _advances: [] };
 
@@ -478,6 +536,8 @@
     } else if (tab === 'import') {
       $main.innerHTML = renderImport();
       await loadImportBatches();
+    } else if (tab === 'master') {
+      $main.innerHTML = await renderMasterData();
     }
     refreshSummary();
   }
@@ -667,6 +727,42 @@
       }
       case 'adv-void':
         confirmThen(`作废预收/预支 ${btn.dataset.no}？`, () => Api.voidFinance('advances', id));
+        break;
+      case 'md-save-operator':
+        run(() => Api.saveSettings({ operator: document.getElementById('mdOperator').value || 'local' }), '记账人已保存');
+        break;
+      case 'op-save': {
+        const amount = Core.yuanInputToCents(document.getElementById('opAmount').value);
+        if (!needAmount(amount)) return;
+        confirmThen('确认期初补录？将生成 opening 单据与期初权益凭证。', () => Api.importOpening({
+          party_id: Number(document.getElementById('opParty').value),
+          kind: document.getElementById('opKind').value,
+          amount_cents: amount,
+          note: document.getElementById('opNote').value || undefined
+        }));
+        break;
+      }
+      case 'md-edit': {
+        const name = btn.dataset.name;
+        const village = window.prompt('村名（如 彰冠红拉 / 通安金桂村；清空则不填）：') ?? undefined;
+        const team = window.prompt('队伍号（数字，可空）：') ?? undefined;
+        const phone = window.prompt('电话（可空）：') ?? undefined;
+        const price = window.prompt('默认单价（元/亩，可空）：') ?? undefined;
+        const body = {};
+        if (village !== null && village !== undefined) body.village = village;
+        if (team !== null && team !== undefined) body.team = team || '';
+        if (phone !== null && phone !== undefined) body.phone = phone || '';
+        if (price !== null && price !== undefined && price !== '') {
+          const cents = Core.yuanInputToCents(price);
+          if (cents == null || isNaN(cents) || cents < 0) return toast('单价非法', true);
+          body.default_price_cents = cents;
+        }
+        if (!Object.keys(body).length) return;
+        run(() => Api.masterPatch('parties', Number(btn.dataset.id), body), '客户已更新').then(() => { parties = []; });
+        break;
+      }
+      case 'md-disable':
+        confirmThen(`停用客户 ${btn.dataset.name}？（软删除，可恢复）`, () => Api.post(`/api/master/parties/${btn.dataset.id}/void`));
         break;
       case 'imp-upload': {
         const f = document.getElementById('impFile').files[0];

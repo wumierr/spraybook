@@ -15,6 +15,7 @@
   if (window.SpraySync) return;
 
   var QUEUE_KEY = 'drone_spray_sync_v1';
+  var CLOUD_KEY = 'drone_spray_cloud_v1';
   var SETTINGS_KEY = 'drone_spray_server_v1';
   var RETRY_DELAYS_MIN = [1, 5, 30];   // 第 n 次失败后的退避
   var MAX_ATTEMPTS = 10;               // 超过转 dead（人工重推）
@@ -70,7 +71,7 @@
       job_date: jobDate,
       address: null,
       note: wo.note || null,
-      operator_names: [],
+      operator_names: (getCloud() && getCloud().operator) ? [getCloud().operator] : [],
       snapshot: JSON.parse(window.Storage.exportJSON(state, mode)),
       result: result
     };
@@ -297,6 +298,34 @@
     return flushNow();
   }
 
+  /* ---------- 读反哺（M7）：拉取主数据+财务状态，只缓存展示，不参与计算 ---------- */
+
+  function fetchBootstrap() {
+    var st = getSettings();
+    if (!st.enabled || !st.base_url) return Promise.resolve(false);
+    return fetch(apiUrl('/api/bootstrap'))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) {
+          try { window.localStorage.setItem(CLOUD_KEY, JSON.stringify(j.data)); } catch (e2) {}
+          return true;
+        }
+        return false;
+      })
+      .catch(function () { return false; });
+  }
+
+  function getCloud() {
+    try { var s = window.localStorage.getItem(CLOUD_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; }
+  }
+
+  /** 按姓名查客户财务状态（农户卡/工单面板展示用） */
+  function cloudParty(name) {
+    var c = getCloud();
+    if (!c || !c.parties || !name) return null;
+    return c.parties.find(function (p) { return p.name === name; }) || null;
+  }
+
   /* ---------- UI（注入徽标 + 工单面板状态行；窄屏用小徽标不撑行） ---------- */
 
   function _updateUI(kind) {
@@ -361,6 +390,8 @@
       if (!document.hidden) flushNow();
     });
     setInterval(function () { flushNow(); }, 60000); // 60s 轮询（disabled 时内部直接返回）
+    fetchBootstrap(); // 启动即拉一次读反哺
+    setInterval(function () { fetchBootstrap(); }, 300000); // 每 5 分钟刷新主数据/财务状态
   }
 
   if (typeof document !== 'undefined') {
@@ -379,6 +410,9 @@
     nextRetryDelayMs: nextRetryDelayMs,
     isDead: isDead,
     enqueueCurrent: enqueueCurrent,
+    fetchBootstrap: fetchBootstrap,
+    getCloud: getCloud,
+    cloudParty: cloudParty,
     flushNow: flushNow,
     requeueFailed: requeueFailed,
     getStatus: getStatus,
