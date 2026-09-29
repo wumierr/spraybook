@@ -2404,8 +2404,33 @@ const UI = {
       }
       this.copyToClipboard(txt).then(ok => {
         this.toast(ok ? '纯文本工单已复制到剪贴板 📋' : '复制失败，请手动选择文本', ok ? 'success' : 'error');
+        // spraybook：工单完成即快照入队（离线排队，联网自动上报；见 docs/sync-design.md）
+        if (window.SpraySync) window.SpraySync.enqueueCurrent();
       });
     });
+
+    // spraybook：手动同步按钮（工单面板）
+    const syncWorkOrderBtn = document.getElementById('syncWorkOrder');
+    if (syncWorkOrderBtn) {
+      syncWorkOrderBtn.addEventListener('click', () => {
+        const s = window.SpraySync.getSettings();
+        if (!s.enabled || !s.base_url) {
+          this.toast('未配置账本服务器，同步未开启', 'warn');
+          return;
+        }
+        if (location.protocol === 'https:' && s.base_url.indexOf('http://') === 0) {
+          this.toast('公网 HTTPS 页面无法访问局域网账本，请在本地/局域网打开计算器', 'warn');
+          return;
+        }
+        const r = window.SpraySync.enqueueCurrent();
+        if (r && r.ok) {
+          this.toast('作业已入队，同步中…（单号 ' + r.job_no + '）', 'success');
+        } else if (r && r.reason === 'no-result') {
+          this.toast('请先完成一次计算再同步', 'warn');
+        }
+        window.SpraySync.flushNow();
+      });
+    }
 
     // 组汇总条：组趟数 ±（事件委托在结果区容器上）
     const plotsWrap = document.getElementById('plotsTableWrap');
