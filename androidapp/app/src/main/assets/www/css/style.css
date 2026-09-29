@@ -1793,3 +1793,25 @@ html, body {
 }
 .batt-record-main { flex: 1; min-width: 0; }
 .batt-record-main b { color: var(--text-primary); font-weight: 600; }
+
+/* ---------- spraybook 同步徽标（v4.6）：小圆片，窄屏不撑行 ---------- */
+.sync-badge {
+  display: none;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.sync-badge:not(.sync-off) { display: inline-block; }
+.sync-badge.sync-err { color: #fff; background: var(--danger); }
+.wo-sync-row {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}

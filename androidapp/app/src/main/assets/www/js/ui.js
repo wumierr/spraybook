@@ -414,11 +414,19 @@ const UI = {
     }
     list.innerHTML = farmers.map(f => {
       const plotCount = (this.state.field.plots || []).filter(pl => pl.farmerId === f.id).length;
+      // spraybook 读反哺（M7）：账本里该客户的欠款/预收/上次价格——纯展示，不参与计算
+      const cp = window.SpraySync ? window.SpraySync.cloudParty(f.name) : null;
+      const cloudHint = cp ? [
+        cp.receivable_cents > 0 ? `欠 ¥${(cp.receivable_cents / 100).toFixed(0)}` : '',
+        cp.prepaid_cents > 0 ? `预收 ¥${(cp.prepaid_cents / 100).toFixed(0)}` : '',
+        cp.last_job && cp.last_job.price_yuan ? `上次 ${(cp.last_job.price_yuan).toFixed(1)}元/亩` : ''
+      ].filter(Boolean).join(' · ') : '';
       return `
       <li data-id="${f.id}" class="${this._editingFarmerId === f.id ? 'selected' : ''}">
         <div>
           <div><b>${this.escapeHtml(f.name)}</b> <span style="margin-left:6px;font-size:11px;color:var(--text-muted);">${f.pricePerMu > 0 ? `${f.pricePerMu}元/亩` : ''}${plotCount ? ` · ${plotCount} 块地` : ''}</span></div>
           <div class="preset-meta">${this.escapeHtml(f.notes || (f.phone || ''))}</div>
+          ${cloudHint ? `<div style="font-size:11px;color:var(--accent);">☁ ${this.escapeHtml(cloudHint)}</div>` : ''}
         </div>
         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);" data-enabled-toggle="${f.id}">
           <input type="checkbox" ${f.enabled !== false ? 'checked' : ''}>启用
@@ -2404,8 +2412,33 @@ const UI = {
       }
       this.copyToClipboard(txt).then(ok => {
         this.toast(ok ? '纯文本工单已复制到剪贴板 📋' : '复制失败，请手动选择文本', ok ? 'success' : 'error');
+        // spraybook：工单完成即快照入队（离线排队，联网自动上报；见 docs/sync-design.md）
+        if (window.SpraySync) window.SpraySync.enqueueCurrent();
       });
     });
+
+    // spraybook：手动同步按钮（工单面板）
+    const syncWorkOrderBtn = document.getElementById('syncWorkOrder');
+    if (syncWorkOrderBtn) {
+      syncWorkOrderBtn.addEventListener('click', () => {
+        const s = window.SpraySync.getSettings();
+        if (!s.enabled || !s.base_url) {
+          this.toast('未配置账本服务器，同步未开启', 'warn');
+          return;
+        }
+        if (location.protocol === 'https:' && s.base_url.indexOf('http://') === 0) {
+          this.toast('公网 HTTPS 页面无法访问局域网账本，请在本地/局域网打开计算器', 'warn');
+          return;
+        }
+        const r = window.SpraySync.enqueueCurrent();
+        if (r && r.ok) {
+          this.toast('作业已入队，同步中…（单号 ' + r.job_no + '）', 'success');
+        } else if (r && r.reason === 'no-result') {
+          this.toast('请先完成一次计算再同步', 'warn');
+        }
+        window.SpraySync.flushNow();
+      });
+    }
 
     // 组汇总条：组趟数 ±（事件委托在结果区容器上）
     const plotsWrap = document.getElementById('plotsTableWrap');

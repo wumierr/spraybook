@@ -7,7 +7,7 @@
    ============================================================ */
 
 /* 改任何 JS/CSS 后必须递增此版本号，否则 PWA 用户拿到的仍是旧缓存 */
-const CACHE_VERSION = 'drone-spray-v4.5.0';
+const CACHE_VERSION = 'drone-spray-v4.7.0';
 const CACHE_NAME = CACHE_VERSION;
 const ASSETS = [
   './',
@@ -17,6 +17,7 @@ const ASSETS = [
   './js/data.js',
   './js/calculator.js',
   './js/storage.js',
+  './js/sync.js',
   './js/ui.js',
   './js/app.js',
   './assets/icons/favicon.svg'
@@ -53,6 +54,9 @@ self.addEventListener('fetch', event => {
   // 跨域请求直接走网络
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+
+  // spraybook：API 与记账后台不进 SW 缓存（实时数据，缓存优先会拿到旧响应）
+  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/ledger')) return;
 
   event.respondWith(
     caches.match(req).then(cached => {

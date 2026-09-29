@@ -1,7 +1,18 @@
-# 🚁 无人机打药计算器
+# 📒 spraybook —— 植保飞防一体化系统（打药计算器 + 记账后台）
+
+> **现场用计算器算药、算水、算趟数、分工户、出工单；后台用记账系统消费工单、出账单、记收支、管预收预支、导入历史账、看盈利。**
+> 一套 SQLite 数据库（五层 24+ 表），作业单（jobs）是纽带。双击 `启动spraybook服务.bat` 即可跑起来：
+> 计算器 `http://<本机IP>:8080/`（手机同 WiFi 可开）· 记账后台 `http://127.0.0.1:8080/ledger/`
+>
+> 架构：根目录=计算器（离线优先，可打包 APK / 部署静态托管）· `server/`=Express+SQLite API · `ledger/`=记账后台（原生 JS）
+> 运维与同步配置见 **docs/OPS.md**，总体计划见 **docs/PLAN.md**，历史 Excel 导入规则见 **docs/PLAN.md §8**。
+
+---
+
+# 🚁 无人机打药计算器（spraybook 现场端）
 
 > 一款专为植保无人机作业设计的 **药量 / 水量 / 成本 / 粗略利润** 计算器。
-> 纯静态 HTML+CSS+JS，无需后端、无需构建，**双击 `index.html` 即可在 Win10 本地打开**，亦可打包为安卓 WebView APK。
+> 纯静态 HTML+CSS+JS，无需构建，**双击 `index.html` 即可在 Win10 本地打开**，亦可打包为安卓 WebView APK。
 
 ![license](https://img.shields.io/badge/license-MIT-green) ![platform](https://img.shields.io/badge/platform-Win10%20%7C%20Android%20%7C%20Web-blue) ![tech](https://img.shields.io/badge/pure-vanilla%20JS-orange)
 
