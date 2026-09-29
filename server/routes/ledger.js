@@ -78,7 +78,7 @@ function createLedgerRouter(db) {
   /* ---------- 主数据只读（下拉用） ---------- */
   router.get('/parties', (req, res) => {
     const data = db.prepare(
-      `SELECT id, type, name, phone, default_price_cents FROM parties
+      `SELECT id, type, name, phone, village, team, default_price_cents FROM parties
        WHERE deleted_at IS NULL AND enabled = 1 ORDER BY type, name`).all();
     res.json({ ok: true, data });
   });
