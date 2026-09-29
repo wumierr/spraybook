@@ -1,0 +1,599 @@
+{
+  "_readme": "spraybook 建表依据样本：export=Storage.exportJSON(state,mode) 的解析结果（主数据+输入参数），result=Calculator.computePlots/computeHaul 输出（执行结果）。M1 建表逐字段对照本文件。",
+  "generatedAt": "2026-09-29T03:48:46.830Z",
+  "spray": {
+    "mode": "spray",
+    "export": {
+      "type": "drone-spray-config",
+      "version": "2.0",
+      "mode": "spray",
+      "exportedAt": "2026-09-29T03:48:46.853Z",
+      "plant": {
+        "name": "杀菌",
+        "icon": "🧪",
+        "defaultBasis": "tree",
+        "flightHeight": 6,
+        "lineSpacing": 4,
+        "flightSpeed": 2,
+        "waterPerMu": 20,
+        "treesPerMu": 80,
+        "waterPerTree": 3,
+        "pesticideWaterPerSet": 300,
+        "droneSavingCoeff": 0.7,
+        "builtin": true,
+        "description": "果园/大田杀菌剂喷施，建议高于树冠1-1.5米作业（参数可按实际药剂修改）",
+        "notes": "⚠️ 花期、幼果期慎用敏感药剂；避免大风天作业。"
+      },
+      "field": {
+        "area": 10,
+        "plantKey": "shajun",
+        "existingPesticideSets": 2,
+        "manualDosePerMu": 1.2,
+        "farmerName": "",
+        "spareWater": 35,
+        "drawReserve": 40,
+        "droneTank": 85,
+        "plotMode": false,
+        "plots": [
+          {
+            "id": "p1",
+            "name": "张家果园东",
+            "area": 12,
+            "groupId": 1,
+            "farmerId": "f_zhang"
+          },
+          {
+            "id": "p2",
+            "name": "张家果园西",
+            "area": 8,
+            "groupId": 1,
+            "farmerId": "f_zhang"
+          },
+          {
+            "id": "p3",
+            "name": "李家大田",
+            "area": 14,
+            "groupId": 2,
+            "farmerId": "f_li"
+          },
+          {
+            "id": "p4",
+            "name": "王家菜地",
+            "area": 5,
+            "groupId": 3,
+            "farmerId": "f_wang"
+          }
+        ],
+        "groupTrips": {}
+      },
+      "costs": {
+        "batteryDepreciation": 3,
+        "fuelExpense": 120,
+        "cycleArea": 120,
+        "workers": 3,
+        "days": 0.3,
+        "dailyWage": 300,
+        "mealCost": 50,
+        "accommodation": 0,
+        "accommodationDays": 0,
+        "pesticidePrice": 80,
+        "pesticideIncluded": true,
+        "droneDepreciation": 0.3,
+        "maintenanceReserve": 0.2,
+        "protectiveGear": 5,
+        "cleaningCost": 10,
+        "insurance": 0.1,
+        "miscCost": 0
+      },
+      "income": {
+        "pricePerMu": 25,
+        "subsidy": 0
+      },
+      "timing": {
+        "flightSpeed": 2.5,
+        "lineSpacing": 2,
+        "manualFlightTime": 0,
+        "roundTripTime": 3,
+        "loadTime": 1,
+        "baseMixTime": 10,
+        "batchCapacity": 1000,
+        "manualChargeCount": 0,
+        "batteryCount": 4,
+        "generatorChargeTime": 8,
+        "threePhaseChargeTime": 5,
+        "chargeMode": "generator",
+        "chargeAfterWork": true
+      },
+      "haulField": {
+        "totalWeight": 1000,
+        "flightHeight": 5
+      },
+      "haulCosts": {
+        "batteryDepreciation": 3,
+        "fuelExpense": 150,
+        "weightPerTrip": 50,
+        "tripsPerBatteryCycle": 6,
+        "droneWorkers": 1,
+        "droneDays": 1,
+        "droneDailyWage": 500,
+        "droneMealCost": 50,
+        "droneAccommodation": 0,
+        "droneAccommodationDays": 0,
+        "pickupIncluded": false,
+        "pickupPricePerJin": 5,
+        "droneDepreciation": 0.5,
+        "maintenanceReserve": 0.3,
+        "protectiveGear": 5,
+        "cleaningCost": 5,
+        "insurance": 0.05,
+        "miscCost": 0
+      },
+      "haulIncome": {
+        "pricePerJin": 12
+      },
+      "workOrder": {
+        "completedByPlot": {
+          "p1": 260,
+          "p2": 180,
+          "p3": 320,
+          "p4": 110
+        },
+        "selfByFarmer": {
+          "f_zhang": 2,
+          "f_li": 1
+        },
+        "completedSingle": false,
+        "actualSets": 12.5,
+        "note": "下午风大，西片少打一遍；李家要求下次早来",
+        "farmerNameDone": "张大国"
+      },
+      "types": [],
+      "farmers": [
+        {
+          "id": "farmer_default",
+          "name": "（未建档）",
+          "phone": "",
+          "pricePerMu": 0,
+          "typeId": "",
+          "notes": "删除农户后的兜底",
+          "enabled": true,
+          "plotTemplate": {
+            "area": 10
+          }
+        },
+        {
+          "id": "f_zhang",
+          "name": "张大国",
+          "phone": "13900001111",
+          "pricePerMu": 9,
+          "typeId": "shajun",
+          "notes": "果园东片，常客",
+          "enabled": true,
+          "plotTemplate": {
+            "area": 12
+          }
+        },
+        {
+          "id": "f_li",
+          "name": "李秀英",
+          "phone": "13800002222",
+          "pricePerMu": 8,
+          "typeId": "",
+          "notes": "",
+          "enabled": true,
+          "plotTemplate": {
+            "area": 8
+          }
+        },
+        {
+          "id": "f_wang",
+          "name": "王强",
+          "phone": "",
+          "pricePerMu": 0,
+          "typeId": "",
+          "notes": "按全局价",
+          "enabled": true,
+          "plotTemplate": {
+            "area": 5
+          }
+        }
+      ],
+      "batteries": {
+        "list": [
+          {
+            "id": "batt1",
+            "name": "1号电池",
+            "cycles": 231
+          },
+          {
+            "id": "batt2",
+            "name": "2号电池",
+            "cycles": 198
+          }
+        ],
+        "records": []
+      }
+    },
+    "result": {
+      "plots": [
+        {
+          "id": "p1",
+          "name": "张家果园东",
+          "area": 12,
+          "water": 240,
+          "farmerId": "f_zhang",
+          "groupId": 1,
+          "flightMin": 26.6668,
+          "pesticideRaw": 6.72,
+          "pesticideRounded": 0,
+          "groupTrips": 5,
+          "groupPerTripWater": 80
+        },
+        {
+          "id": "p2",
+          "name": "张家果园西",
+          "area": 8,
+          "water": 160,
+          "farmerId": "f_zhang",
+          "groupId": 1,
+          "flightMin": 17.777866666666668,
+          "pesticideRaw": 4.4799999999999995,
+          "pesticideRounded": 0,
+          "groupTrips": 5,
+          "groupPerTripWater": 80
+        },
+        {
+          "id": "p3",
+          "name": "李家大田",
+          "area": 14,
+          "water": 280,
+          "farmerId": "f_li",
+          "groupId": 2,
+          "flightMin": 31.111266666666666,
+          "pesticideRaw": 7.839999999999999,
+          "pesticideRounded": 0,
+          "groupTrips": 4,
+          "groupPerTripWater": 70
+        },
+        {
+          "id": "p4",
+          "name": "王家菜地",
+          "area": 5,
+          "water": 100,
+          "farmerId": "f_wang",
+          "groupId": 3,
+          "flightMin": 11.111166666666666,
+          "pesticideRaw": 2.8,
+          "pesticideRounded": 0,
+          "groupTrips": 2,
+          "groupPerTripWater": 50
+        }
+      ],
+      "groups": [
+        {
+          "id": 1,
+          "water": 400,
+          "flightMin": 44.44466666666667,
+          "minTrips": 5,
+          "trips": 5,
+          "tripsOverride": 0,
+          "perTripWater": 80,
+          "perTripTime": 12.888933333333334
+        },
+        {
+          "id": 2,
+          "water": 280,
+          "flightMin": 31.111266666666662,
+          "minTrips": 4,
+          "trips": 4,
+          "tripsOverride": 0,
+          "perTripWater": 70,
+          "perTripTime": 11.777816666666666
+        },
+        {
+          "id": 3,
+          "water": 100,
+          "flightMin": 11.111166666666668,
+          "minTrips": 2,
+          "trips": 2,
+          "tripsOverride": 0,
+          "perTripWater": 50,
+          "perTripTime": 9.555583333333335
+        }
+      ],
+      "plotMode": true,
+      "droneTank": 85,
+      "area": 39,
+      "water": 780,
+      "spareWater": 35,
+      "totalAddWater": 815,
+      "totalTrips": 11,
+      "totalLoad": 11,
+      "totalFlightMin": 86.66709999999999,
+      "pesticide": 21.84,
+      "pesticideRounded": 22,
+      "existingSets": 2,
+      "needToBuy": 20,
+      "stockStatus": "short",
+      "concentration": 2.8000000000000003,
+      "cycles": 1,
+      "costBreakdown": {
+        "cycle": 3,
+        "fuel": 120,
+        "labor": 314.99999999999994,
+        "pesticide": 1600,
+        "equipment": 23.4,
+        "other": 15
+      },
+      "totalCost": 2076.4,
+      "income": 417,
+      "profit": -1659.4,
+      "costPerMu": 53.241025641025644,
+      "profitPerMu": -42.54871794871795,
+      "flightHeight": 6,
+      "pesticideIncluded": true,
+      "usedSets": 21.84,
+      "chargeSource": "estimate",
+      "perChargeOil": 120,
+      "settlement": [
+        {
+          "farmerId": "f_li",
+          "farmerName": "李秀英",
+          "area": 14,
+          "sprayFee": 112,
+          "usedSets": 7.839999999999999,
+          "selfSets": 1,
+          "supplementSets": 6.839999999999999,
+          "pesticideFee": 547.1999999999999,
+          "included": true
+        },
+        {
+          "farmerId": "f_wang",
+          "farmerName": "王强",
+          "area": 5,
+          "sprayFee": 125,
+          "usedSets": 2.8,
+          "selfSets": 0,
+          "supplementSets": 2.8,
+          "pesticideFee": 224,
+          "included": true
+        },
+        {
+          "farmerId": "f_zhang",
+          "farmerName": "张大国",
+          "area": 20,
+          "sprayFee": 180,
+          "usedSets": 11.2,
+          "selfSets": 2,
+          "supplementSets": 9.2,
+          "pesticideFee": 736,
+          "included": true
+        }
+      ],
+      "timing": {
+        "mixTotalTime": 10,
+        "mixRounds": 1,
+        "batchCapacity": 1000,
+        "firstMixTime": 10,
+        "flightSpan": 130.6671,
+        "flightLength": 0,
+        "flightTimeMin": 86.66709999999999,
+        "flightTimeSource": "estimate",
+        "roundTripTotal": 11,
+        "totalLoad": 11,
+        "T": 11.878827272727273,
+        "perCycleFlight": 0,
+        "batteryWait": 0,
+        "batteryCycles": [
+          {
+            "idx": 1,
+            "wait": 0,
+            "tStart": 10,
+            "tEnd": 21.87882727272727,
+            "battery": 0,
+            "chargeStart": 21.87882727272727,
+            "chargeEnd": 29.87882727272727,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 2,
+            "wait": 0,
+            "tStart": 21.87882727272727,
+            "tEnd": 33.75765454545454,
+            "battery": 1,
+            "chargeStart": 33.75765454545454,
+            "chargeEnd": 41.75765454545454,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 3,
+            "wait": 0,
+            "tStart": 33.75765454545454,
+            "tEnd": 45.63648181818182,
+            "battery": 2,
+            "chargeStart": 45.63648181818182,
+            "chargeEnd": 53.63648181818182,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 4,
+            "wait": 0,
+            "tStart": 45.63648181818182,
+            "tEnd": 57.51530909090909,
+            "battery": 3,
+            "chargeStart": 57.51530909090909,
+            "chargeEnd": 65.51530909090908,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 5,
+            "wait": 0,
+            "tStart": 57.51530909090909,
+            "tEnd": 69.39413636363636,
+            "battery": 0,
+            "chargeStart": 69.39413636363636,
+            "chargeEnd": 77.39413636363636,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 6,
+            "wait": 0,
+            "tStart": 69.39413636363636,
+            "tEnd": 81.27296363636364,
+            "battery": 1,
+            "chargeStart": 81.27296363636364,
+            "chargeEnd": 89.27296363636364,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 7,
+            "wait": 0,
+            "tStart": 81.27296363636364,
+            "tEnd": 93.15179090909092,
+            "battery": 2,
+            "chargeStart": 93.15179090909092,
+            "chargeEnd": 101.15179090909092,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 8,
+            "wait": 0,
+            "tStart": 93.1517909090909,
+            "tEnd": 105.03061818181818,
+            "battery": 3,
+            "chargeStart": 105.03061818181818,
+            "chargeEnd": 113.03061818181818,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 9,
+            "wait": 0,
+            "tStart": 105.03061818181818,
+            "tEnd": 116.90944545454546,
+            "battery": 0,
+            "chargeStart": 116.90944545454546,
+            "chargeEnd": 124.90944545454546,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 10,
+            "wait": 0,
+            "tStart": 116.90944545454546,
+            "tEnd": 128.78827272727273,
+            "battery": 1,
+            "chargeStart": 128.78827272727273,
+            "chargeEnd": 136.78827272727273,
+            "charger": "generator",
+            "chargeTime": 8
+          },
+          {
+            "idx": 11,
+            "wait": 0,
+            "tStart": 128.78827272727273,
+            "tEnd": 140.6671,
+            "battery": 2,
+            "chargeStart": 140.6671,
+            "chargeEnd": 148.6671,
+            "charger": "generator",
+            "chargeTime": 8
+          }
+        ],
+        "noWaitCount": 11,
+        "totalTime": 140.6671,
+        "afterWorkCharge": 8,
+        "afterWorkBlocks": [
+          {
+            "idx": 2,
+            "time": 8,
+            "startAt": 140.6671,
+            "endAt": 148.6671,
+            "charger": "generator"
+          }
+        ],
+        "totalTimeWithCharge": 148.6671,
+        "batteryCount": 4,
+        "chargeMode": "generator",
+        "chargeAfterWork": true,
+        "plotUnits": "趟"
+      }
+    }
+  },
+  "haul": {
+    "mode": "haul",
+    "export": {
+      "type": "drone-spray-config",
+      "version": "2.0",
+      "mode": "haul",
+      "exportedAt": "2026-09-29T03:48:46.854Z",
+      "plant": null,
+      "field": {},
+      "costs": {},
+      "income": {},
+      "timing": null,
+      "haulField": {
+        "totalWeight": 3500,
+        "flightHeight": 5
+      },
+      "haulCosts": {
+        "batteryDepreciation": 3,
+        "fuelExpense": 200,
+        "weightPerTrip": 50,
+        "tripsPerBatteryCycle": 6,
+        "droneWorkers": 1,
+        "droneDays": 1,
+        "droneDailyWage": 500,
+        "droneMealCost": 50,
+        "droneAccommodation": 0,
+        "droneAccommodationDays": 0,
+        "pickupIncluded": false,
+        "pickupPricePerJin": 5,
+        "droneDepreciation": 0.5,
+        "maintenanceReserve": 0.3,
+        "protectiveGear": 5,
+        "cleaningCost": 5,
+        "insurance": 0.05,
+        "miscCost": 0
+      },
+      "haulIncome": {
+        "pricePerJin": 8
+      },
+      "workOrder": {
+        "note": "葡萄园 B 区"
+      },
+      "types": [],
+      "farmers": [],
+      "batteries": null
+    },
+    "result": {
+      "totalWeight": 3500,
+      "totalTrips": 70,
+      "batteryCycles": 12,
+      "costBreakdown": {
+        "cycle": 36,
+        "fuel": 200,
+        "droneLabor": 550,
+        "pickupLabor": 0,
+        "equipment": 29.750000000000004,
+        "other": 10
+      },
+      "totalCost": 825.75,
+      "income": 2800,
+      "profit": 1974.25,
+      "profitPerJin": 0.5640714285714286,
+      "profitPerTrip": 28.20357142857143,
+      "costPerJin": 0.23592857142857143,
+      "pickupIncluded": false,
+      "flightHeight": 5,
+      "perChargeOil": 16.666666666666668
+    }
+  }
+}
