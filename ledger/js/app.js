@@ -175,15 +175,29 @@
   function renderReceipts(list) {
     const rows = list.map(r0 => {
       const adv = r0.from_advance_id ? ' · 预收抵扣' : '';
+      const alloc = (() => { try { return r0.allocations ? JSON.parse(r0.allocations).items || [] : []; } catch (e) { return []; } })();
+      const allocText = alloc.length ? ` · 核销 ${alloc.length} 张账单` : '';
       return `<tr>
         <td>${esc(r0.receipt_no)}</td><td>${esc(r0.party_name || '—')}</td>
         <td class="num"><b>${Core.fmtYuan(r0.amount_cents)}</b></td>
-        <td>${esc(Core.MAPS.METHOD[r0.method] || r0.method)}${adv}</td>
-        <td>${esc(r0.bill_no || '—')}</td><td>${(r0.occurred_at || '').slice(0, 10)}</td>
+        <td>${esc(Core.MAPS.METHOD[r0.method] || r0.method)}${adv}${allocText}</td>
+        <td>${esc(r0.bill_no || (alloc.length ? '按客户核销' : '—'))}</td><td>${(r0.occurred_at || '').slice(0, 10)}</td>
         <td>${r0.status === 'void' ? tag('已作废', 'err') : `<button class="lg-btn danger" data-act="rc-void" data-id="${r0.id}" data-no="${esc(r0.receipt_no)}">作废</button>`}</td>
       </tr>`;
     }).join('');
+    const custOpts = parties.filter(p => p.type === 'customer')
+      .map(p => `<option value="${p.id}">${esc(p.name)}${p.village ? '（' + esc(p.village) + (p.team ? p.team + '队' : '') + '）' : ''}</option>`).join('');
     return `<div class="lg-panel">
+      <h2>按客户收款（一笔钱自动按最早未清账单核销，余额转预收）</h2>
+      <div class="lg-form">
+        <label>客户<select id="rcCust">${custOpts}</select></label>
+        <label>金额(元)<input id="rcCustAmount" type="number" step="0.01" min="0.01"></label>
+        <label>方式<select id="rcCustMethod"><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option><option value="bank">银行</option></select></label>
+        <label>备注<input id="rcCustNote" placeholder="选填"></label>
+        <button class="lg-btn primary" data-act="rc-cust-save">按客户收款</button>
+      </div>
+    </div>
+    <div class="lg-panel">
       <h2>收款记录（作废=反向分录+账单回退）</h2>
       <table class="lg-table"><thead><tr>
         <th>单号</th><th>客户</th><th>金额(元)</th><th>方式</th><th>账单</th><th>日期</th><th>操作</th>
@@ -314,6 +328,52 @@
     </div>`;
   }
 
+  /* ---------- 页签：报表 ---------- */
+  async function renderReports() {
+    const s = await Api.get('/api/reports/summary');
+    const months = await Api.get('/api/reports/by-month');
+    const custs = await Api.get('/api/reports/by-customer');
+    const monthRows = months.map(m => `<tr>
+        <td>${esc(m.month)}</td>
+        <td class="num">${Core.fmtYuan(m.income_cents)}</td>
+        <td class="num">${Core.fmtYuan(m.expense_cents)}</td>
+        <td class="num"><b>${Core.fmtYuan(m.profit_cents)}</b></td>
+      </tr>`).join('');
+    const expRows = s.expense_by_category.map(c => `<tr><td>${esc(c.code)} ${esc(c.name)}</td><td class="num">${Core.fmtYuan(c.cents)}</td></tr>`).join('');
+    const custRows = custs.map(c => `<tr>
+        <td>${esc(c.name || '—')}</td>
+        <td class="num">${Core.fmtYuan(c.income_cents)}</td>
+        <td class="num">${Core.fmtYuan(c.receivable_cents)}</td>
+        <td class="num">${Core.fmtYuan(c.prepaid_cents)}</td>
+      </tr>`).join('');
+    return `<div class="lg-panel">
+      <h2>总览</h2>
+      <table class="lg-table"><tbody>
+        <tr><td>收入(确认口径)</td><td class="num"><b>${Core.fmtYuan(s.income_cents)}</b></td>
+            <td>支出</td><td class="num"><b>${Core.fmtYuan(s.expense_cents)}</b></td></tr>
+        <tr><td>利润</td><td class="num"><b>${Core.fmtYuan(s.profit_cents)}</b></td>
+            <td>应收余额</td><td class="num">${Core.fmtYuan(s.receivable_cents)}</td></tr>
+        <tr><td>客户预收余额</td><td class="num">${Core.fmtYuan(s.prepaid_cents)}</td>
+            <td>员工预支余额</td><td class="num">${Core.fmtYuan(s.advance_to_worker_cents)}</td></tr>
+      </tbody></table>
+    </div>
+    <div class="lg-panel">
+      <h2>月度盈亏（确认口径）</h2>
+      <table class="lg-table"><thead><tr><th>月份</th><th>收入(元)</th><th>支出(元)</th><th>利润(元)</th></tr></thead>
+      <tbody>${monthRows || '<tr><td colspan="4">暂无</td></tr>'}</tbody></table>
+    </div>
+    <div class="lg-panel">
+      <h2>支出分类</h2>
+      <table class="lg-table"><thead><tr><th>科目</th><th>金额(元)</th></tr></thead>
+      <tbody>${expRows || '<tr><td colspan="2">暂无</td></tr>'}</tbody></table>
+    </div>
+    <div class="lg-panel">
+      <h2>客户盈利与余额</h2>
+      <table class="lg-table"><thead><tr><th>客户</th><th>累计收入(元)</th><th>欠款(元)</th><th>预收余额(元)</th></tr></thead>
+      <tbody>${custRows || '<tr><td colspan="4">暂无</td></tr>'}</tbody></table>
+    </div>`;
+  }
+
   /* ---------- 渲染调度 ---------- */
   const state = { tab: 'jobs', _advances: [] };
 
@@ -326,7 +386,10 @@
     } else if (tab === 'bills') {
       $main.innerHTML = renderBills(await Api.bills());
     } else if (tab === 'receipts') {
+      if (!parties.length) { try { parties = await Api.parties(); } catch (e) { parties = []; } }
       $main.innerHTML = renderReceipts(await Api.receipts());
+    } else if (tab === 'reports') {
+      $main.innerHTML = await renderReports();
     } else if (tab === 'payments') {
       state._advances = await Api.advances();
       $main.innerHTML = renderPayments(await Api.payments());
@@ -458,6 +521,17 @@
           amount_cents: amount == null ? undefined : amount,
           adjust_cents: adjust == null ? undefined : adjust
         }), '账单已更新');
+        break;
+      }
+      case 'rc-cust-save': {
+        const amount = Core.yuanInputToCents(document.getElementById('rcCustAmount').value);
+        if (!needAmount(amount)) return;
+        run(() => Api.createReceipt({
+          party_id: Number(document.getElementById('rcCust').value),
+          amount_cents: amount,
+          method: document.getElementById('rcCustMethod').value,
+          note: document.getElementById('rcCustNote').value || undefined
+        }), '按客户收款已登记（FIFO 核销，余额转预收）');
         break;
       }
       case 'rc-save': {

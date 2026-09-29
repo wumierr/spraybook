@@ -115,7 +115,7 @@ test('撤回确认：红冲原分录（原分录不动）+ 账单作废 + 作业
   const revLines = db.prepare('SELECT * FROM journal_lines WHERE entry_id=?').all(rev.id);
   assert.strictEqual(revLines.length, lines1.length);
   for (const l1 of lines1) {
-    const f = revLines.find(x => x.account_id === l1.account_id && x.memo.includes('红冲'));
+    const f = revLines.find(x => x.account_id === l1.account_id && x.amount_cents === l1.amount_cents && x.memo.includes("红冲"));
     assert.ok(f, '每行都有红冲对应行');
     assert.strictEqual(f.amount_cents, l1.amount_cents);
     assert.notStrictEqual(f.direction, l1.direction);
