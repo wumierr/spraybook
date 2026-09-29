@@ -1,0 +1,76 @@
+/* ============================================================
+   ledger/css/ledger.css — 记账后台样式（独立于计算器样式）
+   ============================================================ */
+:root {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --border: #dde3e9;
+  --text: #1c2733;
+  --muted: #6b7a89;
+  --accent: #0e7c66;
+  --accent-soft: #e2f3ee;
+  --danger: #c0392b;
+  --warn: #b7791f;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141a20; --panel: #1c242c; --border: #2c3742; --text: #e6edf3;
+    --muted: #8fa1b3; --accent: #2fbf9a; --accent-soft: #1d3a33;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif;
+  font-size: 14px;
+}
+.lg-header {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+.lg-header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lg-logo { font-size: 20px; }
+.lg-header h1 { font-size: 16px; margin: 0; }
+.lg-summary { color: var(--muted); font-size: 12px; }
+.lg-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.lg-nav button {
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 13px;
+}
+.lg-nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.lg-main { padding: 14px 16px 60px; max-width: 1200px; margin: 0 auto; }
+.lg-panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 14px; overflow-x: auto; }
+.lg-panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+table.lg-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }
+table.lg-table th, table.lg-table td { border-bottom: 1px solid var(--border); padding: 7px 8px; text-align: left; white-space: nowrap; }
+table.lg-table th { color: var(--muted); font-weight: 600; }
+table.lg-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.lg-tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--accent-soft); color: var(--accent); }
+.lg-tag.warn { background: #fdf3e0; color: var(--warn); }
+.lg-tag.err { background: #fbe9e7; color: var(--danger); }
+.lg-btn {
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.lg-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.lg-btn.danger { color: var(--danger); border-color: var(--danger); }
+.lg-btn:disabled { opacity: .45; cursor: not-allowed; }
+.lg-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.lg-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.lg-form input, .lg-form select {
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  background: var(--bg); color: var(--text); font-size: 13px; min-width: 90px;
+}
+.lg-form input:focus, .lg-form select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.lg-toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 8px;
+  font-size: 13px; z-index: 99; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+}
+.lg-toast.err { background: var(--danger); color: #fff; }
+.lg-detail { background: var(--bg); border: 1px dashed var(--border); border-radius: 8px; padding: 10px; margin-top: 10px; }
+.lg-detail input { width: 90px; }
+.lg-balance { color: var(--accent); font-weight: 600; }
+.lg-balance.bad { color: var(--danger); }

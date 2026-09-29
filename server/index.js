@@ -13,6 +13,7 @@ const express = require('express');
 const { initDb } = require('./db/client');
 const { ApiError } = require('./services/apiError');
 const { createJobsRouter } = require('./routes/jobs');
+const { createLedgerRouter } = require('./routes/ledger');
 
 const ROOT = path.join(__dirname, '..');      // 仓库根（计算器所在）
 const DATA_DIR = process.env.SPRAYBOOK_DATA_DIR || path.join(ROOT, 'data');
@@ -41,7 +42,7 @@ function buildApp(db) {
   });
 
   app.use('/api', createJobsRouter(db));
-  // M4/M5: settlements/bills/receipts/payments/advances/journal 路由挂载点
+  app.use('/api', createLedgerRouter(db));
 
   app.use('/api', (req, res) => {
     res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: `未知 API: ${req.method} ${req.path}` } });
