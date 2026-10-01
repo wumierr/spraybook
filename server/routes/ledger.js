@@ -55,10 +55,19 @@ function createLedgerRouter(db) {
     res.json({ ok: true, data: finance.createReceipt(db, req.body) });
   });
   router.get('/receipts', (req, res) => res.json({ ok: true, data: finance.listReceipts(db) }));
+  router.patch('/receipts/:id', (req, res) => {
+    res.json({ ok: true, data: finance.updateReceipt(db, Number(req.params.id), req.body) });
+  });
   router.post('/payments', (req, res) => {
     res.json({ ok: true, data: finance.createPayment(db, req.body) });
   });
   router.get('/payments', (req, res) => res.json({ ok: true, data: finance.listPayments(db) }));
+  router.patch('/payments/:id', (req, res) => {
+    res.json({ ok: true, data: finance.updatePayment(db, Number(req.params.id), req.body) });
+  });
+  router.patch('/advances/:id', (req, res) => {
+    res.json({ ok: true, data: finance.updateAdvanceNote(db, Number(req.params.id), req.body) });
+  });
   router.post('/advances', (req, res) => {
     res.json({ ok: true, data: finance.createAdvance(db, req.body) });
   });
@@ -107,19 +116,6 @@ function createLedgerRouter(db) {
       from: req.query.from, to: req.query.to,
       ref_type: req.query.ref_type, ref_id: req.query.ref_id ? Number(req.query.ref_id) : undefined
     }) });
-  });
-
-  /* ---------- 汇总（P0 简版视图，M6 完善报表） ---------- */
-  router.get('/summary', (req, res) => {
-    const row = db.prepare(
-      `SELECT
-        (SELECT COALESCE(SUM(total_spray_fee_cents + total_pesticide_fee_cents),0) FROM settlements WHERE status = 'confirmed') AS settled_income_cents,
-        (SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE status = 'active') AS expense_cents,
-        (SELECT COALESCE(SUM(amount_cents),0) FROM receipts WHERE status = 'active') AS received_cents,
-        (SELECT COALESCE(SUM(amount_cents + adjust_cents - paid_cents),0) FROM bills WHERE status IN ('unpaid','partial')) AS receivable_cents,
-        (SELECT COALESCE(SUM(balance_cents),0) FROM advances WHERE direction='prepaid_by_customer' AND status != 'void') AS prepaid_cents
-      `).get();
-    res.json({ ok: true, data: row });
   });
 
   return router;
