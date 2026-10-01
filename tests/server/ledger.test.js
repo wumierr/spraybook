@@ -281,8 +281,9 @@ test('重复结算拒绝；/summary 汇总出数', async () => {
   await post(`${base}/settlements`, { job_id: job.id });
   const dup = await post(`${base}/settlements`, { job_id: job.id });
   assert.strictEqual(dup.body.error.code, 'INVALID_STATE');
-  const sum = (await json(`${base}/summary`)).body.data;
-  assert.ok('settled_income_cents' in sum && 'receivable_cents' in sum);
+  // 旧 /api/summary 已删（P2-3），改用 /api/reports/summary
+  const sum = (await json(`${base}/reports/summary`)).body.data;
+  assert.ok('profit_cents' in sum && 'receivable_cents' in sum);
 });
 
 test('吊运结算：单行 + party 指定', async () => {

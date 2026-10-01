@@ -50,7 +50,7 @@
     createSplit: (b) => Api.post('/api/splits', b),
     voidFinance: (table, id) => Api.post('/api/' + table + '/' + id + '/void'),
     journal: () => Api.get('/api/journal'),
-    summary: () => Api.get('/api/summary'),
+    summary: () => Api.get('/api/reports/summary'),
     parties: () => Api.get('/api/parties'),
     // M8 导入
     importParse: (filename, base64) => Api.post('/api/import/parse', { filename, base64 }),
@@ -60,6 +60,9 @@
     importApply: (id) => Api.post('/api/import/batches/' + id + '/apply', {}),
     importRecon: (id) => Api.get('/api/import/batches/' + id + '/reconciliation'),
     importOpening: (b) => Api.post('/api/import/opening', b),
+    editReceipt: (id, b) => Api.patch('/api/receipts/' + id, b),
+    editPayment: (id, b) => Api.patch('/api/payments/' + id, b),
+    editAdvanceNote: (id, b) => Api.patch('/api/advances/' + id, b),
     // M7 主数据
     masterList: (t) => Api.get('/api/master/' + t),
     masterCreate: (t, b) => Api.post('/api/' + t, b),

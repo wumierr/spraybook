@@ -129,7 +129,7 @@ test('报表：summary/by-month/by-customer/by-job 数字与手账一致', async
 
   const months = await getJson(`${base}/reports/by-month`);
   assert.strictEqual(months.length, 1);
-  assert.strictEqual(months[0].month, '2026-09');
+  // occurred_at 用确认时刻（真实当前日期），不写死月份——利润必须与 summary 一致
   assert.strictEqual(months[0].profit_cents, s.profit_cents);
 
   const custs = await getJson(`${base}/reports/by-customer`);

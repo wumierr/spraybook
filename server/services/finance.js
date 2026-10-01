@@ -135,6 +135,101 @@ function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_a
   return getActive(db, 'receipts', tx());
 }
 
+/** 编辑收款（P2-3）：红冲原分录 + 更新 + 新分录；按客户核销/预收抵扣不支持编辑，走作废重录 */
+function updateReceipt(db, id, { amount_cents, method, occurred_at, note, collector_name }) {
+  const r = getActive(db, 'receipts', id);
+  if (r.status === 'void') throw new ApiError('INVALID_STATE', '已作废收款不可编辑');
+  if (r.allocations) throw new ApiError('INVALID_STATE', '按客户核销的收款不支持编辑，请作废后重录');
+  if (r.from_advance_id) throw new ApiError('INVALID_STATE', '预收抵扣收款不支持编辑，请作废后重录');
+  const bill = r.bill_id ? getActive(db, 'bills', r.bill_id) : null;
+  const newAmount = amount_cents != null ? amount_cents : r.amount_cents;
+  if (!Number.isInteger(newAmount) || newAmount <= 0) throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
+  const now = nowISO();
+  const tx = db.transaction(() => {
+    const entry = db.prepare(
+      "SELECT id FROM journal_entries WHERE ref_type='receipt' AND ref_id=? AND status='active' AND event_type='receipt'").get(id);
+    if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '编辑收款 ' + r.receipt_no });
+    const newMethod = method || r.method;
+    const newOccurred = occurred_at || r.occurred_at;
+    const cashCode = newMethod === 'wechat' ? '1002' : newMethod === 'alipay' ? '1003' : newMethod === 'bank' ? '1004' : '1001';
+    db.prepare(
+      `UPDATE receipts SET amount_cents=?, method=?, occurred_at=?, note=COALESCE(?, note), collector_name=COALESCE(?, collector_name), updated_at=? WHERE id=?`)
+      .run(newAmount, newMethod, newOccurred, note ?? null, collector_name ?? null, now, id);
+    if (bill) {
+      const paid = bill.paid_cents - r.amount_cents + newAmount;
+      const payable = bill.amount_cents + bill.adjust_cents;
+      db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
+        .run(paid, paid >= payable ? 'paid' : 'partial', now, bill.id);
+      postEntry(db, {
+        event_type: 'receipt', ref_type: 'receipt', ref_id: id,
+        occurred_at: newOccurred, memo: '收款(改) ' + r.receipt_no,
+        lines: [
+          { account_code: cashCode, direction: 'debit', amount_cents: newAmount, party_id: r.party_id, memo: '收款' },
+          { account_code: '1122', direction: 'credit', amount_cents: newAmount, party_id: r.party_id, memo: '核销 ' + bill.bill_no }
+        ]
+      });
+    } else {
+      postEntry(db, {
+        event_type: 'receipt', ref_type: 'receipt', ref_id: id,
+        occurred_at: newOccurred, memo: '收款(改) ' + r.receipt_no,
+        lines: [
+          { account_code: cashCode, direction: 'debit', amount_cents: newAmount, party_id: r.party_id, memo: '收款' },
+          { account_code: '1123', direction: 'credit', amount_cents: newAmount, party_id: r.party_id, memo: '预收款' }
+        ]
+      });
+    }
+    logEdit(db, { table: 'receipts', recordId: id, action: 'update',
+      before: { amount_cents: r.amount_cents, method: r.method }, after: { amount_cents: newAmount, method: newMethod } });
+  });
+  tx();
+  return getActive(db, 'receipts', id);
+}
+
+/** 编辑支出（P2-3）：红冲原分录 + 更新 + 新分录 */
+function updatePayment(db, id, { category, amount_cents, occurred_at, note, method, payee_party_id }) {
+  const p = getActive(db, 'payments', id);
+  if (p.status === 'void') throw new ApiError('INVALID_STATE', '已作废支出不可编辑');
+  const newAmount = amount_cents != null ? amount_cents : p.amount_cents;
+  if (!Number.isInteger(newAmount) || newAmount <= 0) throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
+  const newCategory = category || p.category;
+  if (!PAYMENT_CATEGORIES.includes(newCategory)) throw new ApiError('VALIDATION', 'category 非法');
+  const now = nowISO();
+  const tx = db.transaction(() => {
+    const entry = db.prepare(
+      "SELECT id FROM journal_entries WHERE ref_type='payment' AND ref_id=? AND status='active' AND event_type='payment'").get(id);
+    if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '编辑支出 ' + p.payment_no });
+    const newMethod = method || 'cash';
+    const cashCode = newMethod === 'wechat' ? '1002' : newMethod === 'alipay' ? '1003' : newMethod === 'bank' ? '1004' : '1001';
+    db.prepare(
+      `UPDATE payments SET category=?, amount_cents=?, occurred_at=?, note=COALESCE(?, note), payee_party_id=COALESCE(?, payee_party_id), updated_at=? WHERE id=?`)
+      .run(newCategory, newAmount, occurred_at || p.occurred_at, note ?? null, payee_party_id ?? null, now, id);
+    postEntry(db, {
+      event_type: 'payment', ref_type: 'payment', ref_id: id,
+      occurred_at: occurred_at || p.occurred_at, memo: '支出(改) ' + p.payment_no,
+      lines: [
+        { account_code: CATEGORY_ACCOUNT[newCategory], direction: 'debit', amount_cents: newAmount, party_id: p.payee_party_id, job_id: p.job_id, memo: note || p.note },
+        { account_code: cashCode, direction: 'credit', amount_cents: newAmount, party_id: p.payee_party_id, memo: '付款' }
+      ]
+    });
+    logEdit(db, { table: 'payments', recordId: id, action: 'update',
+      before: { amount_cents: p.amount_cents, category: p.category }, after: { amount_cents: newAmount, category: newCategory } });
+  });
+  tx();
+  return getActive(db, 'payments', id);
+}
+
+/** 编辑预收/预支备注（P2-3，金额变动走冲销/作废） */
+function updateAdvanceNote(db, id, { note }) {
+  const a = getActive(db, 'advances', id);
+  const now = nowISO();
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE advances SET note = ?, updated_at = ? WHERE id = ?').run(note ?? null, now, id);
+    logEdit(db, { table: 'advances', recordId: id, action: 'update', before: { note: a.note }, after: { note: note ?? null } });
+  });
+  tx();
+  return getActive(db, 'advances', id);
+}
+
 /* ---------------- 支出 ---------------- */
 
 const PAYMENT_CATEGORIES = ['fuel', 'chemical', 'repair', 'meal', 'equipment', 'labor', 'other'];
@@ -386,7 +481,8 @@ function listSplits(db) {
 }
 
 module.exports = {
-  createReceipt, createPayment, createAdvance, settleAdvance, createSplit,
+  createReceipt, updateReceipt, createPayment, updatePayment, updateAdvanceNote,
+  createAdvance, settleAdvance, createSplit,
   voidFinanceRecord, listReceipts, listPayments, listAdvances, listSplits,
   PAYMENT_CATEGORIES
 };

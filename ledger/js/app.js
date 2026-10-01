@@ -45,8 +45,9 @@
   function actions(...btns) { return btns.filter(Boolean).join(' '); }
 
   /* ---------- 页签：工单 ---------- */
-  function renderJobs(jobs) {
-    const rows = jobs.map(j => {
+  function renderJobs(jobsAll) {
+    const rowsAll = jobsAll.map(j => { const r = Core.jobRow(j); return { ...r, _month: (j.job_date || '').slice(0, 7) }; });
+    const rows = byMonth(rowsAll, '_month', 'jobs').map(j => {
       const r = Core.jobRow(j);
       return `<tr>
         <td>${esc(r.job_no)}</td><td>${esc(r.job_date)}</td><td>${esc(r.type)}</td>
@@ -61,6 +62,7 @@
     }).join('');
     return `<div class="lg-panel">
       <h2>现场工单（计算器上报，只读执行数据；金额可更正）</h2>
+      ${monthStrip('jobs', rowsAll, '_month')}
       <table class="lg-table"><thead><tr>
         <th>单号</th><th>日期</th><th>类型</th><th>状态</th><th>规模</th><th>收入(元)</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无工单——请用计算器完成作业并点"同步到账本"</td></tr>'}</tbody></table>
@@ -150,8 +152,9 @@
   }
 
   /* ---------- 页签：账单 ---------- */
-  function renderBills(bills) {
-    const rows = bills.map(b0 => {
+  function renderBills(billsAll) {
+    const rowsAll = billsAll.map(b0 => { const r = Core.billRow(b0); return { ...r, _month: String(b0.issued_at || '').slice(0, 7) }; });
+    const rows = byMonth(rowsAll, '_month', 'bills').map(b0 => {
       const b = Core.billRow(b0);
       return `<tr>
         <td>${esc(b.bill_no)}</td><td>${esc(b.party)}</td><td>${tag(b.statusText)}</td>
@@ -165,6 +168,7 @@
     }).join('');
     return `<div class="lg-panel">
       <h2>账单（确认后只读；未收可改金额/抹零；收款在「收款」页或下方按钮）</h2>
+      ${monthStrip('bills', rowsAll, '_month')}
       <table class="lg-table"><thead><tr>
         <th>账单号</th><th>客户</th><th>状态</th><th>金额</th><th>调整</th><th>应收</th><th>已收</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="8">暂无账单</td></tr>'}</tbody></table>
@@ -182,7 +186,10 @@
         <td class="num"><b>${Core.fmtYuan(r0.amount_cents)}</b></td>
         <td>${esc(Core.MAPS.METHOD[r0.method] || r0.method)}${adv}${allocText}</td>
         <td>${esc(r0.bill_no || (alloc.length ? '按客户核销' : '—'))}</td><td>${(r0.occurred_at || '').slice(0, 10)}</td>
-        <td>${r0.status === 'void' ? tag('已作废', 'err') : `<button class="lg-btn danger" data-act="rc-void" data-id="${r0.id}" data-no="${esc(r0.receipt_no)}">作废</button>`}</td>
+        <td>${r0.status === 'void' ? tag('已作废', 'err') : actions(
+          `<button class="lg-btn" data-act="rc-edit" data-id="${r0.id}" data-amt="${r0.amount_cents}" data-method="${esc(r0.method)}" data-note="${esc(r0.note || '')}">编辑</button>`,
+          `<button class="lg-btn danger" data-act="rc-void" data-id="${r0.id}" data-no="${esc(r0.receipt_no)}">作废</button>`
+        )}</td>
       </tr>`;
     }).join('');
     const custOpts = parties.filter(p => p.type === 'customer')
@@ -231,7 +238,10 @@
         <td class="num"><b>${Core.fmtYuan(p0.amount_cents)}</b></td>
         <td>${esc(p0.payee_name || '—')}</td><td>${(p0.occurred_at || '').slice(0, 10)}</td>
         <td>${esc(p0.note || '')}</td>
-        <td>${p0.status === 'void' ? tag('已作废', 'err') : `<button class="lg-btn danger" data-act="pm-void" data-id="${p0.id}" data-no="${esc(p0.payment_no)}">作废</button>`}</td>
+        <td>${p0.status === 'void' ? tag('已作废', 'err') : actions(
+          `<button class="lg-btn" data-act="pm-edit" data-id="${p0.id}" data-amt="${p0.amount_cents}" data-cat="${esc(p0.category)}" data-note="${esc(p0.note || '')}">编辑</button>`,
+          `<button class="lg-btn danger" data-act="pm-void" data-id="${p0.id}" data-no="${esc(p0.payment_no)}">作废</button>`
+        )}</td>
       </tr>`).join('');
     return `<div class="lg-panel">
       <h2>登记支出（油费/药费/维修/吃饭/设备/人工）</h2>
@@ -310,8 +320,9 @@
   }
 
   /* ---------- 页签：流水 ---------- */
-  function renderJournal(entries) {
-    const rows = entries.map(e0 => {
+  function renderJournal(entriesAll) {
+    const rowsAll = entriesAll.map(e0 => { const r = Core.journalRow(e0); return { ...r, _month: r.occurred }; });
+    const rows = byMonth(rowsAll, '_month', 'journal').map(e0 => {
       const e = Core.journalRow(e0);
       const lineHtml = arr => arr.map(l => `${esc(l.text)} <span class="num">${l.yuan}</span>`).join('<br>') || '—';
       return `<tr>
@@ -322,6 +333,7 @@
     }).join('');
     return `<div class="lg-panel">
       <h2>复式流水（借贷必须平衡；红冲凭证 event=reversal）</h2>
+      ${monthStrip('journal', rowsAll, '_month')}
       <table class="lg-table"><thead><tr>
         <th>凭证号</th><th>日期</th><th>事件</th><th>摘要</th><th>借方</th><th>贷方</th><th>平衡/金额</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无凭证</td></tr>'}</tbody></table>
@@ -508,7 +520,20 @@
   }
 
   /* ---------- 渲染调度 ---------- */
-  const state = { tab: 'jobs', _advances: [] };
+  const state = { tab: 'jobs', _advances: [], month: { jobs: 'all', bills: 'all', journal: 'all' } };
+
+  /** 月份切换条 */
+  function monthStrip(tab, rows, field) {
+    const months = Core.monthKeys(rows, field);
+    const cur = state.month[tab] || 'all';
+    const chip = (m, label) => `<button class="lg-btn ${cur === m ? 'primary' : ''}" data-act="month-set" data-tab="${tab}" data-month="${m}">${label}</button>`;
+    return `<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px">${chip('all', '全部')}${months.map(m => chip(m, m)).join('')}</div>`;
+  }
+  function byMonth(rows, field, tab) {
+    const m = state.month[tab];
+    if (!m || m === 'all') return rows;
+    return rows.filter(r => String((r[field] || '')).slice(0, 7) === m);
+  }
 
   async function render() {
     const tab = state.tab;
@@ -687,6 +712,26 @@
         }), '收款已登记');
         break;
       }
+      case 'rc-edit': {
+        const v = window.prompt(`修改收款金额(元)，当前 ${Core.fmtYuan(Number(btn.dataset.amt))}：`, Number(btn.dataset.amt) / 100);
+        if (v == null) return;
+        const amount = Core.yuanInputToCents(v);
+        if (!needAmount(amount)) return;
+        const method = window.prompt('方式（cash/wechat/alipay/bank）：', btn.dataset.method) ?? undefined;
+        const note = window.prompt('备注（可空）：', btn.dataset.note) ?? undefined;
+        run(() => Api.editReceipt(id, { amount_cents: amount, method: method || undefined, note: note || undefined }), '收款已更新');
+        break;
+      }
+      case 'pm-edit': {
+        const v = window.prompt(`修改支出金额(元)，当前 ${Core.fmtYuan(Number(btn.dataset.amt))}：`, Number(btn.dataset.amt) / 100);
+        if (v == null) return;
+        const amount = Core.yuanInputToCents(v);
+        if (!needAmount(amount)) return;
+        const category = window.prompt('类别（fuel/chemical/repair/meal/equipment/labor/other）：', btn.dataset.cat) ?? undefined;
+        const note = window.prompt('备注（可空）：', btn.dataset.note) ?? undefined;
+        run(() => Api.editPayment(id, { amount_cents: amount, category: category || undefined, note: note || undefined }), '支出已更新');
+        break;
+      }
       case 'rc-void':
         confirmThen(`作废收款 ${btn.dataset.no}？将生成反向分录并回退账单。`, () => Api.voidFinance('receipts', id));
         break;
@@ -727,6 +772,10 @@
       }
       case 'adv-void':
         confirmThen(`作废预收/预支 ${btn.dataset.no}？`, () => Api.voidFinance('advances', id));
+        break;
+      case 'month-set':
+        state.month[btn.dataset.tab] = btn.dataset.month;
+        render().catch(err => toast(err.message, true));
         break;
       case 'md-save-operator':
         run(() => Api.saveSettings({ operator: document.getElementById('mdOperator').value || 'local' }), '记账人已保存');

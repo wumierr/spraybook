@@ -96,7 +96,18 @@
     };
   }
 
+  /** 从行集合派生月份集合（'YYYY-MM'，倒序） */
+  function monthKeys(rows, field) {
+    const set = new Set();
+    for (const r of rows || []) {
+      const d = String((r[field] || '')).slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(d)) set.add(d);
+    }
+    return [...set].sort().reverse();
+  }
+
   const Core = {
+    monthKeys,
     fmtYuan, yuanInputToCents, statusLabel,
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow,
     MAPS: { JOB_STATUS, SETTLEMENT_STATUS, BILL_STATUS, PAYMENT_CATEGORY, ADVANCE_DIRECTION, METHOD, PARTY_TYPE }
