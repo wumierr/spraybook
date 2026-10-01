@@ -74,3 +74,15 @@ table.lg-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .lg-detail input { width: 90px; }
 .lg-balance { color: var(--accent); font-weight: 600; }
 .lg-balance.bad { color: var(--danger); }
+
+/* ---------- 浮动编辑按钮（右下角，跟随滚动） ---------- */
+#lgFab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 60;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+}
+.lg-fab-btn {
+  border: none; border-radius: 999px; padding: 12px 20px;
+  font-size: 14px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.3);
+}
+.lg-fab-edit, .lg-fab-save { background: var(--accent); color: #fff; }
+.lg-fab-cancel { background: var(--panel); color: var(--danger); border: 1px solid var(--danger); }

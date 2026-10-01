@@ -477,7 +477,7 @@ function applyJobRow(db, parsed, batchId, rowId, operator) {
   const totalReceivable = (parsed.receivable_cents || 0) + extraIncome;
   const totalPaid = (parsed.paid_cents || 0) + extraIncome; // 裁决 D：按已收
 
-  const jobNo = `IMP-${batchId}-${rowId}`;
+  const jobNo = nextBizNo(db, 'jobs', 'job_no', 'J', parsed.date); // 可读单号 J+日期-当日序号
   const jobInfo = db.prepare(
     `INSERT INTO jobs (job_no, client_job_id, job_type, status, job_date, note, operator_names, source,
        plant_type_name, total_area_mu, income_cents, total_cost_cents, profit_cents, referral_name,

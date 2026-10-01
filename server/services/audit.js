@@ -13,14 +13,15 @@ function generateJobNo(dateStr, rand = Math.random) {
   return `${ymd}-${suffix}`;
 }
 
-/** 业务单号：前缀+日期+当日序号（settlement/bill/receipt/payment/advance/entry） */
-function nextBizNo(db, table, column, prefix) {
-  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const like = `${prefix}${today}-%`;
+/** 业务单号：前缀+日期+当日序号（settlement/bill/receipt/payment/advance/entry/jobs）
+ *  dateStr 可指定业务日期（导入历史单据按作业日期编号），缺省今天 */
+function nextBizNo(db, table, column, prefix, dateStr) {
+  const day = String(dateStr || new Date().toISOString().slice(0, 10)).slice(0, 10).replace(/-/g, '');
+  const like = `${prefix}${day}-%`;
   const row = db.prepare(
     `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} LIKE ?`
   ).get(like);
-  return `${prefix}${today}-${String(row.n + 1).padStart(3, '0')}`;
+  return `${prefix}${day}-${String(row.n + 1).padStart(3, '0')}`;
 }
 
 /** 编辑留痕（operator P0 固定 local，M7 补设置页 TODO） */
