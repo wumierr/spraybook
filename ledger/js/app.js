@@ -97,7 +97,8 @@
   }
 
   /* ---------- 页签：结算 ---------- */
-  function renderSettlements(list) {
+  function renderSettlements(listAll) {
+    const list = byMonth(listAll, 'job_date', 'settlements');
     const rows = list.map(s0 => {
       const s = Core.settlementRow(s0);
       return `<tr>
@@ -116,6 +117,7 @@
     }).join('');
     return `<div class="lg-panel">
       <h2>结算单（确认后生成账单与分录；撤回=红冲重开）</h2>
+      ${monthStrip('settlements', listAll, 'job_date')}
       <table class="lg-table"><thead><tr>
         <th>结算号</th><th>作业单</th><th>日期</th><th>状态</th>
         <th>作业费(元)</th><th>药费(元)</th><th>应收合计</th><th>已收</th><th>操作</th>
@@ -176,18 +178,18 @@
   }
 
   /* ---------- 页签：收款 ---------- */
-  function renderReceipts(list) {
+  function renderReceipts(listAll) {
+    const list = byMonth(listAll, 'occurred_at', 'receipts');
     const rows = list.map(r0 => {
       const adv = r0.from_advance_id ? ' · 预收抵扣' : '';
       const alloc = (() => { try { return r0.allocations ? JSON.parse(r0.allocations).items || [] : []; } catch (e) { return []; } })();
       const allocText = alloc.length ? ` · 核销 ${alloc.length} 张账单` : '';
       return `<tr>
         <td>${esc(r0.receipt_no)}</td><td>${esc(r0.party_name || '—')}</td>
-        <td class="num"><b>${Core.fmtYuan(r0.amount_cents)}</b></td>
-        <td>${esc(Core.MAPS.METHOD[r0.method] || r0.method)}${adv}${allocText}</td>
+        <td class="num">${editMode('receipts') ? `<input data-ek="${r0.id}" data-f="amount_cents" type="number" step="0.01" value="${(r0.amount_cents / 100).toFixed(2)}" data-orig="${(r0.amount_cents / 100).toFixed(2)}">` : `<b>${Core.fmtYuan(r0.amount_cents)}</b>`}</td>
+        <td>${editMode('receipts') ? `<input data-ek="${r0.id}" data-f="method" value="${esc(r0.method)}" data-orig="${esc(r0.method)}">` : esc(Core.MAPS.METHOD[r0.method] || r0.method)}${adv}${allocText}</td>
         <td>${esc(r0.bill_no || (alloc.length ? '按客户核销' : '—'))}</td><td>${(r0.occurred_at || '').slice(0, 10)}</td>
         <td>${r0.status === 'void' ? tag('已作废', 'err') : actions(
-          `<button class="lg-btn" data-act="rc-edit" data-id="${r0.id}" data-amt="${r0.amount_cents}" data-method="${esc(r0.method)}" data-note="${esc(r0.note || '')}">编辑</button>`,
           `<button class="lg-btn danger" data-act="rc-void" data-id="${r0.id}" data-no="${esc(r0.receipt_no)}">作废</button>`
         )}</td>
       </tr>`;
@@ -206,6 +208,7 @@
     </div>
     <div class="lg-panel">
       <h2>收款记录（作废=反向分录+账单回退）</h2>
+      ${monthStrip('receipts', listAll, 'occurred_at')}
       <table class="lg-table"><thead><tr>
         <th>单号</th><th>客户</th><th>金额(元)</th><th>方式</th><th>账单</th><th>日期</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无收款</td></tr>'}</tbody></table>
@@ -228,18 +231,18 @@
   }
 
   /* ---------- 页签：支出 ---------- */
-  function renderPayments(list) {
+  function renderPayments(listAll) {
+    const list = byMonth(listAll, 'occurred_at', 'payments');
     const catOpts = Object.entries(Core.MAPS.PAYMENT_CATEGORY)
       .map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
     const advOpts = (state._advances || []).filter(a => a.direction === 'advance_to_worker' && a.status !== 'void' && a.balance_cents > 0)
       .map(a => `<option value="${a.id}">${esc(a.party_name || a.id)}（余 ${Core.fmtYuan(a.balance_cents)}）</option>`).join('');
     const rows = list.map(p0 => `<tr>
-        <td>${esc(p0.payment_no)}</td><td>${esc(Core.MAPS.PAYMENT_CATEGORY[p0.category] || p0.category)}</td>
-        <td class="num"><b>${Core.fmtYuan(p0.amount_cents)}</b></td>
+        <td>${esc(p0.payment_no)}</td><td>${editMode('payments') ? `<input data-ek="${p0.id}" data-f="category" value="${esc(p0.category)}" data-orig="${esc(p0.category)}">` : esc(Core.MAPS.PAYMENT_CATEGORY[p0.category] || p0.category)}</td>
+        <td class="num">${editMode('payments') ? `<input data-ek="${p0.id}" data-f="amount_cents" type="number" step="0.01" value="${(p0.amount_cents / 100).toFixed(2)}" data-orig="${(p0.amount_cents / 100).toFixed(2)}">` : `<b>${Core.fmtYuan(p0.amount_cents)}</b>`}</td>
         <td>${esc(p0.payee_name || '—')}</td><td>${(p0.occurred_at || '').slice(0, 10)}</td>
         <td>${esc(p0.note || '')}</td>
         <td>${p0.status === 'void' ? tag('已作废', 'err') : actions(
-          `<button class="lg-btn" data-act="pm-edit" data-id="${p0.id}" data-amt="${p0.amount_cents}" data-cat="${esc(p0.category)}" data-note="${esc(p0.note || '')}">编辑</button>`,
           `<button class="lg-btn danger" data-act="pm-void" data-id="${p0.id}" data-no="${esc(p0.payment_no)}">作废</button>`
         )}</td>
       </tr>`).join('');
@@ -256,6 +259,7 @@
     </div>
     <div class="lg-panel">
       <h2>支出记录（作废=反向分录）</h2>
+      ${monthStrip('payments', listAll, 'occurred_at')}
       <table class="lg-table"><thead><tr>
         <th>单号</th><th>类别</th><th>金额(元)</th><th>收款方</th><th>日期</th><th>备注</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无支出</td></tr>'}</tbody></table>
@@ -263,7 +267,8 @@
   }
 
   /* ---------- 页签：预收预支 ---------- */
-  function renderAdvances(list) {
+  function renderAdvances(listAll) {
+    const list = byMonth(listAll, 'occurred_at', 'advances');
     const opts = parties.map(p => `<option value="${p.id}">${esc(p.name)}（${esc(Core.MAPS.PARTY_TYPE[p.type] || p.type)}）</option>`).join('');
     const rows = list.map(a0 => `<tr>
         <td>${esc(a0.advance_no)}</td><td>${esc(a0.party_name || '—')}</td>
@@ -288,6 +293,7 @@
     </div>
     <div class="lg-panel">
       <h2>预收/预支台账（余额=可用；预收抵账在收款页选"预收抵扣"）</h2>
+      ${monthStrip('advances', listAll, 'occurred_at')}
       <table class="lg-table"><thead><tr>
         <th>单号</th><th>对象</th><th>类型</th><th>金额</th><th>余额</th><th>日期</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无</td></tr>'}</tbody></table>
@@ -387,7 +393,9 @@
   }
 
   /* ---------- 渲染调度 ---------- */
-  const state = { tab: 'jobs', _advances: [], month: { jobs: 'all', bills: 'all', journal: 'all' } };
+  const state = { tab: 'jobs', _advances: [], month: {}, editMode: {} };
+
+  function editMode(tab) { return !!state.editMode[tab]; }
 
   /** 月份切换条 */
   function monthStrip(tab, rows, field) {
@@ -429,6 +437,7 @@
       await window.LedgerExtra.renderTab(tab, $main);
     }
     refreshSummary();
+    updateFab();
   }
 
   async function refreshSummary() {
@@ -448,6 +457,15 @@
     render().catch(err => toast(err.message, true));
   });
 
+  document.addEventListener('click', e => {
+    const fb = e.target.closest('[data-fab]');
+    if (!fb) return;
+    const tab = state.tab;
+    if (fb.dataset.fab === 'edit') { state.editMode[tab] = true; render().catch(() => {}); }
+    else if (fb.dataset.fab === 'cancel') { state.editMode[tab] = false; render().catch(() => {}); }
+    else if (fb.dataset.fab === 'save') { saveEditMode(tab); }
+  });
+
   $main.addEventListener('click', e => {
     const btn = e.target.closest('button[data-act]');
     if (btn) { handleAct(btn); return; }
@@ -460,8 +478,13 @@
     document.querySelectorAll(`[${attr}]`).forEach(inp => {
       const id = inp.getAttribute(attr);
       if (!map.has(id)) map.set(id, {});
-      map.get(id)[inp.dataset.field] = Core.yuanInputToCents(inp.value);
+      if (inp.dataset.orig !== undefined && inp.dataset.orig === inp.value) return;
+      const f = inp.dataset.field;
+      map.get(id)[f] = f.endsWith('_cents') ? Core.yuanInputToCents(inp.value) : inp.value;
     });
+    for (const [id, fields] of map) {
+      if (!Object.keys(fields).length) map.delete(id);
+    }
     return map;
   }
   function toggleDetailSlot(slot, loader) {
@@ -581,26 +604,6 @@
         }), '收款已登记');
         break;
       }
-      case 'rc-edit': {
-        const v = window.prompt(`修改收款金额(元)，当前 ${Core.fmtYuan(Number(btn.dataset.amt))}：`, Number(btn.dataset.amt) / 100);
-        if (v == null) return;
-        const amount = Core.yuanInputToCents(v);
-        if (!needAmount(amount)) return;
-        const method = window.prompt('方式（cash/wechat/alipay/bank）：', btn.dataset.method) ?? undefined;
-        const note = window.prompt('备注（可空）：', btn.dataset.note) ?? undefined;
-        run(() => Api.editReceipt(id, { amount_cents: amount, method: method || undefined, note: note || undefined }), '收款已更新');
-        break;
-      }
-      case 'pm-edit': {
-        const v = window.prompt(`修改支出金额(元)，当前 ${Core.fmtYuan(Number(btn.dataset.amt))}：`, Number(btn.dataset.amt) / 100);
-        if (v == null) return;
-        const amount = Core.yuanInputToCents(v);
-        if (!needAmount(amount)) return;
-        const category = window.prompt('类别（fuel/chemical/repair/meal/equipment/labor/other）：', btn.dataset.cat) ?? undefined;
-        const note = window.prompt('备注（可空）：', btn.dataset.note) ?? undefined;
-        run(() => Api.editPayment(id, { amount_cents: amount, category: category || undefined, note: note || undefined }), '支出已更新');
-        break;
-      }
       case 'rc-void':
         confirmThen(`作废收款 ${btn.dataset.no}？将生成反向分录并回退账单。`, () => Api.voidFinance('receipts', id));
         break;
@@ -656,6 +659,43 @@
         }), '分成已登记');
         break;
       }
+    }
+  }
+
+  /** 编辑模式保存：按页收集变更并逐行 PATCH（仅变更行） */
+  async function saveEditMode(tab) {
+    const changes = collectInputs('data-ek');
+    if (!changes.size) { state.editMode[tab] = false; render().catch(() => {}); return; }
+    let ok = 0;
+    for (const [rowId, fields] of changes) {
+      try {
+        if (tab === 'bills') await Api.patchBill(Number(rowId), fields);
+        else if (tab === 'receipts') await Api.editReceipt(Number(rowId), fields);
+        else if (tab === 'payments') await Api.editPayment(Number(rowId), fields);
+        else if (tab === 'advances') await Api.editAdvanceNote(Number(rowId), fields);
+        ok++;
+      } catch (e) { toast(`行 ${rowId} 保存失败：${e.message}`, true); }
+    }
+    toast(`已保存 ${ok} 行`);
+    state.editMode[tab] = false;
+  }
+
+  /** 右下角浮动总编辑按钮（position:fixed，跟随滚动） */
+  function updateFab() {
+    let fab = document.getElementById('lgFab');
+    if (!fab) {
+      fab = document.createElement('div');
+      fab.id = 'lgFab';
+      document.body.appendChild(fab);
+    }
+    const tab = state.tab;
+    const editableTabs = ['bills', 'receipts', 'payments', 'advances'];
+    if (!editableTabs.includes(tab)) { fab.style.display = 'none'; return; }
+    fab.style.display = '';
+    if (state.editMode[tab]) {
+      fab.innerHTML = '<button class="lg-fab-btn lg-fab-save" data-fab="save">💾 保存全部</button><button class="lg-fab-btn lg-fab-cancel" data-fab="cancel">✕ 取消</button>';
+    } else {
+      fab.innerHTML = '<button class="lg-fab-btn lg-fab-edit" data-fab="edit">✏️ 编辑本页</button>';
     }
   }
 
