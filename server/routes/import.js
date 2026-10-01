@@ -8,7 +8,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const ExcelJS = require('exceljs');
-const { parseWorkbook, applyJobRow, applyExpenseRow, cellVal } = require('../services/importExcel');
+const { parseWorkbook, applyJobRow, applyExpenseRow, scanZone, buildStaffDict, cellVal } = require('../services/importExcel');
 const { ApiError } = require('../services/apiError');
 const { logEdit, nextBizNo } = require('../services/audit');
 const { postEntry } = require('../services/journal');
@@ -37,8 +37,20 @@ function createImportRouter(db) {
       await wb.xlsx.load(buf);
       const { rows, stats } = parseWorkbook(wb);
 
-      // 原始列合计（独立于解析器对象代码的对账基线，口径与解析器分区一致）
-      const rawTotals = { receivable: 0, paid: 0, expense: 0 };
+      // 原始列合计（对账基线）。
+      // ⚠ 双向绑定：本探针的支出/收入对口径必须与 services/importExcel.js 的
+      //    scanZone 同步修改——两边规则漂移会产生假差异（历史上 900 元假差异即此因）。
+      // 支出/收入对部分直接复用解析器的 scanZone（同一实现，杜绝漂移）；
+      // 应收/实收合计保持独立列读（交叉验证解析器的字段映射）。
+      const rawTotals = { receivable: 0, paid: 0, expense: 0, income_extra: 0 };
+      // 人名字典与解析器同构建（绑定：改动需同步）
+      const allPersonValues = [];
+      for (const w2 of wb.worksheets) {
+        for (let r2 = 1; r2 <= Math.min(w2.rowCount, 200); r2++) {
+          for (let c2 = 9; c2 <= 13; c2++) allPersonValues.push(cellVal(w2.getCell(r2, c2).value));
+        }
+      }
+      const staffDict = buildStaffDict(allPersonValues);
       for (const ws of wb.worksheets) {
         // 表头定位（与解析器同规则）：按列名映射，容忍 1 月多出的"作业目的"列
         let hdrRow = null;
@@ -58,9 +70,16 @@ function createImportRouter(db) {
         if (!hdrRow) continue;
         const recvCol = inv['应收金额'];
         const paidCol = inv['实收金额'];
-        const catCol = inv['支出类型'] || inv['支出项目'] || null;
-        const amtCol = inv['支出金额/元'] || (catCol ? catCol + 1 : null);
         const nameCol = inv['姓名'] || 2;
+
+        const ym = ws.name.match(/(\d{1,2})\s*月份/);
+        const sheetMonth = ym ? Number(ym[1]) : null;
+        let sheetYear = 2026;
+        const colDate = inv['日期'] || 1;
+        for (let r = hdrRow + 1; r <= ws.rowCount; r++) {
+          const m = String(cellVal(ws.getCell(r, colDate).value) ?? '').match(/(20\d{2})/);
+          if (m) { sheetYear = Number(m[1]); break; }
+        }
 
         for (let r = hdrRow + 1; r <= ws.rowCount; r++) {
           const name = cellVal(ws.getCell(r, nameCol).value);
@@ -72,36 +91,18 @@ function createImportRouter(db) {
           if (hasName && paidCol) {
             const paid = cellVal(ws.getCell(r, paidCol).value);
             if (typeof paid === 'number') rawTotals.paid += paid;
-          }
-          // 标准列对
-          if (catCol && amtCol) {
-            const cat = cellVal(ws.getCell(r, catCol).value);
-            const amt = cellVal(ws.getCell(r, amtCol).value);
-            const catS = cat == null ? '' : String(cat).trim();
-            if (catS && typeof cat === 'string' && !/已结算|未收款/.test(catS) && typeof amt === 'number' && amt > 0) {
-              rawTotals.expense += amt;
+            else {
+              // 镜像解析器 E 规则：实收列非数值（人名串行）→ 实收=应收
+              const recv = recvCol ? cellVal(ws.getCell(r, recvCol).value) : null;
+              const s = paid == null ? '' : String(paid).trim();
+              if (typeof recv === 'number' && s && s !== '未收款' && !/已结算/.test(s)) rawTotals.paid += recv;
             }
           }
-          // 扩展区（标准金额列+1 起）：文本(≤14字,非日期起头) → 右侧 1..3 列数值
-          const start = (amtCol || 8) + 1;
-          let i = start;
-          while (i <= 20) {
-            const v = cellVal(ws.getCell(r, i).value);
-            const s = v == null ? '' : String(v).trim();
-            if (!s) { i++; continue; }
-            if (typeof v === 'string' && s.length <= 14 && !/已结算|转账|未收款/.test(s) && !/^\d/.test(s)) {
-              for (let j = i + 1; j <= Math.min(i + 3, 20); j++) {
-                const a = cellVal(ws.getCell(r, j).value);
-                if (typeof a === 'number' && a > 0) {
-                  rawTotals.expense += a;
-                  const person = ws.getCell(r, j + 1).value;
-                  i = j + (typeof person === 'string' && person.trim() && !/^\d/.test(person) ? 1 : 0);
-                  break;
-                }
-              }
-            }
-            i++;
-          }
+          // 支出 + 收入对：复用解析器 scanZone（防漂移）
+          const zone = scanZone(ws, r, inv, Math.min(ws.columnCount, 20), sheetYear, sheetMonth, staffDict);
+          for (const e of zone.expenses) rawTotals.expense += e.amount_cents / 100;
+          // 镜像解析器：收入对只在作业行（有姓名）落账，无姓名行进复核不进合计
+          if (hasName) for (const ip of zone.income_pairs) rawTotals.income_extra += ip.income_cents / 100;
         }
       }
 
@@ -273,13 +274,14 @@ function createImportRouter(db) {
          COALESCE(SUM(CASE WHEN json_extract(parsed_json,'$.kind')='expense' THEN 1 ELSE 0 END),0) AS expenses,
          COALESCE(SUM(CASE WHEN json_extract(parsed_json,'$.kind')='job' THEN json_extract(parsed_json,'$.parsed.receivable_cents') ELSE 0 END),0) AS receivable_cents,
          COALESCE(SUM(CASE WHEN json_extract(parsed_json,'$.kind')='job' THEN json_extract(parsed_json,'$.parsed.paid_cents') ELSE 0 END),0) AS paid_cents,
-         COALESCE(SUM(CASE WHEN json_extract(parsed_json,'$.kind')='expense' THEN json_extract(parsed_json,'$.parsed.amount_cents') ELSE 0 END),0) AS expense_cents
+         COALESCE(SUM(CASE WHEN json_extract(parsed_json,'$.kind')='expense' THEN json_extract(parsed_json,'$.parsed.amount_cents') ELSE 0 END),0) AS expense_cents,
+         COALESCE(SUM(CASE WHEN json_extract(parsed_json,'$.kind')='job' THEN json_extract(parsed_json,'$.parsed.extra_income_cents') ELSE 0 END),0) AS income_extra_cents
        FROM raw_import_rows WHERE batch_id = ? AND status IN ('confirmed','applied')`).get(b.id);
     const rt = raw.raw_totals || {};
     const r = (v) => Math.round(v * 100) / 100;
     const diff = {
       receivable_cents: (sums.receivable_cents || 0) - Math.round((rt.receivable || 0) * 100),
-      paid_cents: (sums.paid_cents || 0) - Math.round((rt.paid || 0) * 100),
+      paid_cents: (sums.paid_cents || 0) + (sums.income_extra_cents || 0) - Math.round(((rt.paid || 0) + (rt.income_extra || 0)) * 100),
       expense_cents: (sums.expense_cents || 0) - Math.round((rt.expense || 0) * 100)
     };
     res.json({ ok: true, data: {
