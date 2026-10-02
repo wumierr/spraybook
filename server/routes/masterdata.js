@@ -139,8 +139,10 @@ function createMasterdataRouter(db) {
       if (j.farmer_ref && !lastMap.has('ref:' + j.farmer_ref)) lastMap.set('ref:' + j.farmer_ref, j);
       if (j.farmer_name && !lastMap.has('name:' + j.farmer_name)) lastMap.set('name:' + j.farmer_name, j);
     }
+    const operatorSetting = db.prepare("SELECT value FROM settings WHERE key = 'operator'").get();
     const data = {
       generated_at: new Date().toISOString(),
+      operator: operatorSetting ? operatorSetting.value : '',
       parties: parties.map(p => {
         const last = lastMap.get('ref:' + p.id) || lastMap.get('name:' + p.name) || null;
         return {

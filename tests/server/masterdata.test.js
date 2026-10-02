@@ -71,6 +71,13 @@ test('bootstrap：主数据 + 每户欠款/预收/最近作业', async () => {
   assert.ok(zhang.receivable_cents > 0, '张大国未收款，应有欠款');
 });
 
+test('bootstrap 下发 operator（计算器同步 operator_names 的数据源）', async () => {
+  await fetch(`${base}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operator: '老沈' }) });
+  const bs = await getJson(`${base}/bootstrap`);
+  assert.strictEqual(bs.operator, '老沈', 'settings.operator 随 bootstrap 下发');
+  assert.ok(bs.parties[0].village !== undefined, 'village 字段仍在');
+});
+
 test('settings：operator 保存读取', async () => {
   const r = await fetch(`${base}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operator: '老沈' }) });
   assert.strictEqual((await r.json()).ok, true);
