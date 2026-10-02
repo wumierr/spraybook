@@ -527,6 +527,7 @@
       ${statusMap ? `<select id="ftStatus" data-tab="${tab}"><option value="">全部状态</option>${statusOpts}</select>` : ''}
       ${category ? `<select id="ftCategory" data-tab="${tab}"><option value="">全部类别</option>${catOpts}</select>` : ''}
       ${state.custFilter ? `<span class="lg-tag warn">只看：${esc(state.custFilter)} <button class="lg-btn" data-act="cust-filter-clear">×</button></span>` : ''}
+      <button class="lg-btn" data-act="csv-export" title="导出当前月份与筛选口径为 CSV（Excel 可开）">⬇ 导出CSV</button>
     </div>`;
   }
   /** 可点击的客户名（点=只看此客户；再次点同名的取消） */
@@ -674,6 +675,26 @@
     // 导入/主数据页签的处理在 app-extra.js（P2-4 拆分）
     if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
     switch (act) {
+      case 'csv-export': {
+        // 导出当前表格（月份+筛选口径；编辑态取输入值；展开明细与隐藏 slot 不导）
+        const table = document.querySelector('#lgMain table');
+        if (!table) { toast('当前页无表格可导出', true); break; }
+        const lines = [...table.querySelectorAll('tr')]
+          .filter(tr => !tr.hidden && !tr.closest('tr[hidden]'))
+          .filter(tr => !tr.querySelector('.lg-detail'))
+          .map(tr => Core.csvRow([...tr.children].map(td => {
+            const inp = td.querySelector('input,select');
+            return inp ? inp.value : td.textContent.replace(/\s+/g, ' ').trim();
+          })));
+        const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `spraybook-${state.tab}-${state.month[state.tab] || 'all'}.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        toast(`已导出 ${Math.max(lines.length - 1, 0)} 行 CSV`);
+        break;
+      }
       case 'cust-filter': {
         const name = btn.dataset.name;
         state.custFilter = state.custFilter === name ? null : name; // 再点同名的取消
