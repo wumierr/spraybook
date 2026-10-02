@@ -51,6 +51,8 @@
     voidFinance: (table, id) => Api.post('/api/' + table + '/' + id + '/void'),
     journal: () => Api.get('/api/journal'),
     summary: () => Api.get('/api/reports/summary'),
+    // P4-M1 总表（作业粒度聚合只读视图）
+    overview: (params) => Api.get('/api/overview' + (params || '')),
     parties: () => Api.get('/api/parties'),
     // M8 导入
     importParse: (filename, base64) => Api.post('/api/import/parse', { filename, base64 }),

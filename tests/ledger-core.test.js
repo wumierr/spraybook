@@ -81,6 +81,38 @@ test('journalRow：借贷分列与平衡标记', () => {
   assert.strictEqual(bad.balanced, false);
 });
 
+test('overviewRow：总表聚合行的展示派生（P4-M1）', () => {
+  const row = Core.overviewRow({
+    id: 1, job_no: 'J1', job_date: '2026-09-29T00:00:00', job_status: 'settled', source: 'import',
+    total_area_mu: 39, unit_price_cents: 3000, plant_label: '清园', extra_cents: 2500,
+    customer_names: '李秀英,王强', region: '通安', village: '金桂', team: '3',
+    operator_names: '["甲","乙"]', referral_name: '沈鹏', collector_name: '丙', note: '备注X',
+    bill_statuses: 'paid,unpaid', bill_count: 2, paid_cents: 100,
+    bill_id: 7, bill_party_id: 5, bill_adjust: -100, bill_note: '账单备注'
+  });
+  assert.strictEqual(row.job_date, '2026-09-29');
+  assert.strictEqual(row.statusText, '已结算');
+  assert.strictEqual(row.addr, '金桂·3队', '村·队 拼接');
+  assert.strictEqual(row.unitPriceYuan, '30.00');
+  assert.deepStrictEqual(row.operators, ['甲', '乙'], 'operator_names 服务端已解数组');
+  assert.deepStrictEqual(row.billStatuses, ['paid', 'unpaid']);
+  assert.strictEqual(row.extraCents, 2500);
+  // 多账单：锁定编辑、不提供登记收款按钮
+  assert.strictEqual(row.canEditBill, false, '多账单不可直填');
+  assert.strictEqual(row.canReceive, false, '多账单不提供按行收款');
+  // 单账单 unpaid：与账单页 canEdit 同口径
+  const single = Core.overviewRow({ id: 2, job_no: 'J2', job_status: 'settled', bill_statuses: 'unpaid', bill_count: 1, paid_cents: 0, bill_id: 9 });
+  assert.strictEqual(single.canEditBill, true);
+  assert.strictEqual(single.canReceive, true);
+  assert.strictEqual(single.addr, '—');
+  const partial = Core.overviewRow({ id: 3, job_no: 'J3', job_status: 'settled', bill_statuses: 'partial', bill_count: 1, paid_cents: 100, bill_id: 10 });
+  assert.strictEqual(partial.canEditBill, false, '部分收款后不可直填');
+  assert.strictEqual(partial.canReceive, true);
+  // operator_names 非法 JSON 不炸
+  const bad = Core.overviewRow({ id: 4, job_no: 'J4', job_status: 'completed', operator_names: '{oops', bill_count: 0 });
+  assert.deepStrictEqual(bad.operators, []);
+});
+
 test('csvCell/csvRow：引号转义与行拼装（导出 Excel 兼容）', () => {
   assert.strictEqual(Core.csvCell('普通'), '"普通"');
   assert.strictEqual(Core.csvCell('含"引号"'), '"含""引号"""');

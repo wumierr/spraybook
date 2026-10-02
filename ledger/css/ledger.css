@@ -105,3 +105,7 @@ table.lg-table tfoot td.num b { color: var(--text); font-size: 13px; }
 }
 .lg-fab-edit, .lg-fab-save { background: var(--accent); color: #fff; }
 .lg-fab-cancel { background: var(--panel); color: var(--danger); border: 1px solid var(--danger); }
+
+/* ---------- 总表（P4-M1）：17 列宽表横向滚动 + 密集数字输入 ---------- */
+table.lg-table--wide { min-width: 1280px; }
+table.lg-table--wide input[type="number"] { width: 96px; }

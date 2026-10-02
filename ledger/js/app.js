@@ -485,8 +485,102 @@
     </div>`;
   }
 
+  /* ---------- 页签：总表（P4-M1，行=作业单；编辑走既有 PATCH 端点映射） ---------- */
+  const OV_COLS = 17; // 单号/日期/客户/村队/亩数/单价/目的/应收/实收/未收/抹零/来源/人员/收款人/状态/备注/操作
+
+  function renderOverview(data, paymentsAll) {
+    const em = editMode('overview');
+    const rowsAll = data.rows.map(r0 => ({
+      ...Core.overviewRow(r0),
+      _amount: r0.amount_cents, _paid: r0.paid_cents, _due: r0.due_cents, _disc: r0.discount_cents
+    }));
+    const list = pipeFilters(byMonth(rowsAll, 'job_date', 'overview'), 'overview',
+      { q: ['job_no', 'customer_names', 'addr', 'referral', 'note', 'plantLabel'], party: 'customer_names' });
+    const rows = list.map(r => {
+      // 编辑模式：单账单且未收直填（走 PATCH /api/bills/:id）；已收/多账单/无账单锁定
+      const lockTip = r.billCount > 1 ? '多账单作业，请到账单页逐张修改'
+        : r.billCount === 1 ? '已有收款，请先撤回对应结算' : '未生成账单（作业未结算或零金额）';
+      const amountCell = em
+        ? (r.canEditBill
+          ? `<input data-ekb="${r.billId}" data-f="amount_cents" type="number" step="0.01" min="0" value="${(r._amount / 100).toFixed(2)}" data-orig="${(r._amount / 100).toFixed(2)}" title="账单金额(元)">`
+          : `<span title="${lockTip}">🔒 ${Core.fmtYuan(r._amount)}</span>`)
+        : Core.fmtYuan(r._amount);
+      const adjustCell = em
+        ? (r.canEditBill
+          ? `<input data-ekb="${r.billId}" data-f="adjust_cents" type="number" step="0.01" value="${((r.billAdjust || 0) / 100).toFixed(2)}" data-orig="${((r.billAdjust || 0) / 100).toFixed(2)}" title="账单抹零/优惠(元，正负均按优惠金额计)">`
+          : `<span title="${lockTip}">🔒 ${Core.fmtYuan(r._disc)}</span>`)
+        : Core.fmtYuan(r._disc);
+      return `<tr>
+        <td>${esc(r.job_no)}</td><td>${esc(r.job_date)}</td>
+        ${custCell(r.customer_names)}
+        <td title="${esc(r.region)}">${esc(r.addr)}</td>
+        <td class="num">${r.areaMu ?? '—'}</td>
+        <td class="num">${r.unitPriceYuan}</td>
+        <td>${esc(r.plantLabel || '—')}${r.extraCents > 0 ? ` <span class="lg-tag warn" title="导入行「另按N元/亩」额外收入">另收 ${Core.fmtYuan(r.extraCents)}</span>` : ''}</td>
+        <td class="num">${amountCell}</td>
+        <td class="num">${Core.fmtYuan(r._paid)}</td>
+        <td class="num">${Core.fmtYuan(r._due)}</td>
+        <td class="num">${adjustCell}</td>
+        <td>${esc(r.referral || '—')}</td>
+        <td>${esc((r.operators || []).join('、') || '—')}</td>
+        <td>${esc(r.collector || '—')}</td>
+        <td>${tag(r.statusText)}${r.billStatuses.map(s => ` ${tag(Core.MAPS.BILL_STATUS[s] || s)}`).join('')}</td>
+        <td>${esc(r.note || '—')}${em && r.canEditBill ? `<br><input data-ekb="${r.billId}" data-f="note" value="${esc(r.billNote || '')}" data-orig="${esc(r.billNote || '')}" placeholder="账单备注" title="账单备注（可改）；上方为作业备注（只读，更正走工单详情）" style="width:110px">` : ''}</td>
+        <td>${actions(
+          `<button class="lg-btn" data-act="job-detail" data-id="${r.id}">详情</button>`,
+          r.canReceive ? `<button class="lg-btn primary" data-act="bill-receive" data-id="${r.billId}" data-party="${r.billPartyId || ''}" data-unpaid="${r._due}">登记收款</button>` : ''
+        )}</td>
+      </tr><tr hidden><td colspan="${OV_COLS}" class="lg-detail-slot" data-slot="${r.id}"></td></tr>`;
+    }).join('');
+    return `<div class="lg-panel">
+      <h2>总表（原 Excel 全数据通看；行=作业单，账单字段按作业聚合）</h2>
+      ${toolbarHtml('overview', { searchPh: '单号/客户/村队/来源/备注' })}
+      ${monthStrip('overview', rowsAll, 'job_date')}
+      <table class="lg-table lg-table--wide"><thead><tr>
+        <th>单号</th><th>日期</th><th>客户</th><th>村·队</th><th>亩数</th><th>单价(元/亩)</th><th>目的</th>
+        <th>应收(元)</th><th>实收(元)</th><th>未收(元)</th><th>抹零(元)</th>
+        <th>来源</th><th>人员</th><th>收款人</th><th>状态</th><th>备注</th><th>操作</th>
+      </tr></thead><tbody>${rows || '<tr><td colspan="17">暂无作业</td></tr>'}</tbody>
+      ${tfootHtml(7, list, [['应收', sumCents(list, '_amount')], ['实收', sumCents(list, '_paid')], ['未收', sumCents(list, '_due')], ['抹零', sumCents(list, '_disc')]], 6)}</table>
+      <div style="color:var(--muted);font-size:12px;margin-top:6px">注：主数据「期初补录」生成的未挂作业账单不进总表行，但计入报表应收。作业字段（亩数/作业备注等）为执行层快照，只读。</div>
+    </div>
+    ${renderOverviewPayments(paymentsAll)}`;
+  }
+
+  /** 总表·面板2：支出流水（原表支出项目/金额列；独立状态键 ovpay，不与支出页互串） */
+  function renderOverviewPayments(listAll) {
+    const em = editMode('overview');
+    const catOpts = Object.entries(Core.MAPS.PAYMENT_CATEGORY)
+      .map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+    const rowsAll = listAll.map(p0 => ({ ...p0, _amount: p0.amount_cents, _cat: Core.MAPS.PAYMENT_CATEGORY[p0.category] || p0.category }));
+    const list = pipeFilters(byMonth(rowsAll, 'occurred_at', 'ovpay'), 'ovpay',
+      { q: ['payment_no', 'payee_name', 'note', '_cat'], category: true, party: 'payee_name' });
+    const rows = list.map(p0 => {
+      const live = p0.status !== 'void';
+      return `<tr>
+        <td>${esc(p0.payment_no)}</td>
+        <td>${em && live ? `<select data-ekp="${p0.id}" data-f="category" data-orig="${esc(p0.category)}">${catOpts.replace(`value="${p0.category}"`, `value="${p0.category}" selected`)}</select>` : esc(p0._cat)}</td>
+        <td class="num">${em && live ? `<input data-ekp="${p0.id}" data-f="amount_cents" type="number" step="0.01" value="${(p0.amount_cents / 100).toFixed(2)}" data-orig="${(p0.amount_cents / 100).toFixed(2)}">` : `<b>${Core.fmtYuan(p0.amount_cents)}</b>`}</td>
+        ${custCell(p0.payee_name || '')}
+        <td>${(p0.occurred_at || '').slice(0, 10)}</td>
+        <td>${em && live ? `<input data-ekp="${p0.id}" data-f="note" value="${esc(p0.note || '')}" data-orig="${esc(p0.note || '')}">` : esc(p0.note || '')}</td>
+        <td>${live ? '' : tag('已作废', 'err')}</td>
+      </tr>`;
+    }).join('');
+    const liveRows = list.filter(r => r.status !== 'void');
+    return `<div class="lg-panel">
+      <h2>支出流水（原表支出项目/金额列；登记与作废在「支出」页）</h2>
+      ${toolbarHtml('ovpay', { category: true, searchPh: '收款方/单号/备注' })}
+      ${monthStrip('ovpay', listAll, 'occurred_at')}
+      <table class="lg-table"><thead><tr>
+        <th>单号</th><th>类别</th><th>金额(元)</th><th>收款方</th><th>日期</th><th>备注</th><th>状态</th>
+      </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无支出</td></tr>'}</tbody>
+      ${tfootHtml(2, liveRows, [['支出', sumCents(liveRows, '_amount')]], 4)}</table>
+    </div>`;
+  }
+
   /* ---------- 渲染调度 ---------- */
-  const state = { tab: 'jobs', _advances: [], month: {}, editMode: {}, filter: {}, custFilter: null };
+  const state = { tab: 'overview', _advances: [], month: {}, editMode: {}, filter: {}, custFilter: null };
 
   function editMode(tab) { return !!state.editMode[tab]; }
 
@@ -523,7 +617,7 @@
     const catOpts = category ? Object.entries(Core.MAPS.PAYMENT_CATEGORY).map(([v, t]) =>
       `<option value="${v}" ${f.category === v ? 'selected' : ''}>${esc(t)}</option>`).join('') : '';
     return `<div class="lg-toolbar">
-      <input id="ftQ" data-tab="${tab}" class="lg-search" value="${esc(f.q || '')}" placeholder="🔍 ${esc(searchPh)}">
+      <input id="ftQ-${tab}" data-tab="${tab}" class="lg-search" value="${esc(f.q || '')}" placeholder="🔍 ${esc(searchPh)}">
       ${statusMap ? `<select id="ftStatus" data-tab="${tab}"><option value="">全部状态</option>${statusOpts}</select>` : ''}
       ${category ? `<select id="ftCategory" data-tab="${tab}"><option value="">全部类别</option>${catOpts}</select>` : ''}
       ${state.custFilter ? `<span class="lg-tag warn">只看：${esc(state.custFilter)} <button class="lg-btn" data-act="cust-filter-clear">×</button></span>` : ''}
@@ -556,7 +650,12 @@
 
   async function doRender() {
     const tab = state.tab;
-    if (tab === 'jobs') {
+    if (tab === 'overview') {
+      // 预收下拉依赖 state._advances（同 payments 分支）；支出面板块复用 payments 列表
+      state._advances = await Api.advances();
+      const [data, pays] = await Promise.all([Api.overview(), Api.payments()]);
+      $main.innerHTML = renderOverview(data, pays);
+    } else if (tab === 'jobs') {
       $main.innerHTML = renderJobs(await Api.jobs());
     } else if (tab === 'settlements') {
       $main.innerHTML = renderSettlements(await Api.settlements());
@@ -617,18 +716,20 @@
     if (slotBtn && slotBtn.textContent.trim() === '') slotBtn.closest('tr').remove();
   });
 
-  /* 检索工具条：搜索防抖（保持焦点与光标）、筛选即选即刷 */
+  /* 检索工具条：搜索防抖（保持焦点与光标）。搜索框 id 按状态键唯一（ftQ-{tab}，
+     总表页同屏两条工具条），故按 /^ftQ/ 前缀匹配、焦点恢复用 el.id */
   let searchTimer = null;
   $main.addEventListener('input', e => {
     const el = e.target;
-    if (el.id !== 'ftQ') return;
+    if (!/^ftQ/.test(el.id)) return;
+    const inpId = el.id;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       const tab = el.dataset.tab;
       state.filter[tab] = state.filter[tab] || {};
       state.filter[tab].q = el.value;
       render().then(() => {
-        const inp = document.getElementById('ftQ');
+        const inp = document.getElementById(inpId);
         if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
       }).catch(() => {});
     }, 250);
@@ -676,8 +777,10 @@
     if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
     switch (act) {
       case 'csv-export': {
-        // 导出当前表格（月份+筛选口径；编辑态取输入值；展开明细与隐藏 slot 不导）
-        const table = document.querySelector('#lgMain table');
+        // 导出「按钮所在面板」的第一张表（月份+筛选口径；编辑态取输入值；展开明细与隐藏 slot 不导）。
+        // 总表页两块面板各带工具条，主表/支出流水各自导出；单表页签行为不变（按钮与表格同面板）。
+        const panel = btn.closest('.lg-panel');
+        const table = panel ? panel.querySelector('table') : document.querySelector('#lgMain table');
         if (!table) { toast('当前页无表格可导出', true); break; }
         const lines = [...table.querySelectorAll('tr')]
           .filter(tr => !tr.hidden && !tr.closest('tr[hidden]'))
@@ -689,7 +792,9 @@
         const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `spraybook-${state.tab}-${state.month[state.tab] || 'all'}.csv`;
+        // data-csvname 供同页第二块面板覆盖文件名与月份键（如支出流水=ovpay）
+        const csvName = btn.dataset.csvname || state.tab;
+        a.download = `spraybook-${csvName}-${state.month[csvName] || state.month[state.tab] || 'all'}.csv`;
         a.click();
         URL.revokeObjectURL(a.href);
         toast(`已导出 ${Math.max(lines.length - 1, 0)} 行 CSV`);
@@ -765,8 +870,10 @@
       }
       case 'bill-receive': {
         const tr$ = btn.closest('tr');
+        // 插入行 colspan 按所在表列数生成（账单页 8 列；总表宽表按自身列数）
+        const colspan = tr$.closest('table').querySelector('thead tr').children.length;
         tr$.insertAdjacentHTML('afterend',
-          `<tr><td colspan="8">${receiveForm(id, Number(btn.dataset.party) || null, Number(btn.dataset.unpaid))}</td></tr>`);
+          `<tr><td colspan="${colspan}">${receiveForm(id, Number(btn.dataset.party) || null, Number(btn.dataset.unpaid))}</td></tr>`);
         btn.disabled = true;
         break;
       }
@@ -875,8 +982,27 @@
     }
   }
 
-  /** 编辑模式保存：按页收集变更并逐行 PATCH（仅变更行） */
+  /** 编辑模式保存：按页收集变更并逐行 PATCH（仅变更行）。
+      总表（P4-M1）同屏两类行：账单行走 data-ekb→PATCH /api/bills/:id，
+      支出行走 data-ekp→PATCH /api/payments/:id（分通道避免两类 id 撞键） */
   async function saveEditMode(tab) {
+    if (tab === 'overview') {
+      const billChanges = collectInputs('data-ekb');
+      const payChanges = collectInputs('data-ekp');
+      if (!billChanges.size && !payChanges.size) { state.editMode[tab] = false; render().catch(() => {}); return; }
+      let ok = 0;
+      for (const [rowId, fields] of billChanges) {
+        try { await Api.patchBill(Number(rowId), fields); ok++; }
+        catch (e) { toast(`账单行 ${rowId} 保存失败：${e.message}`, true); }
+      }
+      for (const [rowId, fields] of payChanges) {
+        try { await Api.editPayment(Number(rowId), fields); ok++; }
+        catch (e) { toast(`支出行 ${rowId} 保存失败：${e.message}`, true); }
+      }
+      toast(`已保存 ${ok} 行`);
+      state.editMode[tab] = false;
+      return;
+    }
     const changes = collectInputs('data-ek');
     if (!changes.size) { state.editMode[tab] = false; render().catch(() => {}); return; }
     let ok = 0;
@@ -902,7 +1028,7 @@
       document.body.appendChild(fab);
     }
     const tab = state.tab;
-    const editableTabs = ['bills', 'receipts', 'payments', 'advances'];
+    const editableTabs = ['bills', 'receipts', 'payments', 'advances', 'overview'];
     if (!editableTabs.includes(tab)) { fab.style.display = 'none'; return; }
     fab.style.display = '';
     if (state.editMode[tab]) {
