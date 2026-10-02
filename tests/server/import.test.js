@@ -152,6 +152,19 @@ test('落库：apply 后全量进正式表、借贷平衡、D 组按已收、幂
   assert.ok(zzJob, '张志军作业存在');
   assert.ok(zzJob.income_cents > 66000, `张志军收入应含 700 追加: ${zzJob.income_cents}`);
 
+  // 007 结构化：extra 行 kind/unit_price/干净姓名；主行带每亩单价
+  const zzLines = db.prepare(
+    'SELECT kind, farmer_name, unit_price_cents, spray_fee_cents FROM job_settlement_lines WHERE job_id = ? ORDER BY id')
+    .all(zzJob.id);
+  const zzExtra = zzLines.find(l => l.kind === 'extra');
+  assert.ok(zzExtra, '存在 kind=extra 行');
+  assert.strictEqual(zzExtra.farmer_name, '张志军', 'extra 行姓名干净（不带"另按"后缀）');
+  assert.strictEqual(zzExtra.unit_price_cents, 2500, '另按 25 元/亩 → 2500 分');
+  assert.strictEqual(zzExtra.spray_fee_cents, 70000, '700 元 → 70000 分');
+  const zzMain = zzLines.find(l => l.kind === 'spray');
+  assert.ok(zzMain, '主行 kind=spray');
+  assert.ok(zzMain.unit_price_cents > 0, `主行每亩单价快照: ${zzMain.unit_price_cents}`);
+
   const summary = await getJson(`${base}/reports/summary`);
   assert.ok(summary.income_cents > 9000000, `收入应接近 97680+ 元（${summary.income_cents} 分）`);
 

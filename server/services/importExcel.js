@@ -492,15 +492,17 @@ function applyJobRow(db, parsed, batchId, rowId, operator) {
     now, now
   );
   const jobId = jobInfo.lastInsertRowid;
+  const mainUnitPriceCents = parsed.price_yuan != null ? Math.round(Number(parsed.price_yuan) * 100) : null;
   db.prepare(
-    `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, spray_fee_cents, included)
-     VALUES (?, ?, ?, ?, ?, 0)`)
-    .run(jobId, String(partyId), parsed.name, parsed.area_mu, parsed.receivable_cents || 0);
+    `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, spray_fee_cents, included, kind, unit_price_cents)
+     VALUES (?, ?, ?, ?, ?, 0, 'spray', ?)`)
+    .run(jobId, String(partyId), parsed.name, parsed.area_mu, parsed.receivable_cents || 0, mainUnitPriceCents);
   for (const ip of (parsed.extra_income || [])) {
     db.prepare(
-      `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, spray_fee_cents, included)
-       VALUES (?, ?, ?, NULL, ?, 0)`)
-      .run(jobId, String(partyId), `${parsed.name}（另按 ${ip.price_yuan} 元/亩）`, ip.income_cents);
+      `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, spray_fee_cents, included, kind, unit_price_cents)
+       VALUES (?, ?, ?, NULL, ?, 0, 'extra', ?)`)
+      .run(jobId, String(partyId), parsed.name, ip.income_cents,
+        ip.price_yuan != null ? Math.round(Number(ip.price_yuan) * 100) : null);
   }
 
   const settlementNo = nextBizNo(db, 'settlements', 'settlement_no', 'S');
@@ -511,14 +513,16 @@ function applyJobRow(db, parsed, batchId, rowId, operator) {
     .run(settlementNo, jobId, totalReceivable, totalReceivable, now, now, now);
   const sid = sInfo.lastInsertRowid;
   db.prepare(
-    `INSERT INTO settlement_items (settlement_id, party_id, farmer_name, area_mu, spray_fee_cents, included)
-     VALUES (?, ?, ?, ?, ?, 0)`)
-    .run(sid, partyId, parsed.name, parsed.area_mu, parsed.receivable_cents || 0);
+    `INSERT INTO settlement_items (settlement_id, party_id, farmer_name, area_mu, spray_fee_cents, included, kind, unit_price_cents)
+     VALUES (?, ?, ?, ?, ?, 0, 'spray', ?)`)
+    .run(sid, partyId, parsed.name, parsed.area_mu, parsed.receivable_cents || 0, mainUnitPriceCents);
   for (const ip of (parsed.extra_income || [])) {
     db.prepare(
-      `INSERT INTO settlement_items (settlement_id, party_id, farmer_name, area_mu, spray_fee_cents, included, note)
-       VALUES (?, ?, ?, NULL, ?, 0, ?)`)
-      .run(sid, partyId, `${parsed.name}（另按 ${ip.price_yuan} 元/亩）`, ip.income_cents, '裁决 D：单价标准+收入，按已收');
+      `INSERT INTO settlement_items (settlement_id, party_id, farmer_name, area_mu, spray_fee_cents, included, kind, unit_price_cents, note)
+       VALUES (?, ?, ?, NULL, ?, 0, 'extra', ?, ?)`)
+      .run(sid, partyId, parsed.name, ip.income_cents,
+        ip.price_yuan != null ? Math.round(Number(ip.price_yuan) * 100) : null,
+        `另按 ${ip.price_yuan} 元/亩（裁决 D：按已收）`);
   }
 
   const billNo = nextBizNo(db, 'bills', 'bill_no', 'B');

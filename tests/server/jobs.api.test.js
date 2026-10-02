@@ -166,6 +166,28 @@ test('吊运样本：无结算行，斤数与分/斤单价正确', async () => {
   assert.strictEqual(job.income_cents, 280000, '2800元→分');
 });
 
+test('007 成本构成落列：spray Σ构成==total_cost；haul 人工合并 drone+pickup', async () => {
+  const { json } = await postJson(`${base}/jobs`, sprayPayload());
+  const job = (await (await fetch(`${base}/jobs/${json.data.id}`)).json()).data;
+  // 样本 costBreakdown {cycle:3, fuel:120, labor:315, pesticide:1600, equipment:23.4, other:15}
+  assert.strictEqual(job.labor_cost_cents, 31500);
+  assert.strictEqual(job.pesticide_cost_cents, 160000);
+  assert.strictEqual(job.equipment_cost_cents, 2340);
+  assert.strictEqual(job.misc_cost_cents, 1500);
+  assert.strictEqual(job.subsidy_cents, 0, '补贴 0 元 → 0 分（合法快照）');
+  const sumParts = job.battery_depreciation_cents + job.fuel_expense_cents
+    + job.labor_cost_cents + job.pesticide_cost_cents + job.equipment_cost_cents + job.misc_cost_cents;
+  assert.strictEqual(sumParts, job.total_cost_cents, 'Σ构成快照 == total_cost（2076.4 元）');
+
+  const r2 = await postJson(`${base}/jobs`, sprayPayload({
+    job_type: 'haul', result: SAMPLE.haul.result, snapshot: SAMPLE.haul.export }));
+  const hj = (await (await fetch(`${base}/jobs/${r2.json.data.id}`)).json()).data;
+  assert.strictEqual(hj.labor_cost_cents, 55000, 'droneLabor 550 + pickupLabor 0');
+  assert.strictEqual(hj.misc_cost_cents, 1000);
+  assert.strictEqual(hj.pesticide_cost_cents, null, '吊运无药剂成本');
+  assert.strictEqual(hj.subsidy_cents, null, '吊运无补贴');
+});
+
 test('GET /api/jobs?status= 过滤', async () => {
   await postJson(`${base}/jobs`, sprayPayload());
   const all = (await (await fetch(`${base}/jobs`)).json()).data;
