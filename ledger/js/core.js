@@ -106,8 +106,17 @@
     return [...set].sort().reverse();
   }
 
+  /** CSV 单元转义：引号包裹 + 内部引号翻倍（Excel 直接打开需前置 BOM，由调用方处理） */
+  function csvCell(v) {
+    return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  }
+  /** 行数组 → CSV 文本（\r\n 行尾） */
+  function csvRow(cells) {
+    return cells.map(csvCell).join(',');
+  }
+
   const Core = {
-    monthKeys,
+    monthKeys, csvCell, csvRow,
     fmtYuan, yuanInputToCents, statusLabel,
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow,
     MAPS: { JOB_STATUS, SETTLEMENT_STATUS, BILL_STATUS, PAYMENT_CATEGORY, ADVANCE_DIRECTION, METHOD, PARTY_TYPE }

@@ -80,3 +80,11 @@ test('journalRow：借贷分列与平衡标记', () => {
   const bad = Core.journalRow({ ...e, lines: [e.lines[0]] });
   assert.strictEqual(bad.balanced, false);
 });
+
+test('csvCell/csvRow：引号转义与行拼装（导出 Excel 兼容）', () => {
+  assert.strictEqual(Core.csvCell('普通'), '"普通"');
+  assert.strictEqual(Core.csvCell('含"引号"'), '"含""引号"""');
+  assert.strictEqual(Core.csvCell(null), '""');
+  assert.strictEqual(Core.csvCell(123), '"123"');
+  assert.strictEqual(Core.csvRow(['a', 'b"c', 12]), '"a","b""c","12"');
+});
