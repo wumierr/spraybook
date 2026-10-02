@@ -10,7 +10,7 @@ const { ApiError } = require('../services/apiError');
 const { logEdit } = require('../services/audit');
 
 const TABLES = {
-  parties: ['name', 'phone', 'address', 'village', 'team', 'default_price_cents', 'default_area_mu', 'notes', 'enabled', 'type'],
+  parties: ['name', 'phone', 'address', 'region', 'village', 'team', 'default_price_cents', 'default_area_mu', 'notes', 'enabled', 'type'],
   plots: ['party_id', 'name', 'area_mu', 'notes'],
   chemicals: ['key', 'name', 'icon', 'water_per_mu', 'pesticide_water_per_set', 'drone_saving_coeff', 'price_cents_per_set', 'description', 'notes', 'flight_height', 'line_spacing', 'flight_speed'],
   equipment: ['name', 'kind', 'cycles_count', 'notes', 'status'],
