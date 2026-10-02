@@ -11,12 +11,17 @@
   --accent-soft: #e2f3ee;
   --danger: #c0392b;
   --warn: #b7791f;
+  --c1: #0e7c66;
+  --c2: #c0392b;
+  --c3: #b7791f;
+  --c4: #4a6fa5;
   --radius: 10px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #141a20; --panel: #1c242c; --border: #2c3742; --text: #e6edf3;
     --muted: #8fa1b3; --accent: #2fbf9a; --accent-soft: #1d3a33;
+    --c1: #2fbf9a; --c2: #e07b6a; --c3: #d9a441; --c4: #6f9fd8;
   }
 }
 * { box-sizing: border-box; }
@@ -109,3 +114,20 @@ table.lg-table tfoot td.num b { color: var(--text); font-size: 13px; }
 /* ---------- 总表（P4-M1）：17 列宽表横向滚动 + 密集数字输入 ---------- */
 table.lg-table--wide { min-width: 1280px; }
 table.lg-table--wide input[type="number"] { width: 96px; }
+
+/* ---------- 图表页（P4-M2）：内联 SVG 手绘，变量亮/暗两处定义于 :root ---------- */
+.lg-chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 14px; }
+.lg-chart-grid .lg-panel { margin-bottom: 0; min-width: 0; }
+.lg-chart-grid--in { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+svg.lg-chart { width: 100%; height: auto; display: block; }
+svg.lg-chart text { font-size: 11px; fill: var(--muted); }
+svg.lg-chart .lg-chart-axis { stroke: var(--border); stroke-width: 1; }
+svg.lg-chart g.lg-hit { cursor: pointer; }
+.lg-chart-legend { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; color: var(--muted); margin: 2px 0 8px; }
+.lg-chart-legend .chip::before {
+  content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  margin-right: 4px; background: var(--chip, var(--c1)); vertical-align: -1px;
+}
+.lg-gran { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+.lg-chart-foot { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.6; }
+@media (max-width: 1040px) { .lg-chart-grid { grid-template-columns: 1fr; } }

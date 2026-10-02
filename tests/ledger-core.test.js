@@ -120,3 +120,66 @@ test('csvCell/csvRow：引号转义与行拼装（导出 Excel 兼容）', () =>
   assert.strictEqual(Core.csvCell(123), '"123"');
   assert.strictEqual(Core.csvRow(['a', 'b"c', 12]), '"a","b""c","12"');
 });
+
+/* ==================== P4-M2 SVG 图表纯函数 ==================== */
+
+test('scaleLinear：线性映射，零域宽返回 r0（空数据安全）', () => {
+  const y = Core.scaleLinear(0, 1000, 200, 0); // 值越大像素越小（倒轴）
+  assert.strictEqual(y(0), 200);
+  assert.strictEqual(y(1000), 0);
+  assert.strictEqual(y(500), 100);
+  const flat = Core.scaleLinear(0, 0, 200, 0);
+  assert.strictEqual(flat(500), 200, '域宽 0 恒返回 r0');
+});
+
+test('niceTicks：1/2/5×10^k 步进；空/非法数据返回零网格；末刻度=max', () => {
+  assert.deepStrictEqual(Core.niceTicks(4000, 4), { max: 4000, ticks: [0, 1000, 2000, 3000, 4000] });
+  const t5 = Core.niceTicks(5000, 4); // rough=1250 → step 2000 → max 6000
+  assert.strictEqual(t5.max, 6000);
+  assert.deepStrictEqual(t5.ticks, [0, 2000, 4000, 6000]);
+  assert.ok(Core.niceTicks(10117010).max >= 10117010, 'max 覆盖数据最大值');
+  assert.deepStrictEqual(Core.niceTicks(0), { max: 0, ticks: [0] });
+  assert.deepStrictEqual(Core.niceTicks(null), { max: 0, ticks: [0] });
+  assert.deepStrictEqual(Core.niceTicks(-5), { max: 0, ticks: [0] });
+});
+
+test('linePath：折线拼接与缺值断线（多段 M…）', () => {
+  assert.strictEqual(Core.linePath([{ x: 0, y: 10 }, { x: 10, y: 20 }]), 'M0,10 L10,20');
+  assert.strictEqual(
+    Core.linePath([{ x: 0, y: 10 }, { x: 10, y: null }, { x: 20, y: 30 }]),
+    'M0,10 M20,30', '中间缺值断成两段');
+  assert.strictEqual(Core.linePath([]), '');
+  assert.strictEqual(Core.linePath([{ x: 0.4, y: 10.256 }]), 'M0.4,10.26', '坐标保留两位小数');
+});
+
+test('barRects：基线/高度/槽内居中几何', () => {
+  // 值域 0..1000 → 像素 100..0；band 40 gap 8
+  const y = Core.scaleLinear(0, 1000, 100, 0);
+  const rects = Core.barRects([{ cx: 50, v: 500 }, { cx: 150, v: 0 }], y, 40, 8);
+  assert.deepStrictEqual(rects[0], { x: 34, y: 50, w: 32, h: 50 });
+  assert.deepStrictEqual(rects[1], { x: 134, y: 100, w: 32, h: 0 }, '零值=零高度贴基线');
+  const n = Core.barRects([{ cx: 50, v: null }], y, 40, 8);
+  assert.strictEqual(n[0].h, 0, 'null 值按 0 处理不炸');
+});
+
+test('groupedBarRects：每槽按系列错位，扁平结构带 si', () => {
+  const y = Core.scaleLinear(0, 400, 200, 0);
+  const rects = Core.groupedBarRects(2, [{ cx: 50, values: [100, 200] }], y, 40, 8);
+  assert.strictEqual(rects.length, 2);
+  assert.deepStrictEqual(rects[0], { x: 34, y: 150, w: 16, h: 50, si: 0, cx: 50 });
+  assert.deepStrictEqual(rects[1], { x: 50, y: 100, w: 16, h: 100, si: 1, cx: 50 });
+  const empty = Core.groupedBarRects(2, [{ cx: 50, values: [] }], y, 40, 8);
+  assert.strictEqual(empty.length, 0);
+});
+
+test('hBarRects：按 maxVal 归一化到 0..1，max 非正全 0', () => {
+  assert.deepStrictEqual(Core.hBarRects([{ v: 100 }, { v: 50 }, { v: 0 }], 100),
+    [{ v: 100, wPct: 1 }, { v: 50, wPct: 0.5 }, { v: 0, wPct: 0 }]);
+  assert.deepStrictEqual(Core.hBarRects([{ v: 10 }], 0), [{ v: 10, wPct: 0 }]);
+});
+
+test('charts.js：node 下可 require（动作路由入口存在）', () => {
+  const Charts = require('../ledger/js/charts.js');
+  assert.strictEqual(typeof Charts.renderTab, 'function');
+  assert.strictEqual(typeof Charts.handleAct, 'function');
+});
