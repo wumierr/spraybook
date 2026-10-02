@@ -184,20 +184,36 @@
 
   /* ---------- 页签：账单 ---------- */
   function renderBills(billsAll) {
+    const em = editMode('bills');
     const rowsAll = billsAll.map(b0 => ({
       ...Core.billRow(b0), _month: String(b0.issued_at || '').slice(0, 7),
       _amount: b0.amount_cents, _adjust: b0.adjust_cents, _payable: Core.billPayable(b0), _paid: b0.paid_cents
     }));
     const list = pipeFilters(byMonth(rowsAll, '_month', 'bills'), 'bills', { q: ['bill_no', 'party'], party: 'party' });
-    const rows = list.map(b => `<tr>
+    const rows = list.map(b => {
+      // 编辑模式：未收款行金额/调整直填；已收款行锁定（服务端 patchBill 拒绝已收款改单）
+      // 注意：type=number 的 value 必须是不带千分位的纯数字，否则浏览器清空 value 误判变更
+      const editable = b.canEdit;
+      const amountCell = em
+        ? (editable
+          ? `<input data-ek="${b.id}" data-f="amount_cents" type="number" step="0.01" min="0" value="${(b._amount / 100).toFixed(2)}" data-orig="${(b._amount / 100).toFixed(2)}">`
+          : `<span title="已有收款，不可改金额（先撤回结算）">🔒 ${b.amountYuan}</span>`)
+        : b.amountYuan;
+      const adjustCell = em
+        ? (editable
+          ? `<input data-ek="${b.id}" data-f="adjust_cents" type="number" step="0.01" value="${((b._adjust || 0) / 100).toFixed(2)}" data-orig="${((b._adjust || 0) / 100).toFixed(2)}">`
+          : b.adjustYuan)
+        : b.adjustYuan;
+      return `<tr>
         <td>${esc(b.bill_no)}</td>${custCell(b.party)}<td>${tag(b.statusText)}</td>
-        <td class="num">${b.amountYuan}</td><td class="num">${b.adjustYuan}</td>
+        <td class="num">${amountCell}</td><td class="num">${adjustCell}</td>
         <td class="num"><b>${b.payableYuan}</b></td><td class="num">${b.paidYuan}</td>
         <td>${actions(
           b.canReceive ? `<button class="lg-btn primary" data-act="bill-receive" data-id="${b.id}" data-party="${b.party_id || ''}" data-unpaid="${b.unpaidCents}">登记收款</button>` : '',
-          b.canEdit ? `<button class="lg-btn" data-act="bill-edit" data-id="${b.id}">改金额/抹零</button>` : ''
+          b.canEdit && !em ? `<button class="lg-btn" data-act="bill-edit" data-id="${b.id}">改金额/抹零</button>` : ''
         )}</td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
     return `<div class="lg-panel">
       <h2>账单（确认后只读；未收可改金额/抹零；收款在「收款」页或下方按钮）</h2>
       ${toolbarHtml('bills', { statusMap: Core.MAPS.BILL_STATUS, searchPh: '客户名/账单号' })}
@@ -220,11 +236,15 @@
       const allocBtn = alloc.length
         ? `<button class="lg-btn" data-act="rc-alloc" data-id="${r0.id}" data-alloc="${esc(JSON.stringify(alloc))}" data-amount="${r0.amount_cents}">核销 ${alloc.length} 张</button>`
         : '';
+      const noteCell = editMode('receipts')
+        ? `<input data-ek="${r0.id}" data-f="note" value="${esc(r0.note || '')}" data-orig="${esc(r0.note || '')}" placeholder="备注"> <input data-ek="${r0.id}" data-f="collector_name" value="${esc(r0.collector_name || '')}" data-orig="${esc(r0.collector_name || '')}" placeholder="经手人" style="width:70px">`
+        : `${esc(r0.note || '')}${r0.collector_name ? `<span class="lg-tag">经手:${esc(r0.collector_name)}</span>` : ''}`;
       return `<tr>
         <td>${esc(r0.receipt_no)}</td>${custCell(r0.party_name || '—')}
         <td class="num">${editMode('receipts') ? `<input data-ek="${r0.id}" data-f="amount_cents" type="number" step="0.01" value="${(r0.amount_cents / 100).toFixed(2)}" data-orig="${(r0.amount_cents / 100).toFixed(2)}">` : `<b>${Core.fmtYuan(r0.amount_cents)}</b>`}</td>
         <td>${editMode('receipts') ? `<input data-ek="${r0.id}" data-f="method" value="${esc(r0.method)}" data-orig="${esc(r0.method)}">` : esc(Core.MAPS.METHOD[r0.method] || r0.method)}${adv}${allocBtn ? ' ' + allocBtn : ''}</td>
         <td>${esc(r0.bill_no || (alloc.length ? '按客户核销' : '—'))}</td><td>${(r0.occurred_at || '').slice(0, 10)}</td>
+        <td>${noteCell}</td>
         <td>${r0.status === 'void' ? tag('已作废', 'err') : actions(
           `<button class="lg-btn danger" data-act="rc-void" data-id="${r0.id}" data-no="${esc(r0.receipt_no)}">作废</button>`
         )}</td>
@@ -249,9 +269,9 @@
       ${toolbarHtml('receipts', { searchPh: '客户名/单号/备注' })}
       ${monthStrip('receipts', listAll, 'occurred_at')}
       <table class="lg-table"><thead><tr>
-        <th>单号</th><th>客户</th><th>金额(元)</th><th>方式</th><th>账单</th><th>日期</th><th>操作</th>
-      </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无收款</td></tr>'}</tbody>
-      ${tfootHtml(2, liveRows, [['实收', sumCents(liveRows, '_amount')]], 4)}</table>
+        <th>单号</th><th>客户</th><th>金额(元)</th><th>方式</th><th>账单</th><th>日期</th><th>备注/经手人</th><th>操作</th>
+      </tr></thead><tbody>${rows || '<tr><td colspan="8">暂无收款</td></tr>'}</tbody>
+      ${tfootHtml(2, liveRows, [['实收', sumCents(liveRows, '_amount')]], 5)}</table>
     </div>`;
   }
   function parseAlloc(json) {
@@ -542,7 +562,7 @@
     } else if (tab === 'bills') {
       $main.innerHTML = renderBills(await Api.bills());
     } else if (tab === 'receipts') {
-      if (!parties.length) { try { parties = await Api.parties(); } catch (e) { parties = []; } }
+      try { parties = await Api.parties(); } catch (e) { /* 拉不到就用旧缓存 */ }
       $main.innerHTML = renderReceipts(await Api.receipts());
     } else if (tab === 'reports') {
       $main.innerHTML = await renderReports();
@@ -627,7 +647,7 @@
       const id = inp.getAttribute(attr);
       if (!map.has(id)) map.set(id, {});
       if (inp.dataset.orig !== undefined && inp.dataset.orig === inp.value) return;
-      const f = inp.dataset.field;
+      const f = inp.dataset.field || inp.dataset.f; // 行内明细用 data-field，页签直填用 data-f
       map.get(id)[f] = f.endsWith('_cents') ? Core.yuanInputToCents(inp.value) : inp.value;
     });
     for (const [id, fields] of map) {
@@ -652,7 +672,7 @@
     const act = btn.dataset.act;
     const id = Number(btn.dataset.id);
     // 导入/主数据页签的处理在 app-extra.js（P2-4 拆分）
-    if (window.LedgerExtra && /^(imp-|md-|op-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
+    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
     switch (act) {
       case 'cust-filter': {
         const name = btn.dataset.name;
@@ -671,7 +691,7 @@
         const items = JSON.parse(btn.dataset.alloc || '[]');
         const used = items.reduce((a, i) => a + (i.amount_cents || 0), 0);
         const rem = Number(btn.dataset.amount || 0) - used;
-        tr$.insertAdjacentHTML('afterend', `<tr data-alloc-for="${id}"><td colspan="7"><div class="lg-detail">核销明细：${
+        tr$.insertAdjacentHTML('afterend', `<tr data-alloc-for="${id}"><td colspan="8"><div class="lg-detail">核销明细：${
           items.map(i => `${esc(i.bill_no)} ${Core.fmtYuan(i.amount_cents)} 元`).join(' · ')
         }${rem > 0 ? ` · 余额转预收 ${Core.fmtYuan(rem)} 元` : ''}</div></td></tr>`);
         break;
