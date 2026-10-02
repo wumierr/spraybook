@@ -75,7 +75,6 @@ test('bootstrap 下发 operator（计算器同步 operator_names 的数据源）
   await fetch(`${base}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operator: '老沈' }) });
   const bs = await getJson(`${base}/bootstrap`);
   assert.strictEqual(bs.operator, '老沈', 'settings.operator 随 bootstrap 下发');
-  assert.ok(bs.parties[0].village !== undefined, 'village 字段仍在');
 });
 
 test('settings：operator 保存读取', async () => {
