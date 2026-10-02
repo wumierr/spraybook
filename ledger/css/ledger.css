@@ -75,6 +75,25 @@ table.lg-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .lg-balance { color: var(--accent); font-weight: 600; }
 .lg-balance.bad { color: var(--danger); }
 
+/* ---------- 检索工具条 / 客户过滤 / 合计（P3） ---------- */
+.lg-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.lg-toolbar .lg-search {
+  flex: 1; min-width: 200px; border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; background: var(--bg); color: var(--text); font-size: 13px;
+}
+.lg-toolbar select {
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  background: var(--bg); color: var(--text); font-size: 13px;
+}
+td.lg-cust { cursor: pointer; }
+td.lg-cust:hover { text-decoration: underline; color: var(--accent); }
+td.lg-cust-on { color: var(--accent); font-weight: 600; }
+table.lg-table tfoot td {
+  border-top: 2px solid var(--border); border-bottom: none;
+  color: var(--muted); font-size: 12px; padding: 8px;
+}
+table.lg-table tfoot td.num b { color: var(--text); font-size: 13px; }
+
 /* ---------- 浮动编辑按钮（右下角，跟随滚动） ---------- */
 #lgFab {
   position: fixed; right: 22px; bottom: 22px; z-index: 60;
