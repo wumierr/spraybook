@@ -666,6 +666,9 @@
       $main.innerHTML = renderReceipts(await Api.receipts());
     } else if (tab === 'reports') {
       $main.innerHTML = await renderReports();
+    } else if (tab === 'charts') {
+      // 图表页（P4-M2，ledger/js/charts.js）：内联 SVG 手绘
+      await window.LedgerCharts.renderTab(tab, $main);
     } else if (tab === 'payments') {
       state._advances = await Api.advances();
       $main.innerHTML = renderPayments(await Api.payments());
@@ -968,6 +971,11 @@
       case 'month-set':
         state.month[btn.dataset.tab] = btn.dataset.month;
         render().catch(err => toast(err.message, true));
+        break;
+      case 'gran-set':
+      case 'ov-jump-month':
+        // 图表页（P4-M2）：粒度切换与柱/点跳总表当月，处理在 ledger/js/charts.js
+        if (window.LedgerCharts) window.LedgerCharts.handleAct(btn, T);
         break;
       case 'sp-save': {
         const amount = Core.yuanInputToCents(document.getElementById('spAmount').value);

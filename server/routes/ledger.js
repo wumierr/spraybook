@@ -110,10 +110,29 @@ function createLedgerRouter(db) {
     res.json({ ok: true, data: reports.byMonth(db, { from: req.query.from, to: req.query.to }) });
   });
   router.get('/reports/by-customer', (req, res) => {
-    res.json({ ok: true, data: reports.byCustomer(db, { from: req.query.from, to: req.query.to }) });
+    res.json({ ok: true, data: reports.byCustomer(db, {
+      from: req.query.from, to: req.query.to, include_all: req.query.include_all
+    }) });
   });
   router.get('/reports/by-job', (req, res) => {
     res.json({ ok: true, data: reports.byJob(db, { from: req.query.from, to: req.query.to }) });
+  });
+
+  /* ---------- 报表时间分组（P4-M2：月/周/季/年四粒度） ---------- */
+  router.get('/reports/by-period', (req, res) => {
+    res.json({ ok: true, data: reports.byPeriod(db, {
+      granularity: req.query.granularity, from: req.query.from, to: req.query.to
+    }) });
+  });
+  router.get('/reports/adjustments', (req, res) => {
+    res.json({ ok: true, data: reports.adjustments(db, {
+      granularity: req.query.granularity, from: req.query.from, to: req.query.to
+    }) });
+  });
+  router.get('/reports/cost-breakdown', (req, res) => {
+    res.json({ ok: true, data: reports.costBreakdown(db, {
+      source: req.query.source, from: req.query.from, to: req.query.to
+    }) });
   });
   router.get('/parties/:id/balance', (req, res) => {
     res.json({ ok: true, data: reports.partyBalance(db, Number(req.params.id)) });
