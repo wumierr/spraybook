@@ -38,10 +38,17 @@ function batteryCyclesOf(result) {
   return [...counts.entries()].map(([battery_name, count]) => ({ battery_name, count }));
 }
 
+/** 作业人工成本：spray 用 labor；haul 拆成 droneLabor+pickupLabor 两键 */
+function laborOf(cb) {
+  if (cb.labor != null) return cb.labor;
+  return Number(cb.droneLabor || 0) + Number(cb.pickupLabor || 0);
+}
+
 /** 计算器上报 payload → jobs 行字段（金额元→分） */
 function jobRowFromPayload(body) {
   const s = body.snapshot || {};
   const r = body.result || {};
+  const cb = r.costBreakdown || null;
   const now = new Date().toISOString();
   const haulIncomePricePerJin = s.haulIncome && s.haulIncome.pricePerJin != null
     ? Math.round(Number(s.haulIncome.pricePerJin) * 10) // 毛/斤 → 分/斤
@@ -81,6 +88,13 @@ function jobRowFromPayload(body) {
     charge_source: r.chargeSource || null,
     fuel_expense_cents: s.costs ? yuanToCents(s.costs.fuelExpense, 'costs.fuelExpense') : null,
     battery_depreciation_cents: s.costs ? yuanToCents(s.costs.batteryDepreciation, 'costs.batteryDepreciation') : null,
+    // 成本构成快照（007）：total_cost 的拆分，仅分析用，总额列不动。
+    // spray 构成 = {labor,pesticide,equipment,other}；haul = {droneLabor,pickupLabor,equipment,other}
+    labor_cost_cents: cb ? yuanToCents(laborOf(cb), 'costBreakdown.labor') : null,
+    pesticide_cost_cents: cb && cb.pesticide != null ? yuanToCents(cb.pesticide, 'costBreakdown.pesticide') : null,
+    equipment_cost_cents: cb && cb.equipment != null ? yuanToCents(cb.equipment, 'costBreakdown.equipment') : null,
+    misc_cost_cents: cb && cb.other != null ? yuanToCents(cb.other, 'costBreakdown.other') : null,
+    subsidy_cents: s.income && s.income.subsidy != null ? yuanToCents(s.income.subsidy, 'income.subsidy') : null,
     total_cost_cents: yuanToCents(r.totalCost, 'result.totalCost'),
     income_cents: yuanToCents(r.income, 'result.income'),
     profit_cents: yuanToCents(r.profit, 'result.profit'),
@@ -102,6 +116,8 @@ const JOB_COLS = Object.keys({
   pesticide_price_cents: 1, pesticide_included: 1, total_water_l: 1, total_add_water_l: 1,
   total_trips: 1, mix_batches: 1, total_flight_min: 1, total_minutes: 1, charge_count: 1,
   charge_source: 1, fuel_expense_cents: 1, battery_depreciation_cents: 1, total_cost_cents: 1,
+  labor_cost_cents: 1, pesticide_cost_cents: 1, equipment_cost_cents: 1, misc_cost_cents: 1,
+  subsidy_cents: 1,
   income_cents: 1, profit_cents: 1, weight_jin: 1, haul_price_cents_per_jin: 1,
   pickup_included: 1, raw_json: 1, created_at: 1, updated_at: 1
 });
@@ -120,12 +136,18 @@ function insertSubtables(db, jobId, body) {
 
   if (body.job_type === 'spray') {
     const completedByPlot = (s.workOrder && s.workOrder.completedByPlot) || {};
+    // 地块档案关联（007）：按名匹配主数据 plots，匹配不到留空不强建
+    const plotIdByName = new Map();
+    for (const p of db.prepare('SELECT id, name FROM plots WHERE deleted_at IS NULL ORDER BY id').all()) {
+      if (!plotIdByName.has(p.name)) plotIdByName.set(p.name, p.id);
+    }
     const insPlot = db.prepare(
-      `INSERT INTO job_plots (job_id, seq, plot_name, area_mu, farmer_ref, farmer_name, group_no,
+      `INSERT INTO job_plots (job_id, seq, plot_name, plot_id, area_mu, farmer_ref, farmer_name, group_no,
          water_l, flight_min, pesticide_sets, pesticide_rounded, completed_l, trips_override)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     (r.plots || []).forEach((p, i) => {
-      insPlot.run(jobId, i, p.name || `地块${i + 1}`, p.area ?? null, p.farmerId || null,
+      insPlot.run(jobId, i, p.name || `地块${i + 1}`, plotIdByName.get(p.name) ?? null,
+        p.area ?? null, p.farmerId || null,
         farmerNameOf(s, p.farmerId), p.groupId ?? null, p.water ?? null, p.flightMin ?? null,
         p.pesticideRaw ?? null, p.pesticideRounded ?? null,
         completedByPlot[p.id] ?? null, p.tripsOverride ?? null);
