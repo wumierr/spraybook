@@ -28,7 +28,7 @@ function getActive(db, table, id) {
  *  - 按客户：bill_id 空、party_id 给定 → 对该客户全部未清账单按最早顺序 FIFO
  *    自动核销（分摊明细写 receipts.allocations），剩余金额自动生成客户预收 advance
  */
-function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_at, note, from_advance_id }) {
+function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_at, note, from_advance_id, collector_name }) {
   if (!party_id) throw new ApiError('VALIDATION', 'party_id 必填');
   if (!Number.isInteger(amount_cents) || amount_cents <= 0) {
     throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
@@ -118,10 +118,10 @@ function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_a
       ? JSON.stringify({ items: allocations, remainder_advance_id: remainderAdvanceId })
       : null;
     const info = db.prepare(
-      `INSERT INTO receipts (receipt_no, bill_id, party_id, from_advance_id, amount_cents, method, occurred_at, note, status, allocations, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`)
+      `INSERT INTO receipts (receipt_no, bill_id, party_id, from_advance_id, amount_cents, method, occurred_at, note, status, allocations, collector_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`)
       .run(receipt_no, bill ? bill.id : null, party_id, from_advance_id || null, amount_cents,
-        method || 'cash', occurred_at || now, note || null, allocPayload, now, now);
+        method || 'cash', occurred_at || now, note || null, allocPayload, collector_name || null, now, now);
     const rid = info.lastInsertRowid;
 
     postEntry(db, {
