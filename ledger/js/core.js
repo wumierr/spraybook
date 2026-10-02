@@ -81,6 +81,40 @@
     };
   }
 
+  /** 总表行（P4-M1）：/api/overview 聚合行 → 列表显示行（纯函数，node:test 可测）
+      金额列保留分值由渲染层求和；此处只做展示派生（日期/地址/状态/编辑权界） */
+  function overviewRow(r) {
+    let ops = [];
+    try { ops = typeof r.operator_names === 'string' ? JSON.parse(r.operator_names || '[]') : (r.operator_names || []); }
+    catch (e) { ops = []; }
+    const addr = [r.village || '', r.team ? r.team + '队' : ''].filter(Boolean).join('·') || '—';
+    const billStatuses = String(r.bill_statuses || '').split(',').filter(Boolean);
+    const billCount = r.bill_count || 0;
+    const billStatus = billStatuses[0] || null;
+    return {
+      id: r.id, job_no: r.job_no, job_date: (r.job_date || '').slice(0, 10),
+      status: r.job_status, statusText: statusLabel(JOB_STATUS, r.job_status),
+      source: r.source || '',
+      customer_names: r.customer_names || '',
+      region: r.region || '', addr,
+      areaMu: r.total_area_mu != null ? r.total_area_mu : null,
+      unitPriceYuan: fmtYuan(r.unit_price_cents),
+      plantLabel: r.plant_label || '',
+      extraCents: r.extra_cents || 0,
+      referral: r.referral_name || '',
+      operators: ops,
+      collector: r.collector_name || '',
+      note: r.note || '',
+      billCount, billStatuses,
+      billId: r.bill_id || null, billPartyId: r.bill_party_id || null,
+      billAdjust: r.bill_adjust != null ? r.bill_adjust : 0,
+      billNote: r.bill_note || '',
+      // 编辑权界与账单页 billRow.canEdit 同口径：单账单 + 未收 + 零收款
+      canEditBill: billCount === 1 && billStatus === 'unpaid' && (r.paid_cents || 0) === 0,
+      canReceive: billCount === 1 && (billStatus === 'unpaid' || billStatus === 'partial')
+    };
+  }
+
   /** 流水行：借贷分列与平衡标记 */
   function journalRow(e) {
     const debit = e.lines.filter(l => l.direction === 'debit');
@@ -118,7 +152,7 @@
   const Core = {
     monthKeys, csvCell, csvRow,
     fmtYuan, yuanInputToCents, statusLabel,
-    billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow,
+    billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
     MAPS: { JOB_STATUS, SETTLEMENT_STATUS, BILL_STATUS, PAYMENT_CATEGORY, ADVANCE_DIRECTION, METHOD, PARTY_TYPE }
   };
 

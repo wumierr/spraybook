@@ -8,6 +8,7 @@ const settlements = require('../services/settlements');
 const finance = require('../services/finance');
 const journal = require('../services/journal');
 const reports = require('../services/reports');
+const overview = require('../services/overview');
 
 function createLedgerRouter(db) {
   const router = express.Router();
@@ -91,6 +92,14 @@ function createLedgerRouter(db) {
       `SELECT id, type, name, phone, region, village, team, default_price_cents FROM parties
        WHERE deleted_at IS NULL AND enabled = 1 ORDER BY type, name`).all();
     res.json({ ok: true, data });
+  });
+
+  /* ---------- 总表（P4-M1）：作业粒度聚合只读视图 ---------- */
+  router.get('/overview', (req, res) => {
+    res.json({ ok: true, data: overview.listOverview(db, {
+      from: req.query.from, to: req.query.to, status: req.query.status,
+      limit: req.query.limit ? Number(req.query.limit) : undefined
+    }) });
   });
 
   /* ---------- 报表（M6） ---------- */
