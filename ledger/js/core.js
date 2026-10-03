@@ -151,10 +151,39 @@
 
   /* ---------- SVG 图表纯函数已随 P5-M2 echarts 化移除（charts.js 改 option 构建器） ---------- */
 
+  /* ---------- 列宽存取（P5-M3 表格 Excel 化；DOM 无关，node:test 可测） ---------- */
+  const COLW_MIN = 48, COLW_MAX = 800;
+  /** 列宽规范化到 48–800px；非数回退下限（拖拽边界与存档读取共用一条口径） */
+  function clampColw(px) {
+    const n = Math.round(Number(px));
+    if (!Number.isFinite(n)) return COLW_MIN;
+    return Math.min(COLW_MAX, Math.max(COLW_MIN, n));
+  }
+  /** localStorage 存取键：按 页签+表 组合，不同页签同表名互不串档 */
+  function colwKey(tab, tableKey) {
+    return 'lg-colw:' + String(tab == null ? '' : tab) + ':' + String(tableKey == null ? '' : tableKey);
+  }
+  /** 解析列宽存档：坏 JSON / 非数组 / 列数超出现表（结构变更）/ 坏值 → 整包 null 丢弃防错位；
+      短数组允许（仅前列有存档）；每项经 clampColw 规范化 */
+  function parseColw(json, thCount) {
+    let arr;
+    try { arr = JSON.parse(json); } catch (e) { return null; }
+    if (!Array.isArray(arr)) return null;
+    if (arr.length > thCount) return null;
+    const out = [];
+    for (const v of arr) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return null;
+      out.push(clampColw(n));
+    }
+    return out;
+  }
+
   const Core = {
     monthKeys, csvCell, csvRow,
     fmtYuan, yuanInputToCents, statusLabel,
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
+    colwKey, clampColw, parseColw,
     MAPS: { JOB_STATUS, SETTLEMENT_STATUS, BILL_STATUS, PAYMENT_CATEGORY, ADVANCE_DIRECTION, METHOD, PARTY_TYPE }
   };
 

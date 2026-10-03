@@ -460,7 +460,7 @@
       title: '地区收入占比（账单金额按客户主数据地区分桶）',
       body: `<div class="lg-chart-grid lg-chart-grid--in">
         ${chartBox('c11', 230, regionRows.length)}
-        <table class="lg-table"><thead><tr><th>地区</th><th>单数</th><th>收入(元)</th><th>占比</th></tr></thead><tbody>${
+        <table class="lg-table" data-colw="charts-c11"><thead><tr><th>地区</th><th>单数</th><th>收入(元)</th><th>占比</th></tr></thead><tbody>${
           regionRows.length ? regionRows.map(r => `<tr><td>${esc(r.label)}</td><td class="num">${r.jobs_count}</td><td class="num">${yuan(r.income_cents)}</td><td class="num">${r.share_pct == null ? '—' : r.share_pct + '%'}</td></tr>`).join('') : '<tr><td colspan="4">暂无数据</td></tr>'
         }</tbody></table>
       </div>`,
@@ -470,7 +470,7 @@
       title: '飞手收入占比（账单金额按作业人数均摊，纯展示口径）',
       body: `<div class="lg-chart-grid lg-chart-grid--in">
         ${chartBox('c12', 230, opRowsAll.length || un.income_cents > 0)}
-        <table class="lg-table"><thead><tr><th>飞手</th><th>参与单数</th><th>均摊收入(元)</th><th>占比</th></tr></thead><tbody>${
+        <table class="lg-table" data-colw="charts-c12"><thead><tr><th>飞手</th><th>参与单数</th><th>均摊收入(元)</th><th>占比</th></tr></thead><tbody>${
           (opRowsAll.length || un.income_cents > 0)
             ? opRowsAll.map(r => `<tr><td>${esc(r.operator)}</td><td class="num">${r.jobs_count}</td><td class="num">${yuan(r.income_cents)}</td><td class="num">${r.share_pct == null ? '—' : r.share_pct + '%'}</td></tr>`).join('') +
               (un.income_cents > 0 ? `<tr><td class="lg-cust-on">未记录</td><td class="num">${un.jobs_count}</td><td class="num">${yuan(un.income_cents)}</td><td class="num">${un.share_pct == null ? '—' : un.share_pct + '%'}</td></tr>` : '')
@@ -520,10 +520,10 @@
       title: `客户 TOP10 收入 + 欠款/预收（客户总数 ${partiesAll.length}·启用）`,
       legend: chip(C1, '累计收入'),
       body: chartBox('c6', barH(c6Items), c6Items.length),
-      extra: `<table class="lg-table"><thead><tr><th>客户</th><th>累计收入(元)</th><th>欠款(元)</th><th>预收余额(元)</th></tr></thead><tbody>${
+      extra: `<table class="lg-table" data-colw="charts-c6"><thead><tr><th>客户</th><th>累计收入(元)</th><th>欠款(元)</th><th>预收余额(元)</th></tr></thead><tbody>${
         top10.map(c => `<tr><td>${esc(c.name || '—')}</td><td class="num">${yuan(c.income_cents)}</td><td class="num">${yuan(c.receivable_cents)}</td><td class="num">${yuan(c.prepaid_cents)}</td></tr>`).join('')
       }</tbody></table>
-      ${debtors.length ? `<table class="lg-table" style="margin-top:8px"><thead><tr><th>欠款 TOP5</th><th>欠款(元)</th><th>预收余额(元)</th></tr></thead><tbody>${
+      ${debtors.length ? `<table class="lg-table" style="margin-top:8px" data-colw="charts-c6debt"><thead><tr><th>欠款 TOP5</th><th>欠款(元)</th><th>预收余额(元)</th></tr></thead><tbody>${
         debtors.map(c => `<tr><td>${esc(c.name || '—')}</td><td class="num">${yuan(c.receivable_cents)}</td><td class="num">${yuan(c.prepaid_cents)}</td></tr>`).join('')
       }</tbody></table>` : ''}`,
       foot: 'include_all 口径：含期内无收入但有欠款/预收的客户（补零收入）。余额为时点值，不随粒度切换。'
@@ -544,7 +544,7 @@
     const c9 = `<div class="lg-panel lg-chart-card">
       <h2>环比增长总表（加分项）</h2>
       ${granBtns('pct')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="charts-c9"><thead><tr>
         <th>期间</th><th>收入(元)</th><th>环比</th><th>支出(元)</th><th>环比</th><th>利润(元)</th><th>环比</th><th>单数</th><th>环比</th><th>亩数</th><th>环比</th>
       </tr></thead><tbody>${pctRows.length ? pctRows.map(r => `<tr>
         <td title="${esc(r.period)}">${esc(periodLabel(r))}</td>
@@ -559,15 +559,15 @@
     const srcRows = topAgg(ovRows, r => [r.referral_name], r => r.amount_cents);
     const colRows = topAgg(ovRows, r => [r.collector_name], r => r.paid_cents);
     const opTopRows = topAgg(ovRows, r => parseOps(r.operator_names), r => r.amount_cents);
-    const miniTable = (head, rows, centsLabel) => `<table class="lg-table"><thead><tr><th>${head}</th><th>单数</th><th>${centsLabel}(元)</th></tr></thead><tbody>${
+    const miniTable = (head, rows, centsLabel, key) => `<table class="lg-table" data-colw="${key}"><thead><tr><th>${esc(head)}</th><th>单数</th><th>${esc(centsLabel)}(元)</th></tr></thead><tbody>${
       rows.length ? rows.map(r => `<tr><td>${esc(r.label)}</td><td class="num">${r.count}</td><td class="num">${yuan(r.cents)}</td></tr>`).join('') : '<tr><td colspan="3">暂无</td></tr>'
     }</tbody></table>`;
     const c10 = `<div class="lg-panel lg-chart-card">
       <h2>业务来源 / 收款人 / 作业人员 排行（加分项，总表口径前端聚合）</h2>
       <div class="lg-chart-grid lg-chart-grid--in">
-        ${miniTable('业务来源', srcRows, '应收')}
-        ${miniTable('收款人', colRows, '实收')}
-        ${miniTable('作业人员', opTopRows, '应收')}
+        ${miniTable('业务来源', srcRows, '应收', 'charts-c10-src')}
+        ${miniTable('收款人', colRows, '实收', 'charts-c10-col')}
+        ${miniTable('作业人员', opTopRows, '应收', 'charts-c10-op')}
       </div>
       <div class="lg-chart-foot">导入历史来源/收款人/人员多为空（显示为 — 的不计入）；金额按作业聚合（应收=Σ账单金额、实收=Σ账单已收）。</div>
     </div>`;

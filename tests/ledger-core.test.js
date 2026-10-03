@@ -219,3 +219,35 @@ test('charts.js：node 下可 require（渲染/动作/挂载/构建器入口存�
   assert.strictEqual(typeof Charts.buildBarOption, 'function');
   assert.strictEqual(typeof Charts.buildPieOption, 'function');
 });
+
+/* ==================== P5-M3 列宽存取纯函数（core.js，表格 Excel 化） ==================== */
+
+test('colwKey：页签+表 组合键（不同页签/不同表互不串档）', () => {
+  assert.strictEqual(Core.colwKey('overview', 'ov-main'), 'lg-colw:overview:ov-main');
+  assert.strictEqual(Core.colwKey('charts', 'charts-c9'), 'lg-colw:charts:charts-c9');
+  assert.strictEqual(Core.colwKey('overview', 'ov-main'), Core.colwKey('overview', 'ov-main'), '同参同键');
+  assert.notStrictEqual(Core.colwKey('overview', 'ov-main'), Core.colwKey('charts', 'ov-main'), '页签隔离');
+  assert.notStrictEqual(Core.colwKey('overview', 'ov-main'), Core.colwKey('overview', 'ov-pay'), '表隔离');
+});
+
+test('clampColw：宽度规范化到 48–800px（边界/取整/非数回退）', () => {
+  assert.strictEqual(Core.clampColw(120), 120, '区间内原样');
+  assert.strictEqual(Core.clampColw(10), 48, '低于下限取 48');
+  assert.strictEqual(Core.clampColw(-5), 48, '负数取下限');
+  assert.strictEqual(Core.clampColw(9999), 800, '高于上限取 800');
+  assert.strictEqual(Core.clampColw(120.4), 120, '四舍五入取整');
+  assert.strictEqual(Core.clampColw(120.6), 121);
+  assert.strictEqual(Core.clampColw('300'), 300, '数字字符串可规范化');
+  assert.strictEqual(Core.clampColw('abc'), 48, '非数回退下限');
+});
+
+test('parseColw：坏 JSON/非数组/列数超出/坏值整包丢弃，短存档允许，越界 clamp', () => {
+  assert.strictEqual(Core.parseColw('not-json', 5), null, '坏 JSON 丢弃');
+  assert.strictEqual(Core.parseColw('{"0":100}', 5), null, '非数组结构丢弃');
+  assert.strictEqual(Core.parseColw(null, 5), null, '从未存档');
+  assert.strictEqual(Core.parseColw('[100,120,80,90,60,70]', 5), null, '存档列数>现表（结构变更）整包丢弃防错位');
+  assert.deepStrictEqual(Core.parseColw('[100,120,80]', 5), [100, 120, 80], '短存档允许（仅前列有宽）');
+  assert.deepStrictEqual(Core.parseColw('[10,9999]', 2), [48, 800], '越界值 clamp 进 48–800');
+  assert.strictEqual(Core.parseColw('[100,"x"]', 5), null, '坏值整包丢弃');
+  assert.strictEqual(Core.parseColw('[100]', 0), null, '无表头列 thCount=0 丢弃');
+});

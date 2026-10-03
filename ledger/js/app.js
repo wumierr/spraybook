@@ -64,7 +64,7 @@
       <h2>现场工单（计算器上报，只读执行数据；金额可更正）</h2>
       ${toolbarHtml('jobs', { searchPh: '单号/备注' })}
       ${monthStrip('jobs', rowsAll, '_month')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="jobs"><thead><tr>
         <th>单号</th><th>日期</th><th>类型</th><th>状态</th><th>规模</th><th>收入(元)</th><th>操作</th>
       </tr></thead><tbody>${body || '<tr><td colspan="7">暂无工单——请用计算器完成作业并点"同步到账本"</td></tr>'}</tbody>
       ${tfootHtml(5, rows, [['收入', sumCents(rows, '_income')]], 1)}</table>
@@ -110,10 +110,10 @@
         <div>备注：${esc(j.note || '—')}　·　机器：${esc(j.plant_type_name || '—')}　·　亩数 ${j.total_area_mu ?? '—'}　·　水量 ${j.total_water_l ?? '—'}L　·　趟数 ${j.total_trips ?? '—'}　·　充电 ${j.charge_count ?? '—'} 次${batteryText ? '　·　电池：' + batteryText : ''}</div>
         ${parts ? `<div>成本构成：${parts}　→　合计 <b>${Core.fmtYuan(j.total_cost_cents)}</b>${subsidyText}</div>` : ''}
         ${plotRows ? `<h2 style="margin-top:8px">地块明细</h2>
-        <table class="lg-table"><thead><tr><th>地块</th><th>农户</th><th>组</th><th>面积(亩)</th><th>水量(L)</th><th>飞行(分)</th><th>用药(套)</th><th>完成(L)</th></tr></thead>
+        <table class="lg-table" data-colw="job-plots"><thead><tr><th>地块</th><th>农户</th><th>组</th><th>面积(亩)</th><th>水量(L)</th><th>飞行(分)</th><th>用药(套)</th><th>完成(L)</th></tr></thead>
         <tbody>${plotRows}</tbody></table>` : ''}
         <h2 style="margin-top:8px">分家明细</h2>
-        <table class="lg-table"><thead><tr><th>农户</th><th>打药费</th><th>用量</th><th>药钱</th><th>口径</th>${r.canEditLines ? '<th>更正(元) 打药费/药钱</th>' : ''}</tr></thead>
+        <table class="lg-table" data-colw="job-lines"><thead><tr><th>农户</th><th>打药费</th><th>用量</th><th>药钱</th><th>口径</th>${r.canEditLines ? '<th>更正(元) 打药费/药钱</th>' : ''}</tr></thead>
         <tbody>${lines || '<tr><td colspan="6">无分家明细（吊运）</td></tr>'}</tbody></table>
         ${r.canEditLines ? `<div style="margin-top:8px">
           <label>备注更正 <input id="jobNoteInput" value="${esc(j.note || '')}"></label>
@@ -146,7 +146,7 @@
       <h2>结算单（确认后生成账单与分录；撤回=红冲重开）</h2>
       ${toolbarHtml('settlements', { statusMap: Core.MAPS.SETTLEMENT_STATUS, searchPh: '结算号/作业单号' })}
       ${monthStrip('settlements', listAll, 'job_date')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="st-main"><thead><tr>
         <th>结算号</th><th>作业单</th><th>日期</th><th>状态</th>
         <th>作业费(元)</th><th>药费(元)</th><th>应收合计</th><th>已收</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="9">暂无结算单</td></tr>'}</tbody>
@@ -174,11 +174,11 @@
     }).join('');
     slot.innerHTML = `
       <div class="lg-detail">
-        <table class="lg-table"><thead><tr><th>农户</th><th>作业费(元)</th><th>药钱(元)</th><th>口径</th></tr></thead>
+        <table class="lg-table" data-colw="st-items"><thead><tr><th>农户</th><th>作业费(元)</th><th>药钱(元)</th><th>口径</th></tr></thead>
           <tbody>${items || '<tr><td colspan="4">无分项</td></tr>'}</tbody></table>
         ${editable ? `<button class="lg-btn primary" data-act="st-save-items" data-id="${s.id}" style="margin-top:8px">保存分项</button>` : ''}
         ${s.bills.length ? `<h2 style="margin-top:12px">账单</h2>
-        <table class="lg-table"><thead><tr><th>账单号</th><th>客户</th><th>状态</th><th>应收</th><th>已收</th></tr></thead><tbody>${bills}</tbody></table>` : ''}
+        <table class="lg-table" data-colw="st-bills"><thead><tr><th>账单号</th><th>客户</th><th>状态</th><th>应收</th><th>已收</th></tr></thead><tbody>${bills}</tbody></table>` : ''}
       </div>`;
   }
 
@@ -218,7 +218,7 @@
       <h2>账单（确认后只读；未收可改金额/抹零；收款在「收款」页或下方按钮）</h2>
       ${toolbarHtml('bills', { statusMap: Core.MAPS.BILL_STATUS, searchPh: '客户名/账单号' })}
       ${monthStrip('bills', rowsAll, '_month')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="bills"><thead><tr>
         <th>账单号</th><th>客户</th><th>状态</th><th>金额</th><th>调整</th><th>应收</th><th>已收</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="8">暂无账单</td></tr>'}</tbody>
       ${tfootHtml(3, list, [['金额', sumCents(list, '_amount')], ['调整', sumCents(list, '_adjust')], ['应收', sumCents(list, '_payable')], ['已收', sumCents(list, '_paid')]], 1)}</table>
@@ -237,7 +237,7 @@
         ? `<button class="lg-btn" data-act="rc-alloc" data-id="${r0.id}" data-alloc="${esc(JSON.stringify(alloc))}" data-amount="${r0.amount_cents}">核销 ${alloc.length} 张</button>`
         : '';
       const noteCell = editMode('receipts')
-        ? `<input data-ek="${r0.id}" data-f="note" value="${esc(r0.note || '')}" data-orig="${esc(r0.note || '')}" placeholder="备注"> <input data-ek="${r0.id}" data-f="collector_name" value="${esc(r0.collector_name || '')}" data-orig="${esc(r0.collector_name || '')}" placeholder="经手人" style="width:70px">`
+        ? `<input data-ek="${r0.id}" data-f="note" value="${esc(r0.note || '')}" data-orig="${esc(r0.note || '')}" placeholder="备注"> <input data-ek="${r0.id}" data-f="collector_name" value="${esc(r0.collector_name || '')}" data-orig="${esc(r0.collector_name || '')}" placeholder="经手人" class="lg-inp--sm">`
         : `${esc(r0.note || '')}${r0.collector_name ? `<span class="lg-tag">经手:${esc(r0.collector_name)}</span>` : ''}`;
       return `<tr>
         <td>${esc(r0.receipt_no)}</td>${custCell(r0.party_name || '—')}
@@ -268,7 +268,7 @@
       <h2>收款记录（作废=反向分录+账单回退）</h2>
       ${toolbarHtml('receipts', { searchPh: '客户名/单号/备注' })}
       ${monthStrip('receipts', listAll, 'occurred_at')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="receipts"><thead><tr>
         <th>单号</th><th>客户</th><th>金额(元)</th><th>方式</th><th>账单</th><th>日期</th><th>备注/经手人</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="8">暂无收款</td></tr>'}</tbody>
       ${tfootHtml(2, liveRows, [['实收', sumCents(liveRows, '_amount')]], 5)}</table>
@@ -328,7 +328,7 @@
       <h2>支出记录（作废=反向分录）</h2>
       ${toolbarHtml('payments', { category: true, searchPh: '收款方/单号/备注' })}
       ${monthStrip('payments', listAll, 'occurred_at')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="payments"><thead><tr>
         <th>单号</th><th>类别</th><th>金额(元)</th><th>收款方</th><th>日期</th><th>备注</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无支出</td></tr>'}</tbody>
       ${tfootHtml(2, liveRows, [['支出', sumCents(liveRows, '_amount')]], 4)}</table>
@@ -371,7 +371,7 @@
       <h2>预收/预支台账（余额=可用；预收抵账在收款页选"预收抵扣"；编辑模式可改备注）</h2>
       ${toolbarHtml('advances', { searchPh: '对象/单号/备注' })}
       ${monthStrip('advances', listAll, 'occurred_at')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="advances"><thead><tr>
         <th>单号</th><th>对象</th><th>类型</th><th>金额</th><th>余额</th><th>日期</th><th>备注</th><th>操作</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="8">暂无</td></tr>'}</tbody>
       ${tfootHtml(3, liveRows, [['金额', sumCents(liveRows, '_amount')], ['余额', sumCents(liveRows, '_balance')]], 3)}</table>
@@ -398,7 +398,7 @@
     </div>
     <div class="lg-panel">
       <h2>分成记录</h2>
-      <table class="lg-table"><thead><tr><th>对象</th><th>金额(元)</th><th>作业</th><th>日期</th><th>备注</th></tr></thead>
+      <table class="lg-table" data-colw="splits"><thead><tr><th>对象</th><th>金额(元)</th><th>作业</th><th>日期</th><th>备注</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="5">暂无</td></tr>'}</tbody></table>
     </div>`;
   }
@@ -419,7 +419,7 @@
       <h2>复式流水（借贷必须平衡；红冲凭证 event=reversal）</h2>
       ${toolbarHtml('journal', { searchPh: '凭证号/事件/摘要' })}
       ${monthStrip('journal', rowsAll, '_month')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="journal"><thead><tr>
         <th>凭证号</th><th>日期</th><th>事件</th><th>摘要</th><th>借方</th><th>贷方</th><th>平衡/金额</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无凭证</td></tr>'}</tbody></table>
     </div>`;
@@ -465,22 +465,22 @@
     </div>
     <div class="lg-panel">
       <h2>月度盈亏（确认口径）</h2>
-      <table class="lg-table"><thead><tr><th>月份</th><th>收入(元)</th><th>支出(元)</th><th>利润(元)</th></tr></thead>
+      <table class="lg-table" data-colw="rep-month"><thead><tr><th>月份</th><th>收入(元)</th><th>支出(元)</th><th>利润(元)</th></tr></thead>
       <tbody>${monthRows || '<tr><td colspan="4">暂无</td></tr>'}</tbody></table>
     </div>
     <div class="lg-panel">
       <h2>支出分类</h2>
-      <table class="lg-table"><thead><tr><th>科目</th><th>金额(元)</th></tr></thead>
+      <table class="lg-table" data-colw="rep-expense"><thead><tr><th>科目</th><th>金额(元)</th></tr></thead>
       <tbody>${expRows || '<tr><td colspan="2">暂无</td></tr>'}</tbody></table>
     </div>
     <div class="lg-panel">
       <h2>客户盈利与余额</h2>
-      <table class="lg-table"><thead><tr><th>客户</th><th>累计收入(元)</th><th>欠款(元)</th><th>预收余额(元)</th></tr></thead>
+      <table class="lg-table" data-colw="rep-customer"><thead><tr><th>客户</th><th>累计收入(元)</th><th>欠款(元)</th><th>预收余额(元)</th></tr></thead>
       <tbody>${custRows || '<tr><td colspan="4">暂无</td></tr>'}</tbody></table>
     </div>
     <div class="lg-panel">
       <h2>按作业盈利（作业快照口径：导入单成本未含药/油现金支出，显示 0）</h2>
-      <table class="lg-table"><thead><tr><th>作业单</th><th>日期</th><th>类型</th><th>规模</th><th>收入(元)</th><th>成本(元)</th><th>利润(元)</th></tr></thead>
+      <table class="lg-table" data-colw="rep-jobprofit"><thead><tr><th>作业单</th><th>日期</th><th>类型</th><th>规模</th><th>收入(元)</th><th>成本(元)</th><th>利润(元)</th></tr></thead>
       <tbody>${jobRows || '<tr><td colspan="7">暂无</td></tr>'}</tbody></table>
     </div>`;
   }
@@ -525,7 +525,7 @@
         <td>${esc((r.operators || []).join('、') || '—')}</td>
         <td>${esc(r.collector || '—')}</td>
         <td>${tag(r.statusText)}${r.billStatuses.map(s => ` ${tag(Core.MAPS.BILL_STATUS[s] || s)}`).join('')}</td>
-        <td>${esc(r.note || '—')}${em && r.canEditBill ? `<br><input data-ekb="${r.billId}" data-f="note" value="${esc(r.billNote || '')}" data-orig="${esc(r.billNote || '')}" placeholder="账单备注" title="账单备注（可改）；上方为作业备注（只读，更正走工单详情）" style="width:110px">` : ''}</td>
+        <td>${esc(r.note || '—')}${em && r.canEditBill ? `<br><input data-ekb="${r.billId}" data-f="note" value="${esc(r.billNote || '')}" data-orig="${esc(r.billNote || '')}" placeholder="账单备注" title="账单备注（可改）；上方为作业备注（只读，更正走工单详情）" class="lg-inp">` : ''}</td>
         <td>${actions(
           `<button class="lg-btn" data-act="job-detail" data-id="${r.id}">详情</button>`,
           r.canReceive ? `<button class="lg-btn primary" data-act="bill-receive" data-id="${r.billId}" data-party="${r.billPartyId || ''}" data-unpaid="${r._due}">登记收款</button>` : ''
@@ -537,7 +537,7 @@
       <h2>总表（原 Excel 全数据通看；行=作业单，账单字段按作业聚合）</h2>
       ${toolbarHtml('overview', { searchPh: '单号/客户/村队/来源/备注' })}
       ${monthStrip('overview', rowsAll, 'job_date')}
-      <table class="lg-table lg-table--wide"><thead><tr>
+      <table class="lg-table lg-table--wide" data-colw="ov-main"><thead><tr>
         <th>单号</th><th>日期</th><th>客户</th><th>村·队</th><th>亩数</th><th>单价(元/亩)</th><th>目的</th>
         <th>应收(元)</th><th>实收(元)</th><th>未收(元)</th><th>抹零(元)</th>
         <th>来源</th><th>人员</th><th>收款人</th><th>状态</th><th>备注</th><th>操作</th>
@@ -573,7 +573,7 @@
       <h2>支出流水（原表支出项目/金额列；登记与作废在「支出」页）</h2>
       ${toolbarHtml('ovpay', { category: true, searchPh: '收款方/单号/备注' })}
       ${monthStrip('ovpay', listAll, 'occurred_at')}
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="ov-pay"><thead><tr>
         <th>单号</th><th>类别</th><th>金额(元)</th><th>收款方</th><th>日期</th><th>备注</th><th>状态</th>
       </tr></thead><tbody>${rows || '<tr><td colspan="7">暂无支出</td></tr>'}</tbody>
       ${tfootHtml(2, liveRows, [['支出', sumCents(liveRows, '_amount')]], 4)}</table>
@@ -768,6 +768,7 @@
     } else if (tab === 'import' || tab === 'master') {
       await window.LedgerExtra.renderTab(tab, $main);
     }
+    applyColWidths(); // P5-M3：全量重绘后统一恢复列宽（含明细插槽外各表的手柄注入）
     refreshSummary();
     updateFab();
   }
@@ -779,6 +780,132 @@
         `应收 ${Core.fmtYuan(s.receivable_cents)} · 已收 ${Core.fmtYuan(s.received_cents)} · 支出 ${Core.fmtYuan(s.expense_cents)} · 预收余 ${Core.fmtYuan(s.prepaid_cents)}`;
     } catch (e) { /* 顶部汇总失败不打扰 */ }
   }
+
+  /* ---------- 列宽拖拽与记忆（P5-M3 表格 Excel 化；纯函数在 core.js：colwKey/parseColw/clampColw） ----------
+     applyColWidths 在每次全量重绘后统一恢复：doRender 尾部 / toggleDetailSlot 明细插槽挂钩 /
+     LedgerExtra.renderTab 返回链（app-extra 直调重绘的旁路）。有存档的表才插 colgroup+lg-fixed
+     （table-layout:fixed），无存档表零改动；拖拽是 $main 上一条 mousedown 委托（与既有
+     click/input/change 委托同构，全量重绘与 app-extra 直调重绘都不会丢监听），手柄上
+     preventDefault+stopPropagation，与点击过滤/排序、handleAct 委托互不干扰。 */
+  function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* 隐私模式丢弃 */ } }
+  function lsDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* 忽略 */ } }
+  /** 本表的 colgroup：只找直接子级（querySelector 会误命中嵌套明细表的 colgroup） */
+  function findColgroup(table) {
+    for (const el of table.children) { if (el.tagName === 'COLGROUP') return el; }
+    return null;
+  }
+  /** 本表表头首行单元格（table.tHead 只认本表直接子级 thead，嵌套明细表不受影响） */
+  function headCells(table) {
+    const row = table.tHead && table.tHead.rows[0];
+    return row ? [...row.cells] : [];
+  }
+  function cleanupCols(table) {
+    table.classList.remove('lg-fixed');
+    const cg = findColgroup(table);
+    if (cg) cg.remove();
+  }
+  /** 给表头每个 th 注入右缘拖拽手柄（幂等；所有 data-colw 表都有手柄，无存档也能拖） */
+  function ensureColwHandles(table) {
+    for (const th of headCells(table)) {
+      if (th.querySelector(':scope > .lg-colw-h')) continue;
+      const h = document.createElement('span');
+      h.className = 'lg-colw-h';
+      h.title = '拖动调列宽；双击恢复默认列宽';
+      th.appendChild(h);
+    }
+  }
+  /** 列宽统一恢复：有有效存档的表插 colgroup + lg-fixed；无存档表清临时快照回默认渲染（幂等） */
+  function applyColWidths() {
+    const tab = state.tab;
+    document.querySelectorAll('#lgMain table[data-colw]').forEach(table => {
+      ensureColwHandles(table);
+      const key = table.dataset.colw;
+      const ths = headCells(table);
+      cleanupCols(table);
+      if (!key || !ths.length) return;
+      let stored = null;
+      try { stored = Core.parseColw(lsGet(Core.colwKey(tab, key)), ths.length); } catch (e) { stored = null; }
+      if (!stored || !stored.length) return; // 无存档：保持默认渲染（未拖过的表零回归）
+      if (stored.length < ths.length) {
+        // 短存档补齐：缺省列取当前渲染宽（fixed 化前量一次，避免存档越拖越丢列）
+        stored = stored.concat(ths.slice(stored.length).map(th => Math.round(th.getBoundingClientRect().width)));
+      }
+      const cg = document.createElement('colgroup');
+      for (const w of stored) {
+        const col = document.createElement('col');
+        col.style.width = Core.clampColw(w) + 'px';
+        cg.appendChild(col);
+      }
+      table.insertBefore(cg, table.firstChild);
+      table.classList.add('lg-fixed');
+    });
+  }
+  /** 拖拽起步快照：把当前渲染宽固化进 colgroup 并开 fixed（从第一次拖拽起即 Excel 化体验） */
+  function snapshotCols(table) {
+    const cg = findColgroup(table);
+    if (cg) return [...cg.children].map(col => parseFloat(col.style.width) || 0);
+    const widths = headCells(table).map(th => Math.round(th.getBoundingClientRect().width));
+    const ng = document.createElement('colgroup');
+    for (const w of widths) {
+      const col = document.createElement('col');
+      col.style.width = w + 'px';
+      ng.appendChild(col);
+    }
+    table.insertBefore(ng, table.firstChild);
+    table.classList.add('lg-fixed');
+    return widths;
+  }
+  let colwDrag = null;
+  function onColwMove(e) {
+    const d = colwDrag;
+    if (!d) return;
+    try {
+      const dx = e.clientX - d.startX;
+      if (dx !== 0) d.moved = true;
+      const table = document.querySelector(`#lgMain table[data-colw="${d.key}"]`);
+      if (!table) return;
+      // 拖拽中恰逢重绘（搜索防抖 250ms 等）时旧 col 已脱离 DOM：重查当前表，无快照则按当前渲染宽重建
+      let cg = findColgroup(table);
+      if (!cg && dx !== 0) { d.widths = snapshotCols(table); cg = findColgroup(table); }
+      const w = Core.clampColw(d.startW + dx);
+      d.widths[d.idx] = w;
+      if (cg && cg.children[d.idx]) cg.children[d.idx].style.width = w + 'px';
+    } catch (err) { /* 拖拽容错：丢一帧不中断 */ }
+  }
+  function onColwUp() {
+    document.removeEventListener('mousemove', onColwMove);
+    document.removeEventListener('mouseup', onColwUp);
+    const d = colwDrag;
+    colwDrag = null;
+    if (!d) return;
+    if (d.moved) lsSet(Core.colwKey(d.tab, d.key), JSON.stringify(d.widths.map(w => Core.clampColw(w))));
+    applyColWidths(); // 存档回显；未拖动时清临时快照（或恢复原存档）
+  }
+  $main.addEventListener('mousedown', e => {
+    const h = e.target.closest('.lg-colw-h');
+    if (!h) return;
+    const th = h.closest('th');
+    const table = th && th.closest('table[data-colw]');
+    if (!table || !table.dataset.colw) return;
+    const idx = headCells(table).indexOf(th);
+    if (idx < 0) return;
+    e.preventDefault();  // 防拖拽选中文本
+    e.stopPropagation(); // 不进既有 click/input/change 委托链
+    const widths = snapshotCols(table);
+    colwDrag = { tab: state.tab, key: table.dataset.colw, idx, widths, startX: e.clientX, startW: widths[idx] || 0, moved: false };
+    document.addEventListener('mousemove', onColwMove);
+    document.addEventListener('mouseup', onColwUp);
+  });
+  $main.addEventListener('dblclick', e => {
+    const h = e.target.closest('.lg-colw-h');
+    if (!h) return;
+    const table = h.closest('table[data-colw]');
+    if (!table || !table.dataset.colw) return;
+    lsDel(Core.colwKey(state.tab, table.dataset.colw)); // 双击手柄=清除该表存档回默认
+    applyColWidths();
+  });
+  window.LedgerColWidths = { apply: applyColWidths };
 
   /* ---------- 事件委托 ---------- */
   document.getElementById('lgNav').addEventListener('click', e => {
@@ -854,14 +981,20 @@
   function toggleDetailSlot(slot, loader) {
     const tr = slot.closest('tr');
     tr.hidden = !tr.hidden;
-    if (!tr.hidden && slot.innerHTML === '') loader();
+    if (!tr.hidden && slot.innerHTML === '') {
+      // P5-M3：明细插槽异步向 slot 插表（job-detail/st-detail/st-edit 三入口），
+      // doRender 尾部与 renderTab 返回链都不会在明细展开后执行，loader 完成后单独恢复列宽
+      const r = loader();
+      if (r && typeof r.then === 'function') r.then(() => applyColWidths());
+      else applyColWidths();
+    }
   }
   function needAmount(v) {
     if (v == null || isNaN(v) || v <= 0) { toast('金额非法', true); return false; }
     return true;
   }
 
-  const T = { run, toast, confirmThen, needAmount, collectInputs, esc, tag, actions, Core, Api, state, switchNav, render };
+  const T = { run, toast, confirmThen, needAmount, collectInputs, esc, tag, actions, Core, Api, state, switchNav, render, applyColWidths };
   window.__ledgerTools = T; // app-extra.js 的工具注入源（P2-4 拆分）
 
   function handleAct(btn) {

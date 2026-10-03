@@ -45,7 +45,7 @@ body {
   padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 13px;
 }
 .lg-nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.lg-main { padding: 14px 16px 60px; max-width: 1200px; margin: 0 auto; }
+.lg-main { padding: 14px 16px 60px; max-width: 1600px; margin: 0 auto; }
 .lg-panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 14px; overflow-x: auto; }
 .lg-panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
 table.lg-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }
@@ -111,8 +111,10 @@ table.lg-table tfoot td.num b { color: var(--text); font-size: 13px; }
 .lg-fab-edit, .lg-fab-save { background: var(--accent); color: #fff; }
 .lg-fab-cancel { background: var(--panel); color: var(--danger); border: 1px solid var(--danger); }
 
-/* ---------- 总表（P4-M1）：17 列宽表横向滚动 + 密集数字输入 ---------- */
-table.lg-table--wide { min-width: 1280px; }
+/* ---------- 总表（P4-M1）：17 列宽表横向滚动 + 密集数字输入 ----------
+   P5-M3：min-width 1280→1520（≤1600 视口下可视宽实算 1542=1600−32 main 左右 padding
+   −26 panel 边框+padding，≥1600 视口无横向滚动；1440 视口可视宽 1382<1520 保留按需横滚） */
+table.lg-table--wide { min-width: 1520px; }
 table.lg-table--wide input[type="number"] { width: 96px; }
 
 /* ---------- 总表顶部数据条（P5-M2）：KPI 卡 + 粒度切换 + 两张小图 ---------- */
@@ -150,3 +152,51 @@ table.lg-table--wide input[type="number"] { width: 96px; }
 .lg-gran { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
 .lg-chart-foot { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.6; }
 @media (max-width: 1040px) { .lg-chart-grid { grid-template-columns: 1fr; } }
+
+/* ---------- 表格 Excel 化（P5-M3）：列宽拖拽/记忆 + sticky 首列表头 + 编辑输入随列宽 ---------- */
+/* sticky：横向滚动容器是 .lg-panel（overflow-x:auto），滚动时首列（含表头首格）保持可见以定位行；
+   thead th 同挂 sticky top（当前面板纵向不滚属无害预留，日后面板限高即生效）。
+   sticky 单元格必须实色背景防透字：背景走 --lg-sticky-bg（主表面板色 / 明细插槽内退为 --bg，
+   与 P5-M2 观感一致零色差）；inset 阴影补 border-collapse:collapse 下 sticky 单元格
+   容易丢失的右侧分隔线。th 位置化同时作为拖拽手柄的定位锚。 */
+:root { --lg-sticky-bg: var(--panel); }
+.lg-detail { --lg-sticky-bg: var(--bg); }
+table.lg-table th { position: relative; }
+table.lg-table thead th { position: sticky; top: 0; z-index: 2; }
+table.lg-table thead th:first-child,
+table.lg-table tbody td:first-child,
+table.lg-table tfoot td:first-child {
+  position: sticky; left: 0; background: var(--lg-sticky-bg);
+  box-shadow: inset -1px 0 0 var(--border);
+}
+table.lg-table thead th:first-child { z-index: 3; }
+table.lg-table td.lg-detail:first-child,
+table.lg-table tr.lg-detail td:first-child { position: static; background: var(--lg-sticky-bg); box-shadow: none; }
+
+/* th 右缘拖拽手柄（app.js applyColWidths 注入 .lg-colw-h；默认隐形，悬停现 2px 握把线） */
+.lg-colw-h {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 10px;
+  cursor: col-resize; z-index: 4; user-select: none; touch-action: none;
+}
+.lg-colw-h::before {
+  content: ''; position: absolute; top: 22%; bottom: 22%; right: 4px; width: 2px;
+  border-radius: 1px; background: transparent;
+}
+table.lg-table th:hover > .lg-colw-h::before { background: var(--border); }
+.lg-colw-h:hover::before { background: var(--accent); }
+
+/* 列宽记忆生效的表：fixed 布局让拖宽精确生效；拖窄列后长文本省略号截断不侵入邻列 */
+table.lg-fixed { table-layout: fixed; }
+table.lg-fixed td { overflow: hidden; text-overflow: ellipsis; }
+
+/* 编辑输入随列宽流式——仅限已开 fixed 的表（有存档才加 lg-fixed）；
+   既有 96px/90px 基线对无存档表原样生效，未拖过的表零回归（必须排在 :116 宽表规则之后，
+   同特异性时后者按源序胜出） */
+table.lg-fixed input[type="number"],
+table.lg-fixed .lg-detail input,
+table.lg-fixed input.lg-inp,
+table.lg-fixed input.lg-inp--sm { width: 100%; min-width: 0; }
+
+/* 内联宽退役后的基线（非 fixed 表观感与 P5-M2 一致）：总表账单备注 110px、收款经手人 70px */
+input.lg-inp { width: 110px; }
+input.lg-inp--sm { width: 70px; }
