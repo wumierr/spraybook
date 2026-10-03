@@ -70,7 +70,7 @@ chmod +x build-apk.sh
 ```bash
 cd androidapp
 # 先同步 Web 文件
-bash scripts/sync-web.sh
+（已删除——同步内置于 scripts/build-apk.ps1 Step 1）
 # 生成 wrapper（如已存在跳过）
 gradle wrapper --gradle-version 8.5
 # 构建 Debug APK
@@ -246,11 +246,11 @@ androidapp/
 ```bash
 # Linux/Mac
 cd androidapp/scripts
-./sync-web.sh && ./build-apk.sh debug
+（已删除——用根目录 scripts/build-apk.ps1,内部先同步再校验再构建）
 
 # Windows
 cd androidapp\scripts
-sync-web.bat && build-apk.bat debug
+（已删除——用根目录 5-打包APK.bat）
 ```
 
 ---

@@ -1,4 +1,6 @@
 /* ============================================================
+   ⚠️ 一次性数据订正：已于 2026-10 生产库执行完毕，勿对生产库重跑（逻辑幂等，
+   重跑无副作用但无意义；回归见 tests/server/backfill*.test.js）。
    db/renumber-import-jobs.js — 一次性：把导入的 IMP-* 作业单号
    重编为可读格式 J+YYYYMMDD-当日序号（用户反馈：单号要可读）
    运行：cd server && node db/renumber-import-jobs.js

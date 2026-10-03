@@ -62,6 +62,7 @@
       <button id="exportBtn" class="icon-btn" title="导出配置文本" aria-label="导出">📤</button>
       <button id="farmersBtn" class="icon-btn" title="农户档案" aria-label="农户档案">🧑‍🌾</button>
       <button id="historyBtn" class="icon-btn" title="历史记录" aria-label="历史">🕘</button>
+      <button id="syncCfgBtn" class="icon-btn" title="账本同步设置" aria-label="账本同步设置">☁️</button>
       <button id="themeBtn" class="icon-btn theme-toggle" title="切换日/夜模式" aria-label="切换主题">☀️</button>
     </div>
   </header>
@@ -369,10 +370,21 @@
         <button class="tab-btn active" data-exp="text">📝 文本格式（易读）</button>
         <button class="tab-btn" data-exp="json">⚙️ JSON格式（精确）</button>
       </div>
+      <div class="export-sections" id="exportSections">
+        <label><input type="checkbox" data-sec="params" checked>作业参数</label>
+        <label><input type="checkbox" data-sec="plots" checked>地块与作业组</label>
+        <label><input type="checkbox" data-sec="costs" checked>成本费用</label>
+        <label><input type="checkbox" data-sec="income" checked>收入</label>
+        <label><input type="checkbox" data-sec="workOrder" checked>工单备注</label>
+        <label><input type="checkbox" data-sec="farmers" checked>农户档案</label>
+        <label><input type="checkbox" data-sec="batteries" checked>电池台账</label>
+        <label><input type="checkbox" data-sec="types" checked>自定义类型</label>
+      </div>
       <textarea id="exportText" rows="12" readonly></textarea>
       <div class="modal-actions">
         <button class="btn btn-secondary" id="copyExport">📋 复制到剪贴板</button>
-        <button class="btn btn-primary" data-close>完成</button>
+        <button class="btn btn-primary" id="downloadJobPack">⬇ 下载作业包(可导入记账)</button>
+        <button class="btn btn-secondary" data-close>完成</button>
       </div>
     </div>
   </div>
@@ -390,8 +402,7 @@
   </div>
 
   <!-- 模态框：历史记录 -->
-  <div class="modal" id="historyModal" aria-hidden="true">
-    <div class="modal-box">
+  <div class="modal" id="historyModal" aria-hidden="true">    <div class="modal-box">
       <div class="modal-title">🕘 历史记录 <button class="modal-close" data-close>✕</button></div>
       <p class="modal-hint">最近 20 次计算记录（本地存储）。</p>
       <ul class="history-list" id="historyList"><!-- JS 注入 --></ul>
@@ -399,6 +410,28 @@
         <button class="btn btn-secondary danger" id="clearHistoryBtn">🗑 清空历史</button>
         <button class="btn btn-secondary" data-close>关闭</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 模态框：账本同步设置（P6-M1：此前只能手写 localStorage） -->
+  <div class="modal" id="syncCfgModal" aria-hidden="true">
+    <div class="modal-box">
+      <div class="modal-title">☁️ 账本同步设置 <button class="modal-close" data-close>✕</button></div>
+      <p class="modal-hint">填写记账后台的地址（与计算器同源部署时填本页地址即可），保存后「生成工单 → 同步到账本」才会生效。</p>
+      <div class="form-grid">
+        <label>账本服务器地址
+          <input type="text" id="syncCfgUrl" placeholder="如 http://192.168.1.10:8080">
+        </label>
+        <label class="check-label">
+          <input type="checkbox" id="syncCfgEnabled"> 启用同步
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="syncCfgTest">🔍 测试连接</button>
+        <button class="btn btn-secondary" data-close>取消</button>
+        <button class="btn btn-primary" id="syncCfgSave">保存</button>
+      </div>
+      <p class="modal-hint" id="syncCfgTestResult" style="margin-top:6px"></p>
     </div>
   </div>
 
