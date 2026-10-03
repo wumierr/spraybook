@@ -121,65 +121,101 @@ test('csvCell/csvRow：引号转义与行拼装（导出 Excel 兼容）', () =>
   assert.strictEqual(Core.csvRow(['a', 'b"c', 12]), '"a","b""c","12"');
 });
 
-/* ==================== P4-M2 SVG 图表纯函数 ==================== */
+/* ==================== P5-M2 echarts option 构建器（charts.js 纯函数层；
+   P4-M2 手绘 SVG 几何函数已随内核更换移除，原 6 个几何用例同步删除） ==================== */
 
-test('scaleLinear：线性映射，零域宽返回 r0（空数据安全）', () => {
-  const y = Core.scaleLinear(0, 1000, 200, 0); // 值越大像素越小（倒轴）
-  assert.strictEqual(y(0), 200);
-  assert.strictEqual(y(1000), 0);
-  assert.strictEqual(y(500), 100);
-  const flat = Core.scaleLinear(0, 0, 200, 0);
-  assert.strictEqual(flat(500), 200, '域宽 0 恒返回 r0');
+const Charts = require('../ledger/js/charts.js');
+
+test('charts.buildTimeOption：x 轴人类 label、柱+折线各自值域 yAxis、抽稀 interval、tooltip 首行 label(period)', () => {
+  const rows = [
+    { period: '2026-01', label: '1月', income_cents: 10000, expense_cents: 4000, profit_cents: 6000, income_pct: null, expense_pct: null },
+    { period: '2026-02', label: '2月', income_cents: 20000, expense_cents: 5000, profit_cents: 15000, income_pct: 100, expense_pct: 25 }
+  ];
+  const opt = Charts.buildTimeOption({
+    rows,
+    bars: [
+      { key: 'income_cents', name: '收入', color: '#0e7c66' },
+      { key: 'expense_cents', name: '支出', color: '#c0392b' }
+    ],
+    lines: [{ key: 'profit_cents', name: '利润', color: '#b7791f', fmt: v => String(v) }],
+    colors: { muted: '#6b7a89', border: '#dde3e9' },
+    yFmt: v => String(v),
+    tip: r => `${Charts.periodLabel(r)}(${r.period})`
+  });
+  assert.deepStrictEqual(opt.xAxis.data, ['1月', '2月'], 'x 轴=人类可读 label，按 rows 序（服务端升序返回）');
+  assert.strictEqual(opt.yAxis.length, 2, '柱值域轴 + 折线自有值域轴');
+  assert.strictEqual(opt.series.length, 3, '2 柱 + 1 线');
+  assert.strictEqual(opt.series[0].type, 'bar');
+  assert.strictEqual(opt.series[2].type, 'line');
+  assert.strictEqual(opt.series[2].yAxisIndex, 1, '折线挂自有值域轴');
+  assert.deepStrictEqual(opt.series[0].data, [10000, 20000], '柱数据取自 rows（_cents 整数分）');
+  assert.strictEqual(opt.xAxis.axisLabel.interval, 0, 'n≤12 全显示');
+  assert.strictEqual(typeof opt.tooltip.formatter, 'function');
+  assert.strictEqual(opt.tooltip.formatter([{ dataIndex: 0 }]), '1月(2026-01)',
+    'tooltip 首行=label(period)，原始键在括号内');
+  assert.strictEqual(opt.tooltip.formatter([{ dataIndex: 9 }]), '', '越界 dataIndex 安全');
+
+  const many = Charts.buildTimeOption({
+    rows: Array.from({ length: 13 }, (_, i) => ({ period: `2026-${String(i + 1).padStart(2, '0')}`, label: `${i + 1}月` })),
+    bars: [], lines: [], colors: {}
+  });
+  assert.strictEqual(many.xAxis.axisLabel.interval, 1, '13 桶抽稀（最多 12 个 label）');
+  assert.strictEqual(many.yAxis.length, 1, '无柱无线时兜底单轴');
+  assert.ok(many.xAxis.axisLabel.hideOverlap, '轴标签防重叠');
 });
 
-test('niceTicks：1/2/5×10^k 步进；空/非法数据返回零网格；末刻度=max', () => {
-  assert.deepStrictEqual(Core.niceTicks(4000, 4), { max: 4000, ticks: [0, 1000, 2000, 3000, 4000] });
-  const t5 = Core.niceTicks(5000, 4); // rough=1250 → step 2000 → max 6000
-  assert.strictEqual(t5.max, 6000);
-  assert.deepStrictEqual(t5.ticks, [0, 2000, 4000, 6000]);
-  assert.ok(Core.niceTicks(10117010).max >= 10117010, 'max 覆盖数据最大值');
-  assert.deepStrictEqual(Core.niceTicks(0), { max: 0, ticks: [0] });
-  assert.deepStrictEqual(Core.niceTicks(null), { max: 0, ticks: [0] });
-  assert.deepStrictEqual(Core.niceTicks(-5), { max: 0, ticks: [0] });
+test('charts.buildBarOption：y 轴 category=名字（客户/科目名），值 label 与 tooltip 走 items', () => {
+  const items = [
+    { label: '张大国', v: 91600, tip: '张大国：91,600 元' },
+    { label: '李秀英', v: 50400, tip: '李秀英：50,400 元' }
+  ];
+  const opt = Charts.buildBarOption({
+    items, colors: { c1: '#0e7c66', text: '#000', muted: '#666', border: '#ddd' },
+    valFmt: v => String(v)
+  });
+  assert.deepStrictEqual(opt.yAxis.data, ['张大国', '李秀英'], '客户图用名字');
+  assert.strictEqual(opt.yAxis.inverse, true, '第一项在顶部');
+  assert.strictEqual(opt.series[0].data[0].value, 91600);
+  assert.strictEqual(opt.tooltip.formatter({ dataIndex: 1 }), '李秀英：50,400 元');
+  assert.strictEqual(opt.xAxis.axisLabel.formatter(91600), '91600', '值轴 formatter 透传');
+  assert.strictEqual(opt.series[0].label.formatter({ value: 50400 }), '50400', '条尾值 label');
 });
 
-test('linePath：折线拼接与缺值断线（多段 M…）', () => {
-  assert.strictEqual(Core.linePath([{ x: 0, y: 10 }, { x: 10, y: 20 }]), 'M0,10 L10,20');
-  assert.strictEqual(
-    Core.linePath([{ x: 0, y: 10 }, { x: 10, y: null }, { x: 20, y: 30 }]),
-    'M0,10 M20,30', '中间缺值断成两段');
-  assert.strictEqual(Core.linePath([]), '');
-  assert.strictEqual(Core.linePath([{ x: 0.4, y: 10.256 }]), 'M0.4,10.26', '坐标保留两位小数');
+test('charts.buildPieOption：环图半径、(未填)/未记录灰色桶、legend 收纳、空数据 title', () => {
+  const theme = { c1: '#111111', c2: '#222222', c3: '#333333', c4: '#444444', muted: '#999999' };
+  const opt = Charts.buildPieOption({
+    items: [{ label: '通安', v: 100 }, { label: '(未填)', v: 50, color: '#999999' }],
+    donut: true, colors: theme, valFmt: v => String(v)
+  });
+  assert.deepStrictEqual(opt.series[0].radius, ['42%', '68%'], '环图');
+  assert.deepStrictEqual(opt.series[0].data.map(d => d.name), ['通安', '(未填)']);
+  assert.strictEqual(opt.series[0].data[1].itemStyle.color, '#999999', '(未填) 桶灰色');
+  assert.strictEqual(opt.series[0].data[0].itemStyle.color, '#111111', '其余按调色板首色');
+  assert.ok(opt.legend, '≤6 项给 legend');
+  const many = Charts.buildPieOption({
+    items: Array.from({ length: 9 }, (_, i) => ({ label: `r${i}`, v: i })), colors: theme
+  });
+  assert.strictEqual(many.legend, undefined, '多于 6 项隐藏 legend（明细在旁表）');
+  const empty = Charts.buildPieOption({ items: [], colors: theme });
+  assert.strictEqual(empty.title.text, '暂无数据', '空数据给占位 title');
 });
 
-test('barRects：基线/高度/槽内居中几何', () => {
-  // 值域 0..1000 → 像素 100..0；band 40 gap 8
-  const y = Core.scaleLinear(0, 1000, 100, 0);
-  const rects = Core.barRects([{ cx: 50, v: 500 }, { cx: 150, v: 0 }], y, 40, 8);
-  assert.deepStrictEqual(rects[0], { x: 34, y: 50, w: 32, h: 50 });
-  assert.deepStrictEqual(rects[1], { x: 134, y: 100, w: 32, h: 0 }, '零值=零高度贴基线');
-  const n = Core.barRects([{ cx: 50, v: null }], y, 40, 8);
-  assert.strictEqual(n[0].h, 0, 'null 值按 0 处理不炸');
+test('charts.periodLabel：前端兜底映射（服务端 label 缺失时），服务端 label 优先', () => {
+  assert.strictEqual(Charts.periodLabel({ period: '2026-03' }), '3月');
+  assert.strictEqual(Charts.periodLabel({ period: '2026-Q2' }), 'Q2');
+  assert.strictEqual(Charts.periodLabel({ period: '2026' }), '2026');
+  assert.strictEqual(Charts.periodLabel({ period: '2026-W13', period_start: '2026-03-31' }), 'W13(03-31)');
+  assert.strictEqual(Charts.periodLabel({ period: '2026-W00' }), 'W00', 'period_start 缺失退化');
+  assert.strictEqual(Charts.periodLabel({ period: '2026-04', label: '4月' }), '4月', '服务端 label 优先');
+  assert.strictEqual(Charts.periodLabel(null), '', '空行安全');
 });
 
-test('groupedBarRects：每槽按系列错位，扁平结构带 si', () => {
-  const y = Core.scaleLinear(0, 400, 200, 0);
-  const rects = Core.groupedBarRects(2, [{ cx: 50, values: [100, 200] }], y, 40, 8);
-  assert.strictEqual(rects.length, 2);
-  assert.deepStrictEqual(rects[0], { x: 34, y: 150, w: 16, h: 50, si: 0, cx: 50 });
-  assert.deepStrictEqual(rects[1], { x: 50, y: 100, w: 16, h: 100, si: 1, cx: 50 });
-  const empty = Core.groupedBarRects(2, [{ cx: 50, values: [] }], y, 40, 8);
-  assert.strictEqual(empty.length, 0);
-});
-
-test('hBarRects：按 maxVal 归一化到 0..1，max 非正全 0', () => {
-  assert.deepStrictEqual(Core.hBarRects([{ v: 100 }, { v: 50 }, { v: 0 }], 100),
-    [{ v: 100, wPct: 1 }, { v: 50, wPct: 0.5 }, { v: 0, wPct: 0 }]);
-  assert.deepStrictEqual(Core.hBarRects([{ v: 10 }], 0), [{ v: 10, wPct: 0 }]);
-});
-
-test('charts.js：node 下可 require（动作路由入口存在）', () => {
-  const Charts = require('../ledger/js/charts.js');
+test('charts.js：node 下可 require（渲染/动作/挂载/构建器入口存在）', () => {
   assert.strictEqual(typeof Charts.renderTab, 'function');
   assert.strictEqual(typeof Charts.handleAct, 'function');
+  assert.strictEqual(typeof Charts.mountMini, 'function');
+  assert.strictEqual(typeof Charts.disposeAll, 'function');
+  assert.strictEqual(typeof Charts.buildTimeOption, 'function');
+  assert.strictEqual(typeof Charts.buildBarOption, 'function');
+  assert.strictEqual(typeof Charts.buildPieOption, 'function');
 });

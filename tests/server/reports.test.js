@@ -412,3 +412,122 @@ test('by-customer include_all：补零收入客户与欠款客户；默认口径
   const def = await getJson(`${base}/reports/by-customer`);
   assert.ok(def.some(c => c.name === '张大国'));
 });
+
+/* ==================== P5-M2 总表数据条 / 占比三端点（HANDOFF-P5-PLAN §3.3） ==================== */
+
+test('by-range：损益走账簿轴（occurred_at）、计数走作业轴（job_date）双口径 + from/to 校验', async () => {
+  const bad = await (await fetch(`${base}/reports/by-range?from=2026-1-1`)).json();
+  assert.strictEqual(bad.ok, false);
+  assert.strictEqual(bad.error.code, 'VALIDATION', 'from 非 YYYY-MM-DD 被拒');
+  const bad2 = await (await fetch(`${base}/reports/by-range?to=2030/01/01`)).json();
+  assert.strictEqual(bad2.error.code, 'VALIDATION');
+
+  const { st } = await createSettledJobAt('2026-04-02');
+  await post(`${base}/payments`, { category: 'fuel', amount_cents: 12000, note: '油费' });
+  // 收入/支出凭证统一拨到 2026-04（账簿轴按确认时点 occurred_at，测试拨时同 by-period pl 轴做法）
+  db.prepare("UPDATE journal_entries SET occurred_at = '2026-04-05T09:00:00' WHERE event_type IN ('settlement_confirm','payment')").run();
+
+  const apr = await getJson(`${base}/reports/by-range?from=2026-04-01&to=2026-04-30`);
+  assert.strictEqual(apr.from, '2026-04-01');
+  assert.strictEqual(apr.income_cents, st.total_receivable_cents, '收入=区间内确认结算（账簿轴）');
+  assert.strictEqual(apr.expense_cents, 12000, '支出=区间内付款凭证（现金口径）');
+  assert.strictEqual(apr.profit_cents, st.total_receivable_cents - 12000);
+  assert.strictEqual(apr.jobs_count, 1, '单数按 job_date（作业轴）');
+  assert.strictEqual(apr.customer_count, 3, '客户数=结算分项挂 party 去重');
+  assert.ok(apr.area_mu > 0, '亩数来自 jobs 快照');
+
+  const empty = await getJson(`${base}/reports/by-range?from=2030-01-01&to=2030-12-31`);
+  assert.strictEqual(empty.income_cents, 0);
+  assert.strictEqual(empty.jobs_count, 0);
+  assert.strictEqual(empty.customer_count, 0);
+});
+
+test('by-region：地区守恒（各地区合计=Σ账单金额）、(未填) 桶返回、village 级、share_pct、level 校验', async () => {
+  const bad = await (await fetch(`${base}/reports/by-region?level=street`)).json();
+  assert.strictEqual(bad.ok, false);
+  assert.strictEqual(bad.error.code, 'VALIDATION', 'level 白名单校验');
+
+  await createSettledJobAt('2026-04-02'); // 样本 3 农户 → 3 账单
+  // 直改主数据区域：李秀英/王强=通安·金桂；张大国不填（进 (未填) 桶）
+  db.prepare("UPDATE parties SET region = '通安', village = '金桂' WHERE name IN ('李秀英','王强')").run();
+
+  const d = await getJson(`${base}/reports/by-region?from=2026-04-01&to=2026-04-30`);
+  const totalBills = db.prepare(
+    `SELECT COALESCE(SUM(b.amount_cents), 0) AS n
+     FROM bills b
+     JOIN settlements s ON s.id = b.settlement_id
+     JOIN jobs j ON j.id = s.job_id
+     WHERE b.status != 'void' AND s.status != 'void'
+       AND j.deleted_at IS NULL AND j.status != 'void'
+       AND j.job_date BETWEEN '2026-04-01' AND '2026-04-30'`
+  ).get().n;
+  assert.ok(totalBills > 0, '造数有效');
+  assert.strictEqual(d.rows.reduce((a, r) => a + r.income_cents, 0), totalBills,
+    '守恒：各地区合计=区间 Σ账单金额');
+  assert.strictEqual(d.totals.income_cents, totalBills);
+  const un = d.rows.find(r => r.label === '(未填)');
+  assert.ok(un, '(未填) 桶必须返回（张大国未填区域）');
+  assert.ok(un.income_cents > 0);
+  const ta = d.rows.find(r => r.label === '通安');
+  assert.ok(ta && ta.income_cents > 0);
+  assert.strictEqual(ta.share_pct, Math.round(ta.income_cents / totalBills * 10000) / 100, 'share_pct 口径');
+  assert.strictEqual(Math.round(d.rows.reduce((a, r) => a + r.share_pct, 0)), 100, 'share_pct 合计≈100%');
+  assert.ok(/未填/.test(d.note), 'note 说明 (未填) 口径');
+
+  const v = await getJson(`${base}/reports/by-region?level=village&from=2026-04-01&to=2026-04-30`);
+  assert.ok(v.rows.some(r => r.label === '通安·金桂'), 'village 级 label=region·village');
+  assert.ok(v.rows.some(r => r.label === '(未填)·(未填)'), 'village 级未填桶=·(未填)');
+  assert.strictEqual(v.rows.reduce((a, r) => a + r.income_cents, 0), totalBills, 'village 级同样守恒');
+
+  // 作废结算后金额退出统计（非 void 口径）
+  await post(`${base}/settlements/${(await getJson(`${base}/settlements`))[0].id}/void`);
+  const after = await getJson(`${base}/reports/by-region?from=2026-04-01&to=2026-04-30`);
+  assert.strictEqual(after.rows.length, 0, '非 void 结算作废后无桶');
+});
+
+test('by-operator：展开计数与 jobs 一致（含未记录桶）、多人单均摊守恒（余数给首位）、单内同名去重', async () => {
+  const r1 = await createSettledJobAt('2026-04-02');
+  const r2 = await createSettledJobAt('2026-04-03');
+  db.prepare('UPDATE jobs SET operator_names = ? WHERE id = ?').run('["李凌琦","沈鹏"]', r1.job.id);
+  // r2 不填 operator_names → 未记录桶
+
+  const d = await getJson(`${base}/reports/by-operator?from=2026-04-01&to=2026-04-30`);
+  assert.strictEqual(d.totals.jobs_count, 2, '区间作业数（jobs 轴）');
+  assert.strictEqual(d.rows.reduce((a, r) => a + r.jobs_count, 0), 2,
+    '展开计数：r1 两人单 → 李凌琦/沈鹏各计 1 条人单');
+  assert.strictEqual(d.unrecorded.jobs_count, 1, 'r2 无 operator → 未记录 1 单');
+  const totalBills = db.prepare(
+    `SELECT COALESCE(SUM(b.amount_cents), 0) AS n FROM bills b
+     JOIN settlements s ON s.id = b.settlement_id
+     WHERE b.status != 'void' AND s.status != 'void'`).get().n;
+  assert.strictEqual(d.rows.reduce((a, r) => a + r.income_cents, 0) + d.unrecorded.income_cents, totalBills,
+    '守恒：均摊合计+未记录=Σ账单金额');
+
+  const li = d.rows.find(r => r.operator === '李凌琦');
+  const sh = d.rows.find(r => r.operator === '沈鹏');
+  assert.ok(li && sh, '两人都在列');
+  const jobBills = db.prepare(
+    `SELECT COALESCE(SUM(b.amount_cents), 0) AS n FROM bills b
+     JOIN settlements s ON s.id = b.settlement_id
+     WHERE s.job_id = ? AND b.status != 'void'`).get(r1.job.id).n;
+  const half = Math.floor(jobBills / 2);
+  assert.strictEqual(li.income_cents, jobBills - half, '整数分均摊余数给首位（李凌琦）');
+  assert.strictEqual(sh.income_cents, half, '第二人得 floor 份');
+  assert.strictEqual(li.jobs_count, 1, '李凌琦参与 r1 一单，计 1');
+  assert.strictEqual(sh.jobs_count, 1, '沈鹏参与同一单，也各计 1（多人单每人计 1 单）');
+  assert.strictEqual(d.unrecorded.jobs_count, 1, '未记录单数');
+  assert.strictEqual(d.unrecorded.income_cents, totalBills - jobBills, '未记录金额=r2 单账单合计');
+  assert.ok(d.rows[0].share_pct != null && /均摊/.test(d.note));
+
+  // 单内同名去重：计数不虚增
+  db.prepare('UPDATE jobs SET operator_names = ? WHERE id = ?').run('["甲","甲","乙"]', r2.job.id);
+  const d2 = await getJson(`${base}/reports/by-operator?from=2026-04-01&to=2026-04-30`);
+  const jia = d2.rows.find(r => r.operator === '甲');
+  assert.strictEqual(jia.jobs_count, 1, '单内同名去重，每人计 1 单');
+  assert.strictEqual(d2.rows.reduce((a, r) => a + r.jobs_count, 0), 4,
+    '2 单展开：李凌琦+沈鹏+甲+乙=4 条人单');
+  assert.strictEqual(d2.unrecorded.jobs_count, 0, 'r2 补了 operator，未记录归零');
+  assert.strictEqual(d2.totals.jobs_count, 2, '作业数不随展开变化');
+  const bad = await (await fetch(`${base}/reports/by-operator?from=x`)).json();
+  assert.strictEqual(bad.error.code, 'VALIDATION');
+});

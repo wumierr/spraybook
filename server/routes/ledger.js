@@ -134,6 +134,19 @@ function createLedgerRouter(db) {
       source: req.query.source, from: req.query.from, to: req.query.to
     }) });
   });
+
+  /* ---------- 报表区间聚合（P5-M2：总表数据条 + C11/C12） ---------- */
+  router.get('/reports/by-range', (req, res) => {
+    res.json({ ok: true, data: reports.byRange(db, { from: req.query.from, to: req.query.to }) });
+  });
+  router.get('/reports/by-region', (req, res) => {
+    res.json({ ok: true, data: reports.byRegion(db, {
+      level: req.query.level, from: req.query.from, to: req.query.to
+    }) });
+  });
+  router.get('/reports/by-operator', (req, res) => {
+    res.json({ ok: true, data: reports.byOperator(db, { from: req.query.from, to: req.query.to }) });
+  });
   router.get('/parties/:id/balance', (req, res) => {
     res.json({ ok: true, data: reports.partyBalance(db, Number(req.params.id)) });
   });

@@ -149,85 +149,12 @@
     return cells.map(csvCell).join(',');
   }
 
-  /* ---------- SVG 图表纯函数（P4-M2，零依赖；渲染拼装在 charts.js） ---------- */
-
-  /** 坐标保留两位小数，避免 path 字符串冗长 */
-  function coord(v) { return Math.round((Number(v) || 0) * 100) / 100; }
-
-  /** 线性映射：值域 [d0,d1] → 像素域 [r0,r1]；域宽 0 时恒返回 r0（空数据安全） */
-  function scaleLinear(d0, d1, r0, r1) {
-    const span = d1 - d0;
-    return v => span ? r0 + (v - d0) * (r1 - r0) / span : r0;
-  }
-
-  /** 1/2/5×10^k 步进刻度：返回 {max, ticks[]}；空/非法数据返回零网格 */
-  function niceTicks(maxVal, n = 4) {
-    if (maxVal == null || !isFinite(maxVal) || maxVal <= 0) return { max: 0, ticks: [0] };
-    const rough = maxVal / Math.max(1, n);
-    const pow = Math.pow(10, Math.floor(Math.log10(rough)));
-    const step = [1, 2, 5, 10].map(m => m * pow).find(s => s >= rough) || 10 * pow;
-    const max = Math.ceil(maxVal / step) * step;
-    const ticks = [];
-    for (let v = 0; v <= max + step * 1e-9; v += step) ticks.push(coord(v));
-    return { max, ticks };
-  }
-
-  /** 折线 path：pts=[{x,y}]，y/x 为 null 断线（多段 M…L…） */
-  function linePath(pts) {
-    let d = '', pen = false;
-    for (const p of pts || []) {
-      if (p == null || p.x == null || p.y == null) { pen = false; continue; }
-      d += (d === '' ? 'M' : (pen ? ' L' : ' M')) + coord(p.x) + ',' + coord(p.y);
-      pen = true;
-    }
-    return d;
-  }
-
-  /** 竖向条形：vals=[{cx(槽中心), v}]，y=值→像素函数（0 值像素=基线），band 槽宽，gap 内边距 → [{x,y,w,h}] */
-  function barRects(vals, y, band, gap) {
-    const baseY = y(0);
-    return (vals || []).map(p => {
-      const v = p.v == null ? 0 : p.v;
-      const w = Math.max(0, band - gap);
-      const h = Math.max(0, coord(baseY - y(v)));
-      return { x: coord(p.cx - w / 2), y: coord(baseY - h), w: coord(w), h };
-    });
-  }
-
-  /** 分组条形：seriesCount 个系列在每槽内错位；pts=[{cx, values:[各系列值]}]
-      返回扁平 [{x,y,w,h,si(系列序),cx}] */
-  function groupedBarRects(seriesCount, pts, y, band, gap) {
-    const n = Math.max(1, seriesCount | 0);
-    const subBand = (band - gap) / n;
-    const baseY = y(0);
-    const out = [];
-    for (const p of pts || []) {
-      (p.values || []).forEach((v, si) => {
-        const val = v == null ? 0 : v;
-        const h = Math.max(0, coord(baseY - y(val)));
-        out.push({
-          x: coord(p.cx - (band - gap) / 2 + si * subBand), y: coord(baseY - h),
-          w: coord(subBand), h, si, cx: p.cx
-        });
-      });
-    }
-    return out;
-  }
-
-  /** 横向条形：items=[{v}]，按 maxVal 归一 → [{v,wPct}]（wPct∈[0,1]，maxVal≤0 全 0） */
-  function hBarRects(items, maxVal) {
-    const max = Number(maxVal);
-    return (items || []).map(it => ({
-      v: it.v == null ? 0 : it.v,
-      wPct: max > 0 ? Math.max(0, Math.min(1, (it.v || 0) / max)) : 0
-    }));
-  }
+  /* ---------- SVG 图表纯函数已随 P5-M2 echarts 化移除（charts.js 改 option 构建器） ---------- */
 
   const Core = {
     monthKeys, csvCell, csvRow,
     fmtYuan, yuanInputToCents, statusLabel,
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
-    scaleLinear, niceTicks, linePath, barRects, groupedBarRects, hBarRects,
     MAPS: { JOB_STATUS, SETTLEMENT_STATUS, BILL_STATUS, PAYMENT_CATEGORY, ADVANCE_DIRECTION, METHOD, PARTY_TYPE }
   };
 

@@ -379,7 +379,176 @@ function partyBalance(db, partyId) {
   return { party, receivable_cents: receivable, prepaid_cents: prepaid, last_job: lastJob || null };
 }
 
+/* ============================================================
+   P5-M2 总表数据条/图表页三端点（HANDOFF-P5-PLAN §3.3，只读聚合零迁移）
+   共同口径：金额一律 _cents；作业轴=非 void 作业 × 非 void 结算 × 非 void 账单；
+   from/to 为可选闭区间 YYYY-MM-DD（可选区间，不做桶展开）。
+   ============================================================ */
+
+/** 日期参数轻校验：给就必须是 YYYY-MM-DD（bar 前端按此拼区间） */
+function validateRange({ from, to } = {}) {
+  for (const [k, v] of [['from', from], ['to', to]]) {
+    if (v != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+      throw new ApiError('VALIDATION', `${k} 必须是 YYYY-MM-DD 格式`);
+    }
+  }
+}
+
+/** 作业轴公共 JOIN：jobs → settlements(非void) → bills(非void)，job_date 区间 */
+function jobBillJoin(from, to) {
+  const range = rangeCond(from, to, 'j.job_date');
+  const where = `j.deleted_at IS NULL AND j.status != 'void' AND s.status != 'void' AND b.status != 'void'` +
+    (range.cond.length ? ' AND ' + range.cond.join(' AND ') : '');
+  return { where, args: range.args };
+}
+
+/**
+ * GET /api/reports/by-range?from=&to=
+ * 总表数据条 KPI：损益走账簿轴（occurred_at 区间，与 summary 同表达式），
+ * 计数/亩数/客户数走作业轴（job_date 区间；客户数=结算分项挂 party 去重）。
+ * 不扩 GRANULARITIES 白名单（'day' 不加桶语义，区间参数更通用）。
+ */
+function byRange(db, { from, to } = {}) {
+  validateRange({ from, to });
+  const { cond, args } = rangeCond(from, to, 'e.occurred_at');
+  const pl = db.prepare(
+    `SELECT
+       COALESCE(SUM(CASE WHEN a.type='income' THEN (CASE l.direction WHEN 'credit' THEN l.amount_cents ELSE -l.amount_cents END) END),0) AS income_cents,
+       COALESCE(SUM(CASE WHEN a.type='expense' THEN (CASE l.direction WHEN 'debit' THEN l.amount_cents ELSE -l.amount_cents END) END),0) AS expense_cents
+     FROM journal_lines l
+     JOIN journal_entries e ON e.id = l.entry_id
+     JOIN accounts a ON a.id = l.account_id
+     WHERE a.type IN ('income','expense') ${cond.length ? 'AND ' + cond.join(' AND ') : ''}`
+  ).get(...args);
+  const work = jobBillJoinlessCounts(db, from, to);
+  return {
+    from: from || null, to: to || null,
+    income_cents: pl.income_cents,
+    expense_cents: pl.expense_cents,
+    profit_cents: pl.income_cents - pl.expense_cents,
+    jobs_count: work.jobs_count,
+    area_mu: work.area_mu,
+    customer_count: work.customer_count
+  };
+}
+
+/** 作业轴计数包：单数/亩数（jobs 单表聚合）+ 客户数（结算分项挂 party 去重，同 byPeriod 口径） */
+function jobBillJoinlessCounts(db, from, to) {
+  const { cond, args } = rangeCond(from, to, 'j.job_date');
+  const workWhere = `j.deleted_at IS NULL AND j.status != 'void' ${cond.length ? 'AND ' + cond.join(' AND ') : ''}`;
+  const base = db.prepare(
+    `SELECT COUNT(*) AS jobs_count, ROUND(COALESCE(SUM(j.total_area_mu), 0), 2) AS area_mu
+     FROM jobs j WHERE ${workWhere}`
+  ).get(...args);
+  const cust = db.prepare(
+    `SELECT COUNT(DISTINCT si.party_id) AS customer_count
+     FROM jobs j
+     JOIN settlements s ON s.job_id = j.id AND s.status != 'void'
+     JOIN settlement_items si ON si.settlement_id = s.id
+     WHERE ${workWhere}`
+  ).get(...args);
+  return { jobs_count: base.jobs_count, area_mu: base.area_mu, customer_count: cust.customer_count };
+}
+
+/**
+ * GET /api/reports/by-region?level=region|village&from=&to=
+ * 地区收入占比：Σ账单金额按客户主数据 region（village 级=region·village）分桶。
+ * 守恒：rows[].income_cents 合计 = 区间内非 void 账单合计；(未填) 桶必须返回。
+ */
+function byRegion(db, { level, from, to } = {}) {
+  validateRange({ from, to });
+  const lv = level || 'region';
+  if (!['region', 'village'].includes(lv)) {
+    throw new ApiError('VALIDATION', 'level 必须是 region / village');
+  }
+  const { where, args } = jobBillJoin(from, to);
+  const regionExpr = lv === 'region'
+    ? `COALESCE(NULLIF(TRIM(p.region), ''), '(未填)')`
+    : `COALESCE(NULLIF(TRIM(p.region), ''), '(未填)') || '·' || COALESCE(NULLIF(TRIM(p.village), ''), '(未填)')`;
+  const rows = db.prepare(
+    `SELECT ${regionExpr} AS label,
+       COUNT(DISTINCT j.id) AS jobs_count,
+       COALESCE(SUM(b.amount_cents), 0) AS income_cents
+     FROM jobs j
+     JOIN settlements s ON s.job_id = j.id AND s.status != 'void'
+     JOIN bills b ON b.settlement_id = s.id AND b.status != 'void'
+     LEFT JOIN parties p ON p.id = b.party_id
+     WHERE ${where}
+     GROUP BY label ORDER BY income_cents DESC, label`
+  ).all(...args);
+  const total = rows.reduce((a, r) => a + r.income_cents, 0);
+  for (const r of rows) {
+    r.share_pct = total > 0 ? Math.round(r.income_cents / total * 10000) / 100 : null;
+  }
+  return {
+    level: lv, from: from || null, to: to || null,
+    rows, totals: { income_cents: total },
+    note: '收入=Σ账单金额（非void账单×非void结算，job_date 区间）；jobs_count 按地区去重作业数（跨区作业会每区各计 1）；(未填)=客户主数据未填区域，补录后自动并入。'
+  };
+}
+
+/** operator_names JSON 数组安全解析（去空去重保序） */
+function parseOperatorsList(raw) {
+  try {
+    const v = JSON.parse(raw || '[]');
+    if (!Array.isArray(v)) return [];
+    return [...new Set(v.map(x => String(x).trim()).filter(Boolean))];
+  } catch (e) { return []; }
+}
+
+/**
+ * GET /api/reports/by-operator?from=&to=
+ * 飞手收入占比：jobs.operator_names JSON 展开逐人聚合，收入按单内人数均摊
+ * （纯展示口径不落库；整数分均摊余数给首位，合计严格守恒）。
+ * 守恒：Σrows.jobs_count + unrecorded.jobs_count = 区间作业数；
+ *       Σrows.income_cents + unrecorded.income_cents = Σ账单金额。
+ */
+function byOperator(db, { from, to } = {}) {
+  validateRange({ from, to });
+  const { where, args } = jobBillJoin(from, to);
+  const jobRows = db.prepare(
+    `SELECT j.id, j.operator_names, COALESCE(SUM(b.amount_cents), 0) AS income_cents
+     FROM jobs j
+     JOIN settlements s ON s.job_id = j.id AND s.status != 'void'
+     JOIN bills b ON b.settlement_id = s.id AND b.status != 'void'
+     WHERE ${where}
+     GROUP BY j.id ORDER BY j.id`
+  ).all(...args);
+  const map = new Map();
+  let unJobs = 0, unCents = 0;
+  for (const j of jobRows) {
+    const ops = parseOperatorsList(j.operator_names);
+    if (!ops.length) { unJobs += 1; unCents += j.income_cents; continue; }
+    const base = Math.floor(j.income_cents / ops.length);
+    let rem = j.income_cents - base * ops.length;
+    for (const name of ops) {
+      const share = base + (rem > 0 ? 1 : 0);
+      if (rem > 0) rem -= 1;
+      const e = map.get(name) || { operator: name, jobs_count: 0, income_cents: 0 };
+      e.jobs_count += 1;
+      e.income_cents += share;
+      map.set(name, e);
+    }
+  }
+  const rows = [...map.values()]
+    .sort((a, b) => b.income_cents - a.income_cents || a.operator.localeCompare(b.operator, 'zh-CN'));
+  const total = rows.reduce((a, r) => a + r.income_cents, 0) + unCents;
+  for (const r of rows) {
+    r.share_pct = total > 0 ? Math.round(r.income_cents / total * 10000) / 100 : null;
+  }
+  const unrecorded = {
+    jobs_count: unJobs, income_cents: unCents,
+    share_pct: total > 0 ? Math.round(unCents / total * 10000) / 100 : null
+  };
+  return {
+    from: from || null, to: to || null,
+    rows, unrecorded, totals: { income_cents: total, jobs_count: jobRows.length },
+    note: '收入=Σ账单金额按单内人数均摊（纯展示口径，不落库）；未记录=operator_names 为空的作业；单内同名去重，多人单每人计 1 单。'
+  };
+}
+
 module.exports = {
   summary, byMonth, byCustomer, byJob, partyBalance,
-  byPeriod, adjustments, costBreakdown, GRANULARITIES, periodLabel
+  byPeriod, adjustments, costBreakdown, GRANULARITIES, periodLabel,
+  byRange, byRegion, byOperator
 };

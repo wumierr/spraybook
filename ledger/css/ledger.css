@@ -115,14 +115,33 @@ table.lg-table tfoot td.num b { color: var(--text); font-size: 13px; }
 table.lg-table--wide { min-width: 1280px; }
 table.lg-table--wide input[type="number"] { width: 96px; }
 
-/* ---------- 图表页（P4-M2）：内联 SVG 手绘，变量亮/暗两处定义于 :root ---------- */
+/* ---------- 总表顶部数据条（P5-M2）：KPI 卡 + 粒度切换 + 两张小图 ---------- */
+.lg-kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 10px; margin-bottom: 14px; align-items: stretch;
+}
+.lg-kpi {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; min-width: 0; overflow: hidden;
+}
+.lg-kpi-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+.lg-kpi-num { font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.3; display: block; }
+.lg-kpi-num.bad { color: var(--danger); }
+.lg-kpi-sub { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.lg-kpi--ctrl .lg-gran { margin-bottom: 6px; }
+.lg-kpi--ctrl input[type="date"] {
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
+  background: var(--bg); color: var(--text); font-size: 12px; max-width: 150px;
+}
+.lg-kpi--chart .lg-chart-canvas { height: 120px; }
+
+/* ---------- 图表页（P5-M2：echarts 本地 vendor；容器显式高度，颜色读 :root 变量） ---------- */
 .lg-chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 14px; }
 .lg-chart-grid .lg-panel { margin-bottom: 0; min-width: 0; }
 .lg-chart-grid--in { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-svg.lg-chart { width: 100%; height: auto; display: block; }
-svg.lg-chart text { font-size: 11px; fill: var(--muted); }
-svg.lg-chart .lg-chart-axis { stroke: var(--border); stroke-width: 1; }
-svg.lg-chart g.lg-hit { cursor: pointer; }
+.lg-chart-canvas { width: 100%; min-width: 0; }
+.lg-chart-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 40px 0; }
+.lg-chart-fallback { color: var(--warn); font-size: 12px; border: 1px dashed var(--border); border-radius: 8px; padding: 18px 10px; text-align: center; }
 .lg-chart-legend { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; color: var(--muted); margin: 2px 0 8px; }
 .lg-chart-legend .chip::before {
   content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
