@@ -54,6 +54,11 @@
     // P4-M1 总表（作业粒度聚合只读视图）
     overview: (params) => Api.get('/api/overview' + (params || '')),
     parties: () => Api.get('/api/parties'),
+    // P5-M2 总表数据条 / 图表页 C11/C12（区间聚合，金额 _cents）
+    barRange: (from, to) => Api.get(`/api/reports/by-range?from=${from}&to=${to}`),
+    byRegion: (level, from, to) =>
+      Api.get(`/api/reports/by-region?level=${level || 'region'}&from=${from}&to=${to}`),
+    byOperator: (from, to) => Api.get(`/api/reports/by-operator?from=${from}&to=${to}`),
     // M8 导入
     importParse: (filename, base64) => Api.post('/api/import/parse', { filename, base64 }),
     importBatches: () => Api.get('/api/import/batches'),
