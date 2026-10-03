@@ -125,10 +125,17 @@ function createMasterdataRouter(db) {
     const prepaids = db.prepare(
       `SELECT party_id, COALESCE(SUM(balance_cents),0) AS cents FROM advances
        WHERE direction='prepaid_by_customer' AND status IN ('open','partial') GROUP BY party_id`).all();
+    /* P5-M1 单价口径修复(HANDOFF-P5-PLAN §5.1):
+       ÷100.0 恢复元/亩(旧式 分/亩 冒充 元/亩,出现"几千元一亩");
+       kind='spray' 排除 extra 行(其 area 恒 NULL,防未来污染);
+       COALESCE 优先回填后的精确单价,无则 spray_fee/area 派生;
+       ORDER BY l2.id 使 LIMIT 1 确定性(防御)。 */
     const lastJobs = db.prepare(
       `SELECT l.farmer_ref, l.farmer_name, j.job_date, j.plant_type_name,
-              (SELECT l2.spray_fee_cents / l2.area_mu FROM job_settlement_lines l2
-                 WHERE l2.job_id = j.id AND l2.area_mu > 0 LIMIT 1) AS price_yuan
+              (SELECT COALESCE(l2.unit_price_cents, l2.spray_fee_cents / l2.area_mu) / 100.0
+                 FROM job_settlement_lines l2
+                WHERE l2.job_id = j.id AND l2.kind = 'spray' AND l2.area_mu > 0
+                ORDER BY l2.id LIMIT 1) AS price_yuan
        FROM job_settlement_lines l JOIN jobs j ON j.id = l.job_id
        WHERE j.deleted_at IS NULL AND j.status != 'void'
        ORDER BY j.job_date DESC, j.id DESC LIMIT 500`).all();
