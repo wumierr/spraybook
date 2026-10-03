@@ -161,16 +161,20 @@ function insertSubtables(db, jobId, body) {
         g.tripsOverride ?? null, g.perTripWater ?? null, g.perTripTime ?? null);
     });
 
+    // P6-M2(F7)：计算器路径把每亩单价落到主结算行（此前只有导入路径有单价，总表单价列对计算器单恒空）
+    const unitPriceCents = (s.income && s.income.pricePerMu != null)
+      ? yuanToCents(s.income.pricePerMu, 'income.pricePerMu') : null;
     const insLine = db.prepare(
       `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, spray_fee_cents,
-         used_sets, self_sets, supplement_sets, pesticide_fee_cents, included)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`);
+         used_sets, self_sets, supplement_sets, pesticide_fee_cents, included, unit_price_cents)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
     (r.settlement || []).forEach(st => {
       insLine.run(jobId, st.farmerId || null, st.farmerName || '未知农户', st.area ?? null,
         yuanToCents(st.sprayFee, 'settlement.sprayFee') ?? 0, st.usedSets ?? null,
         st.selfSets ?? null, st.supplementSets ?? null,
         yuanToCents(st.pesticideFee, 'settlement.pesticideFee') ?? 0,
-        st.included === true ? 1 : 0);
+        st.included === true ? 1 : 0,
+        unitPriceCents);
     });
   }
 

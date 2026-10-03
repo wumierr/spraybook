@@ -188,6 +188,15 @@ test('007 成本构成落列：spray Σ构成==total_cost；haul 人工合并 dr
   assert.strictEqual(hj.subsidy_cents, null, '吊运无补贴');
 });
 
+test('P6-M2(F7)：计算器每亩单价落主结算行', async () => {
+  // 样本 snapshot.income.pricePerMu=25 → 主行 unit_price_cents=2500（此前计算器路径恒 null，总表单价列空）
+  const { json } = await postJson(`${base}/jobs`, sprayPayload());
+  const job = (await (await fetch(`${base}/jobs/${json.data.id}`)).json()).data;
+  for (const l of job.settlement_lines) {
+    assert.strictEqual(l.unit_price_cents, 2500, `主行单价落列: ${l.farmer_name}`);
+  }
+});
+
 test('GET /api/jobs?status= 过滤', async () => {
   await postJson(`${base}/jobs`, sprayPayload());
   const all = (await (await fetch(`${base}/jobs`)).json()).data;

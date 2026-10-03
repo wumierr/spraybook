@@ -102,8 +102,12 @@ const Storage = {
 
   clearHistory() { this.set(this.KEYS.history, []); },
 
-  /* ---------- 导出为文本格式（易读，支持双模式） ---------- */
-  exportText(state, mode) {
+  /* ---------- 导出为文本格式（易读，支持双模式；P6:sections 分节勾选） ----------
+     sections 键: farmers/batteries/params/plots/costs/income/workOrder/types
+     opts.sections 为 null/undefined = 全部导出（向后兼容） */
+  exportText(state, mode, opts) {
+    const S = opts && opts.sections ? opts.sections : null;
+    const on = (k) => !S || S[k] !== false;
     const lines = [];
     lines.push('===== 无人机作业配置 =====');
     lines.push(`版本: 2.0`);
@@ -111,7 +115,7 @@ const Storage = {
     lines.push(`导出时间: ${new Date().toLocaleString('zh-CN')}`);
     lines.push('');
 
-    if (Array.isArray(state.farmers) && state.farmers.length) {
+    if (on('farmers') && Array.isArray(state.farmers) && state.farmers.length) {
       lines.push('【农户】');
       state.farmers.forEach(f => {
         lines.push(`  [农户] 名称=${f.name} | 电话=${f.phone || ''} | 每亩收费=${f.pricePerMu != null ? f.pricePerMu : 0} | 启用=${f.enabled === false ? '否' : '是'}${f.notes ? ` | 备注=${f.notes}` : ''}`);
@@ -121,7 +125,7 @@ const Storage = {
 
     // 电池循环台账（跨任务累计资产；分配记录不导出，仅导出每块电池当前循环数）
     const battList = state.batteries && Array.isArray(state.batteries.list) ? state.batteries.list : [];
-    if (battList.length) {
+    if (on('batteries') && battList.length) {
       lines.push('【电池循环台账】');
       battList.forEach(b => {
         lines.push(`  [电池] 名称=${b.name || '电池'} | 循环=${Math.max(0, Math.round(Number(b.cycles) || 0))}`);
@@ -131,6 +135,7 @@ const Storage = {
 
     if (mode === 'haul') {
       // 吊运模式导出
+      if (!on('params') && !on('costs') && !on('income')) { /* 全部跳过 */ } else {
       lines.push('【作业参数】');
       lines.push(`  总斤数: ${state.haulField.totalWeight} 斤`);
       lines.push(`  飞行高度: ${state.haulField.flightHeight} 米`);
@@ -163,8 +168,10 @@ const Storage = {
       lines.push('');
       lines.push('【收入参数】');
       lines.push(`  吊运每斤单价: ${state.haulIncome.pricePerJin} 毛`);
+      }
     } else {
       // 打药模式导出
+      if (on('params')) {
       const plant = state.plant;
       lines.push(`【植物】${plant.icon || ''} ${plant.name} (calcMode=${plant.calcMode})`);
       lines.push(`  飞行高度: ${plant.flightHeight} 米`);
@@ -174,6 +181,8 @@ const Storage = {
       lines.push(`  一套药需水量: ${plant.pesticideWaterPerSet} 升`);
       lines.push(`  无人机省药系数: ${plant.droneSavingCoeff}`);
       lines.push('');
+      } // on('params')（植物段）
+      if (on('plots')) {
       lines.push('【作业参数】');
       lines.push(`  亩数: ${state.field.area}`);
       lines.push(`  现有药剂套数: ${state.field.existingPesticideSets}`);
@@ -191,7 +200,9 @@ const Storage = {
           if (Number(gt[k]) > 0) lines.push(`  [组趟数] 组=${k} | 趟数=${gt[k]}`);
         });
       }
+      } // on('plots')
       lines.push('');
+      if (on('costs')) {
       lines.push('【循环与油费】');
       lines.push(`  电池折旧: ${state.costs.batteryDepreciation != null ? state.costs.batteryDepreciation : 7} 元/次`);
       lines.push(`  本次油费: ${state.costs.fuelExpense != null ? state.costs.fuelExpense : 150} 元`);
@@ -215,12 +226,15 @@ const Storage = {
       lines.push(`  保险分摊: ${state.costs.insurance} 元/亩`);
       lines.push(`  其他杂费: ${state.costs.miscCost} 元`);
       lines.push('');
+      } // on('costs')
+      if (on('income')) {
       lines.push('【收入参数】');
       lines.push(`  每亩收费: ${state.income.pricePerMu} 元/亩`);
       lines.push(`  补贴: ${state.income.subsidy} 元`);
+      } // on('income')
       // 自定义用药类型定义（内置类型不导出）
       const customTypes = Array.isArray(state.typeLibrary) ? state.typeLibrary.filter(t => !t.builtin) : [];
-      if (customTypes.length) {
+      if (on('types') && customTypes.length) {
         lines.push('');
         lines.push('【用药类型】');
         customTypes.forEach(t => {
@@ -228,7 +242,7 @@ const Storage = {
         });
       }
       // 时间参数
-      if (state.timing) {
+      if (on('params') && state.timing) {
         lines.push('');
         lines.push('【时间参数】');
         lines.push(`  飞行速度: ${state.timing.flightSpeed} m/s`);
@@ -247,7 +261,7 @@ const Storage = {
       }
       // 工单覆盖值（已完成量在 JSON 中精确往返；文本段仅保留套数与备注）
       const wo = state.workOrder;
-      if (wo && (wo.actualSets || wo.note)) {
+      if (on('workOrder') && wo && (wo.actualSets || wo.note)) {
         lines.push('');
         lines.push('【工单】');
         if (wo.actualSets) lines.push(`  实际用药套数: ${wo.actualSets}`);
@@ -260,26 +274,36 @@ const Storage = {
     return lines.join('\n');
   },
 
-  /* ---------- 导出为 JSON 格式（精确，支持双模式） ---------- */
-  exportJSON(state, mode) {
-    return JSON.stringify({
+  /* ---------- 导出为 JSON 格式（精确，支持双模式；P6:分节勾选+作业包 2.1） ----------
+     opts = { sections: {...}|null, clientJobId, result }
+     - schemaVersion '2.1'：含 client_job_id + result 计算结果快照，可直接喂记账端 /api/jobs
+     - sections 未勾选的节省略（undefined 属性会被 JSON.stringify 忽略）
+     - version 保持 '2.0'（计算器自身导入兼容），记账端认 schemaVersion */
+  exportJSON(state, mode, opts) {
+    const S = opts && opts.sections ? opts.sections : null;
+    const on = (k) => !S || S[k] !== false;
+    const payload = {
       type: 'drone-spray-config',
       version: '2.0',
+      schemaVersion: '2.1',
       mode: mode,
       exportedAt: new Date().toISOString(),
-      plant: mode === 'spray' ? { ...state.plant } : null,
-      field: { ...state.field },
-      costs: { ...state.costs },
-      income: { ...state.income },
-      timing: state.timing ? { ...state.timing } : null,
-      haulField: { ...state.haulField },
-      haulCosts: { ...state.haulCosts },
-      haulIncome: { ...state.haulIncome },
-      workOrder: state.workOrder ? { ...state.workOrder } : null,
-      types: Array.isArray(state.typeLibrary) ? state.typeLibrary.filter(t => !t.builtin) : [],
-      farmers: Array.isArray(state.farmers) ? state.farmers : [],
-      batteries: state.batteries ? { list: state.batteries.list || [], records: [] } : null
-    }, null, 2);
+      client_job_id: opts && opts.clientJobId ? opts.clientJobId : undefined,
+      plant: (mode === 'spray' && on('params')) ? { ...state.plant } : undefined,
+      field: on('plots') ? { ...state.field } : undefined,
+      costs: on('costs') ? { ...state.costs } : undefined,
+      income: on('income') ? { ...state.income } : undefined,
+      timing: (on('params') && state.timing) ? { ...state.timing } : undefined,
+      haulField: (mode === 'haul' && on('params')) ? { ...state.haulField } : undefined,
+      haulCosts: (mode === 'haul' && on('costs')) ? { ...state.haulCosts } : undefined,
+      haulIncome: (mode === 'haul' && on('income')) ? { ...state.haulIncome } : undefined,
+      workOrder: (on('workOrder') && state.workOrder) ? { ...state.workOrder } : null,
+      types: (on('types') && Array.isArray(state.typeLibrary)) ? state.typeLibrary.filter(t => !t.builtin) : undefined,
+      farmers: on('farmers') && Array.isArray(state.farmers) ? state.farmers : undefined,
+      batteries: (on('batteries') && state.batteries) ? { list: state.batteries.list || [], records: [] } : undefined,
+      result: opts && opts.result ? opts.result : null
+    };
+    return JSON.stringify(payload, null, 2);
   },
 
   /* ---------- 从文本导入（自动识别 JSON 或带【】文本） ---------- */

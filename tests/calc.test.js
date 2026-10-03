@@ -725,3 +725,29 @@ if (failed > 0) {
   process.exit(1);
 }
 console.log('全部通过 ✅');
+
+test('Storage：exportJSON 2.1 作业包（schemaVersion/client_job_id/result/分节过滤）', () => {
+  const st = S.state;
+  const full = JSON.parse(S.exportJSON(st, 'spray', { clientJobId: 'cj-x', result: { totalCost: 1 } }));
+  assert.strictEqual(full.schemaVersion, '2.1');
+  assert.strictEqual(full.client_job_id, 'cj-x');
+  assert.deepStrictEqual(full.result, { totalCost: 1 });
+  assert.strictEqual(full.type, 'drone-spray-config');
+  assert.ok(full.farmers.length >= 1, '默认含农户');
+
+  const filtered = JSON.parse(S.exportJSON(st, 'spray', { sections: { farmers: false, batteries: false, workOrder: false } }));
+  assert.strictEqual(filtered.farmers, undefined, '未勾选农户 → 字段省略');
+  assert.strictEqual(filtered.batteries, undefined);
+  assert.ok(filtered.income && filtered.costs, '勾选项保留');
+
+  // 兼容：无 opts 时行为不变（全量导出，无 schemaVersion 之外的破坏）
+  const legacy = JSON.parse(S.exportJSON(st, 'spray'));
+  assert.strictEqual(legacy.schemaVersion, '2.1');
+  assert.ok(legacy.farmers.length >= 1);
+
+  const txt = S.exportText(st, 'spray', { sections: { farmers: false, workOrder: false } });
+  assert.ok(!txt.includes('【农户】'), '文本导出勾选生效：无农户段');
+  assert.ok(txt.includes('【植物】'), '保留作业参数');
+  const txtFull = S.exportText(st, 'spray');
+  assert.ok(txtFull.includes('【农户】'), '全量文本含农户');
+});

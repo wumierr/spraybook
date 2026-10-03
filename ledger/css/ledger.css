@@ -200,3 +200,8 @@ table.lg-fixed input.lg-inp--sm { width: 100%; min-width: 0; }
 /* 内联宽退役后的基线（非 fixed 表观感与 P5-M2 一致）：总表账单备注 110px、收款经手人 70px */
 input.lg-inp { width: 110px; }
 input.lg-inp--sm { width: 70px; }
+
+/* ---------- 计算器导出勾选区(P6-M1,同源复用) ---------- */
+.export-sections { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0; font-size: 13px; }
+.export-sections label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.check-label { display: flex; align-items: center; gap: 6px; }

@@ -43,6 +43,9 @@ function summary(db, { from, to } = {}) {
   const advanceToWorker = db.prepare(
     `SELECT COALESCE(SUM(balance_cents),0) AS n FROM advances
      WHERE direction='advance_to_worker' AND status IN ('open','partial')`).get().n;
+  // P6-M2(F3)：顶部汇总"已收"此前引用了不存在的 received_cents 字段，恒显示 '—'
+  const received = db.prepare(
+    `SELECT COALESCE(SUM(amount_cents),0) AS n FROM receipts WHERE status='active'`).get().n;
   return {
     from: from || null, to: to || null,
     income_cents: pl.income_cents,
@@ -50,6 +53,7 @@ function summary(db, { from, to } = {}) {
     profit_cents: pl.income_cents - pl.expense_cents,
     expense_by_category: expenseByCat,
     receivable_cents: receivable,
+    received_cents: received,
     prepaid_cents: prepaid,
     advance_to_worker_cents: advanceToWorker
   };

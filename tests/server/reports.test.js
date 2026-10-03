@@ -126,6 +126,8 @@ test('报表：summary/by-month/by-customer/by-job 数字与手账一致', async
   assert.strictEqual(s.expense_cents, 15000, '支出=12000+3000');
   assert.strictEqual(s.profit_cents, st.total_receivable_cents - 15000);
   assert.ok(s.expense_by_category.some(c => c.code === '5002' && c.cents === 12000));
+  // P6-M2(F3)：顶部汇总"已收"=active 收款合计（此前字段断，恒显示 '—'）
+  assert.strictEqual(s.received_cents, zUnpaid, 'received_cents=本次按客户收款合计');
 
   const months = await getJson(`${base}/reports/by-month`);
   assert.strictEqual(months.length, 1);

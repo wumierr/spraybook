@@ -251,3 +251,31 @@ test('parseColw：坏 JSON/非数组/列数超出/坏值整包丢弃，短存档
   assert.strictEqual(Core.parseColw('[100,"x"]', 5), null, '坏值整包丢弃');
   assert.strictEqual(Core.parseColw('[100]', 0), null, '无表头列 thCount=0 丢弃');
 });
+
+test('calculatorJobPayload：计算器导出 JSON → /api/jobs 载荷（P6-M1 离线通路）', () => {
+  const good = JSON.stringify({
+    type: 'drone-spray-config', version: '2.0', schemaVersion: '2.1', mode: 'spray',
+    exportedAt: '2026-10-04T08:00:00.000Z', client_job_id: 'cj-1',
+    field: { area: 8 }, income: { pricePerMu: 25 },
+    workOrder: { note: '工单备注' }, result: { totalCost: 100, income: 200 }
+  });
+  const r = Core.calculatorJobPayload(good, '2026-10-04');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.payload.client_job_id, 'cj-1', '优先用导出自带幂等键');
+  assert.strictEqual(r.payload.job_type, 'spray');
+  assert.strictEqual(r.payload.job_date, '2026-10-04', 'job_date 取 exportedAt 日期');
+  assert.strictEqual(r.payload.result.totalCost, 100);
+  assert.strictEqual(r.payload.snapshot.schemaVersion, undefined, 'snapshot 剥离协议字段');
+  assert.strictEqual(r.payload.note, '工单备注');
+
+  const noId = JSON.stringify({ type: 'drone-spray-config', schemaVersion: '2.1', mode: 'haul', exportedAt: '2026-10-04T01:00:00Z', result: {} });
+  const r2 = Core.calculatorJobPayload(noId, '2026-10-04');
+  assert.ok(r2.ok && r2.payload.client_job_id.startsWith('paste-'), '自动生成幂等键');
+  assert.strictEqual(r2.payload.job_type, 'haul');
+
+  const old = JSON.stringify({ type: 'drone-spray-config', version: '2.0', mode: 'spray' });
+  assert.strictEqual(Core.calculatorJobPayload(old).ok, false);
+  assert.match(Core.calculatorJobPayload(old).error, /旧版导出/);
+  assert.strictEqual(Core.calculatorJobPayload('垃圾文本').ok, false);
+  assert.strictEqual(Core.calculatorJobPayload(JSON.stringify({ foo: 1 })).ok, false);
+});

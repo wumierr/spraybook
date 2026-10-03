@@ -99,6 +99,40 @@ test('编辑支出：类别/金额修改 + 红冲重生成', async () => {
   assertBalanced();
 });
 
+test('P6-M2(F5)：等值编辑短路——只改备注不红冲不重过账', async () => {
+  const p = await post(`${base}/payments`, { category: 'fuel', amount_cents: 12000, note: '原始备注' });
+  const before = db.prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+  const revBefore = db.prepare("SELECT COUNT(*) n FROM journal_entries WHERE event_type='reversal'").get().n;
+  const up = await patch(`${base}/payments/${p.data.id}`, { note: '只改备注' });
+  assert.strictEqual(up.ok, true, JSON.stringify(up));
+  assert.strictEqual(up.data.note, '只改备注');
+  assert.strictEqual(up.data.amount_cents, 12000);
+  const after = db.prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+  const revAfter = db.prepare("SELECT COUNT(*) n FROM journal_entries WHERE event_type='reversal'").get().n;
+  assert.strictEqual(after, before, '等值编辑不产生新分录');
+  assert.strictEqual(revAfter, revBefore, '不产生红冲凭证');
+  const logs = db.prepare("SELECT * FROM edit_logs WHERE table_name='payments' AND record_id=?").all(p.data.id);
+  assert.ok(logs.some(l => l.action === 'update'), '仍留痕');
+  assertBalanced();
+
+  // 收款同样短路：金额不变只改经手人
+  const job = (await post(`${base}/jobs`, {
+    client_job_id: 'f5r', job_type: 'spray', job_date: '2026-09-29',
+    snapshot: SAMPLE.spray.export, result: SAMPLE.spray.result
+  })).data;
+  const st = (await post(`${base}/settlements`, { job_id: job.id })).data;
+  await post(`${base}/settlements/${st.id}/confirm`);
+  const b = (await getJson(`${base}/bills`)).find(x => x.party_name === '李秀英');
+  const r = await post(`${base}/receipts`, { bill_id: b.id, party_id: b.party_id, amount_cents: 100 });
+  const before2 = db.prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+  const up2 = await patch(`${base}/receipts/${r.data.id}`, { note: '改经手人备注', collector_name: '老沈' });
+  assert.strictEqual(up2.ok, true);
+  assert.strictEqual(up2.data.collector_name, '老沈');
+  const after2 = db.prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+  assert.strictEqual(after2, before2, '收款等值编辑不产生新分录');
+  assertBalanced();
+});
+
 test('预收备注编辑；金额编辑不开放', async () => {
   const c = (await post(`${base}/parties`, { type: 'customer', name: '备注户' })).data;
   const adv = await post(`${base}/advances`, { party_id: c.id, direction: 'prepaid_by_customer', amount_cents: 10000 });

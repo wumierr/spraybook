@@ -70,6 +70,8 @@
     editReceipt: (id, b) => Api.patch('/api/receipts/' + id, b),
     editPayment: (id, b) => Api.patch('/api/payments/' + id, b),
     editAdvanceNote: (id, b) => Api.patch('/api/advances/' + id, b),
+    // P6-M1：计算器导出 JSON 粘贴导入（同步协议，幂等）
+    createJob: (b) => Api.post('/api/jobs', b),
     // M7 主数据
     masterList: (t) => Api.get('/api/master/' + t),
     masterCreate: (t, b) => Api.post('/api/' + t, b),

@@ -504,7 +504,10 @@
         ? (r.canEditBill
           ? `<input data-ekb="${r.billId}" data-f="amount_cents" type="number" step="0.01" min="0" value="${(r._amount / 100).toFixed(2)}" data-orig="${(r._amount / 100).toFixed(2)}" title="账单金额(元)">`
           : `<span title="${lockTip}">🔒 ${Core.fmtYuan(r._amount)}</span>`)
-        : Core.fmtYuan(r._amount);
+        : (r.billCount === 0 && r.jobIncomeCents > 0
+          // P6-M2(F2)：未结算作业显示计算器快照收入，避免"明明算了钱总表却是 0"
+          ? `<span class="lg-tag" title="计算器快照收入；结算确认后转为账单口径">快照 ${Core.fmtYuan(r.jobIncomeCents)}（未入账）</span>`
+          : Core.fmtYuan(r._amount));
       const adjustCell = em
         ? (r.canEditBill
           ? `<input data-ekb="${r.billId}" data-f="adjust_cents" type="number" step="0.01" value="${((r.billAdjust || 0) / 100).toFixed(2)}" data-orig="${((r.billAdjust || 0) / 100).toFixed(2)}" title="账单抹零/优惠(元，正负均按优惠金额计)">`
@@ -1254,6 +1257,8 @@
     }
     toast(`已保存 ${ok} 行`);
     state.editMode[tab] = false;
+    // P6-M2(F4)：保存成功也必须重绘，否则停留在"幽灵编辑态"（editMode 已 false 但 DOM 仍是输入框）
+    await render();
   }
 
   /** 右下角浮动总编辑按钮（position:fixed，跟随滚动） */
