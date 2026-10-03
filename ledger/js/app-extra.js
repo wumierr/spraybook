@@ -19,7 +19,7 @@
     </div>
     <div class="lg-panel">
       <h2>批次</h2>
-      <table class="lg-table"><thead><tr><th>批次</th><th>文件</th><th>状态</th><th>导入时间</th><th>操作</th></tr></thead>
+      <table class="lg-table" data-colw="import-batches"><thead><tr><th>批次</th><th>文件</th><th>状态</th><th>导入时间</th><th>操作</th></tr></thead>
       <tbody id="impBatches"><tr><td colspan="5">加载中…</td></tr></tbody></table>
     </div>
     <div class="lg-panel" id="impRowsPanel" style="display:none">
@@ -32,7 +32,7 @@
         <button class="lg-btn" data-act="imp-recon">对账报告</button>
       </div>
       <div id="impRecon"></div>
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="import-rows"><thead><tr>
         <th>sheet/行</th><th>类型</th><th>姓名</th><th>村/队</th><th>日期</th><th>应收</th><th>实收</th><th>复核提示</th><th>操作</th>
       </tr></thead><tbody id="impRows"><tr><td colspan="9">—</td></tr></tbody></table>
     </div>`;
@@ -165,7 +165,7 @@
     </div>
     <div class="lg-panel">
       <h2>客户（点「编辑」行内直填，回车或点保存生效）</h2>
-      <table class="lg-table"><thead><tr>
+      <table class="lg-table" data-colw="master-parties"><thead><tr>
         <th>姓名</th><th>区域</th><th>村/队</th><th>电话</th><th>默认单价</th><th>欠款(元)</th><th>预收(元)</th><th>最近作业</th><th>操作</th>
       </tr></thead><tbody>${custRows}</tbody></table>
     </div>
@@ -178,13 +178,13 @@
         <label>备注<input id="plotNote" placeholder="选填"></label>
         <button class="lg-btn primary" data-act="plot-add">新增地块</button>
       </div>
-      <table class="lg-table" style="margin-top:8px"><thead><tr>
+      <table class="lg-table" style="margin-top:8px" data-colw="master-plots"><thead><tr>
         <th>地块名</th><th>所属客户</th><th>面积(亩)</th><th>备注</th><th>操作</th>
       </tr></thead><tbody>${plotRows || '<tr><td colspan="5">暂无地块——新增后作业明细将自动按名关联</td></tr>'}</tbody></table>
     </div>
     <div class="lg-panel">
       <h2>药品/用药类型（计算器类型库镜像；编辑暂走计算器端）</h2>
-      <table class="lg-table"><thead><tr><th>名称</th><th>key</th><th>水量/亩</th><th>兑水/套</th><th>药价/套</th></tr></thead>
+      <table class="lg-table" data-colw="master-chems"><thead><tr><th>名称</th><th>key</th><th>水量/亩</th><th>兑水/套</th><th>药价/套</th></tr></thead>
       <tbody>${chems || '<tr><td colspan="5">暂无（首次计算器同步后生成）</td></tr>'}</tbody></table>
     </div>`;
   }
@@ -402,11 +402,14 @@
   window.LedgerExtra = {
     renderTab(tab, $main) {
       setTools(window.__ledgerTools);
-      if (tab === 'import') {
-        $main.innerHTML = renderImport();
-        return loadImportBatches();
-      }
-      return renderMasterData().then(html => { $main.innerHTML = html; });
+      // P5-M3：doRender 旁路的 5 处直调重绘（md-edit/md-edit-cancel/md-edit-save 空改/plot-edit/
+      // plot-edit-cancel）不经 doRender 尾部挂钩，挂在本函数返回链上统一恢复列宽；
+      // master 分支是 renderMasterData().then(html=>innerHTML)、import 分支同步 innerHTML 后
+      // 异步 loadImportBatches——都须等 innerHTML 落位后再 apply（同步调会早于 DOM 更新）
+      const done = tab === 'import'
+        ? ($main.innerHTML = renderImport(), loadImportBatches())
+        : renderMasterData().then(html => { $main.innerHTML = html; });
+      return Promise.resolve(done).then(() => { if (T && T.applyColWidths) T.applyColWidths(); });
     },
     handleAct(btn, tools) {
       setTools(tools);
