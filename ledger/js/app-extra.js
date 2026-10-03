@@ -13,6 +13,7 @@
       <h2>上传历史 Excel（.xlsx，月度记账表格式）</h2>
       <div class="lg-form">
         <label>文件<input type="file" id="impFile" accept=".xlsx"></label>
+        <button class="lg-btn primary" data-act="imp-upload">解析并复核</button>
         <span class="hint" style="color:var(--muted);font-size:12px">解析后先复核再落库；同文件重复上传会被拒绝</span>
       </div>
       <div id="impStats"></div>
