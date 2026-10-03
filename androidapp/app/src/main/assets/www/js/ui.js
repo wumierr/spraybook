@@ -2567,6 +2567,8 @@ const UI = {
 
     document.getElementById('importBtn').addEventListener('click', () => this.openModal('importModal'));
     document.getElementById('exportBtn').addEventListener('click', () => this.openExportModal());
+    // P6-M1：账本同步设置（此前只能手写 localStorage，普通用户开不了同步）
+    document.getElementById('syncCfgBtn').addEventListener('click', () => this.openSyncCfgModal());
     document.getElementById('importConfirm').addEventListener('click', () => this.doImport());
 
     document.getElementById('historyBtn').addEventListener('click', () => this.openHistoryModal());
@@ -2597,6 +2599,19 @@ const UI = {
         this.toast(ok ? '已复制到剪贴板 📋' : '复制失败，请手动选择', ok ? 'success' : 'error');
       });
     });
+    // P6-M1：导出勾选即时生效 + 下载作业包 + 同步设置弹层
+    document.querySelectorAll('#exportSections input[data-sec]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const active = document.querySelector('.export-tabs .tab-btn.active');
+        this.updateExportText(active ? active.dataset.exp : 'text');
+      });
+    });
+    const dlBtn = document.getElementById('downloadJobPack');
+    if (dlBtn) dlBtn.addEventListener('click', () => this.downloadJobPack());
+    const cfgTest = document.getElementById('syncCfgTest');
+    if (cfgTest) cfgTest.addEventListener('click', () => this.testSyncConnection());
+    const cfgSave = document.getElementById('syncCfgSave');
+    if (cfgSave) cfgSave.addEventListener('click', () => this.saveSyncConfig());
 
     document.addEventListener('keydown', e => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
@@ -2660,14 +2675,77 @@ const UI = {
   },
 
   openExportModal() {
+    // 每次打开生成一次 client_job_id：同一次会话内重复导出稳定，再次打开换新
+    this._exportJobId = (window.SpraySync && window.SpraySync.uuid) ? window.SpraySync.uuid() : null;
     this.openModal('exportModal');
     this.updateExportText('text');
   },
+  /** P6-M1：读导出勾选（data-sec checkbox → sections 对象） */
+  readExportSections() {
+    const sections = {};
+    document.querySelectorAll('#exportSections input[data-sec]').forEach(cb => {
+      sections[cb.dataset.sec] = cb.checked;
+    });
+    return sections;
+  },
   updateExportText(type) {
+    const opts = { sections: this.readExportSections(), clientJobId: this._exportJobId, result: this._lastResult || null };
     const txt = type === 'json'
-      ? Storage.exportJSON(this.state, this.state.mode)
-      : Storage.exportText(this.state, this.state.mode);
+      ? Storage.exportJSON(this.state, this.state.mode, opts)
+      : Storage.exportText(this.state, this.state.mode, opts);
     document.getElementById('exportText').value = txt;
+  },
+  /** P6-M1：下载作业包（schema 2.1，含 result+client_job_id，记账端可直接导入；不受勾选影响） */
+  downloadJobPack() {
+    const json = Storage.exportJSON(this.state, this.state.mode, {
+      sections: null,
+      clientJobId: this._exportJobId || (window.SpraySync ? window.SpraySync.uuid() : null),
+      result: this._lastResult || null
+    });
+    if (!this._lastResult) {
+      this.toast('尚未计算（无结果快照），作业包不含 result——记账端将无法导入，请先开始计算', 'warn');
+    }
+    const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `spraybook-job-${d}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    this.toast('作业包已下载（schema 2.1）——在记账后台「导入」页粘贴即可入库', 'success');
+  },
+  /** P6-M1：账本同步设置弹层 */
+  openSyncCfgModal() {
+    const s = window.SpraySync ? window.SpraySync.getSettings() : { base_url: '', enabled: false };
+    document.getElementById('syncCfgUrl').value = s.base_url || '';
+    document.getElementById('syncCfgEnabled').checked = !!s.enabled;
+    document.getElementById('syncCfgTestResult').textContent = '';
+    this.openModal('syncCfgModal');
+  },
+  testSyncConnection() {
+    const url = document.getElementById('syncCfgUrl').value.trim().replace(/\/+$/, '');
+    const out = document.getElementById('syncCfgTestResult');
+    if (!url) { out.textContent = '请先填写服务器地址'; return; }
+    out.textContent = '测试中…';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    fetch(url + '/api/health', { signal: ctrl.signal })
+      .then(r => r.json())
+      .then(j => {
+        clearTimeout(timer);
+        out.textContent = j && j.ok ? '✓ 连接成功：' + (j.data && j.data.name || 'spraybook') + ' 在线' : '✗ 服务响应异常';
+      })
+      .catch(() => { clearTimeout(timer); out.textContent = '✗ 连接失败（离线/地址错误/跨域）'; });
+  },
+  saveSyncConfig() {
+    const url = document.getElementById('syncCfgUrl').value.trim().replace(/\/+$/, '');
+    const enabled = document.getElementById('syncCfgEnabled').checked;
+    if (enabled && !url) { this.toast('启用同步必须填写服务器地址', 'warn'); return; }
+    if (window.SpraySync) window.SpraySync.setSettings(url, enabled);
+    this.toast(enabled ? '同步已启用：' + url : '同步已关闭', 'success');
+    this.closeModal('syncCfgModal');
   },
 
   doImport() {

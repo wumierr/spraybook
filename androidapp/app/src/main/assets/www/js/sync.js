@@ -141,6 +141,7 @@
 
   var _flushing = false;
   var _retryTimer = null;
+  var _pollMs = 60000; // 轮询间隔（离线时指数退避到 5 分钟）
 
   function _scheduleRetry(attempts) {
     if (_retryTimer) return;
@@ -389,7 +390,13 @@
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) flushNow();
     });
-    setInterval(function () { flushNow(); }, 60000); // 60s 轮询（disabled 时内部直接返回）
+    // 轮询循环：离线退避 60s→300s，在线恢复 60s
+    (function pollLoop() {
+      flushNow().then(function (acc) {
+        _pollMs = (acc && acc.offline) ? Math.min(_pollMs * 2, 300000) : 60000;
+        setTimeout(pollLoop, _pollMs);
+      });
+    })();
     fetchBootstrap(); // 启动即拉一次读反哺
     setInterval(function () { fetchBootstrap(); }, 300000); // 每 5 分钟刷新主数据/财务状态
   }

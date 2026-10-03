@@ -1,4 +1,6 @@
 /* ============================================================
+   ⚠️ 一次性数据订正：已于 2026-10 生产库执行完毕，勿对生产库重跑（逻辑幂等，
+   重跑无副作用但无意义；回归见 tests/server/backfill*.test.js）。
    db/backfill-008.js — 一次性数据订正（P4-M1，HANDOFF-P4-PLAN §2.3）
    plant_type_name 双语义收尾：migration 008 只加了 jobs.purpose 列，
    存量导入行（importExcel.js 曾把 Excel「作业目的」写进 plant_type_name）

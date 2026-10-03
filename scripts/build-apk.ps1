@@ -71,6 +71,27 @@ if ($SkipSync) {
         if (Test-Path $src) { Copy-Item $src -Destination $WwwDir -Recurse -Force }
     }
     Write-Ok "已同步 $((Get-ChildItem $WwwDir -Recurse -File).Count) 个文件 ($(Get-DirSize $WwwDir))"
+
+    # P6-M3：同步校验——逐文件对比根目录与 www（防"改了源码忘了同步"静默打出旧包）
+    $mismatch = 0
+    foreach ($d in @('css', 'js')) {
+        Get-ChildItem (Join-Path $ProjectRoot $d) -Recurse -File | ForEach-Object {
+            $rel = $_.FullName.Substring($ProjectRoot.Length + 1)
+            $dst = Join-Path $WwwDir $rel
+            if (-not (Test-Path $dst) -or (Get-FileHash $_.FullName).Hash -ne (Get-FileHash $dst).Hash) { $mismatch++; Write-Host "  不一致: $rel" }
+        }
+    }
+    foreach ($f in @('index.html', 'manifest.json', 'sw.js', 'drone-spray-calculator-standalone.html')) {
+        $src = Join-Path $ProjectRoot $f
+        $dst = Join-Path $WwwDir $f
+        if ((Test-Path $src) -and ((-not (Test-Path $dst)) -or (Get-FileHash $src).Hash -ne (Get-FileHash $dst).Hash)) { $mismatch++; Write-Host "  不一致: $f" }
+    }
+    if ($mismatch -gt 0) {
+        Write-Fail "同步校验失败：$mismatch 个文件不一致（不应发生，Step 1 刚同步过）"
+        Wait-Exit 1
+    }
+    Write-Ok '同步校验通过（根目录与 www 逐字节一致）'
+}
 }
 
 # ============================================================

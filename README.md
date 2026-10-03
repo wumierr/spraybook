@@ -152,17 +152,12 @@ git push origin main
 
 三种打包路线任选其一：
 
-#### A. 本地构建 APK（轻量脚本，无需 Android Studio）
-```bash
-# Win10
-cd androidapp\scripts
-build-apk.bat debug
-
-# Mac/Linux
-cd androidapp/scripts
-./build-apk.sh debug
+#### A. 本地构建 APK（轻量脚本，无需 Android Studio；P6 起唯一入口）
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-apk.ps1 -Type debug
+# 或双击 5-打包APK.bat
 ```
-脚本会自动同步 Web 文件、下载 Gradle Wrapper、构建 APK，输出到 `androidapp/build-output/`。
+脚本会自动同步 Web 文件并校验一致性（不同步即拒绝打包）、下载 Gradle Wrapper、构建 APK，输出到 `androidapp/build-output/`。
 仅需要 JDK 17 + Android SDK command-line tools。
 
 #### B. Android Studio 打开编译（图形界面，最稳）

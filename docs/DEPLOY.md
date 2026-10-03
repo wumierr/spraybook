@@ -51,13 +51,9 @@
 
 ### 命令行（Windows）
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\serve.ps1 start     # 启动
-powershell -ExecutionPolicy Bypass -File scripts\serve.ps1 open      # 打开网页
-powershell -ExecutionPolicy Bypass -File scripts\serve.ps1 status    # 看状态
-powershell -ExecutionPolicy Bypass -File scripts\serve.ps1 stop      # 停止
-powershell -ExecutionPolicy Bypass -File scripts\serve.ps1 start -Lan  # 局域网可访问
-```
+双击根目录 `1-启动服务并打开网页.bat`（生产服务，含记账后台）。
+命令行方式：`cd server && npm start`（`PORT` 环境变量换端口，`SPRAYBOOK_DATA_DIR` 换数据目录）。
+> 旧 `scripts\serve.ps1` 已删除（P6 脚本治理）：它只能静态托管计算器，不带记账 API。
 
 ### 命令行（Linux / macOS / WSL）
 
@@ -379,15 +375,15 @@ File → Open → 选 `androidapp/` 目录 → 等 Gradle Sync → Build → Bui
 
 **Q：双击 bat 闪一下就没了**
 A：脚本出错会停留。若真的闪退，改用命令行看报错：
-`powershell -ExecutionPolicy Bypass -File scripts\serve.ps1 start`
+双击 `1-启动服务并打开网页.bat`
 
 **Q：提示"无法加载文件，未对脚本进行数字签名"**
 A：所有 bat 都已带 `-ExecutionPolicy Bypass`。若手动跑 ps1 报这个，用同样的参数即可，
 不需要改系统策略。
 
 **Q：8080 端口被占用**
-A：`scripts\serve.ps1 stop` 会连子进程一起清理。若是别的软件占用，
-用 `scripts\serve.ps1 start -Port 8090` 换端口。
+A：双击 `3-停止服务.bat` 会连子进程一起清理。若是别的软件占用，
+在 server/ 下用 `PORT=8090 npm start` 换端口。
 
 **Q：改了代码，网页还是老样子**
 A：Service Worker 缓存所致。浏览器按 `Ctrl+Shift+R` 强刷，
@@ -443,7 +439,7 @@ A：设置 → 应用 → 特殊权限 → 安装未知应用 → 允许你用�
 scripts/                      跨平台脚本
 ├─ _lib.ps1                   公共函数（Windows）
 ├─ menu.ps1                   一键菜单
-├─ serve.ps1     / serve.sh           本地服务管理
+├─ serve.sh                      本地静态预览（POSIX；Windows 用启动bat）
 ├─ build-web.ps1 / build-web.sh       生成 dist/
 ├─ push-github.ps1 / push-github.sh   推送 GitHub（本地优先）
 ├─ deploy-cloudflare.ps1 / .sh        部署 Cloudflare Pages

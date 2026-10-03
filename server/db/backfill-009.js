@@ -1,4 +1,6 @@
 /* ============================================================
+   ⚠️ 一次性数据订正：已于 2026-10 生产库执行完毕，勿对生产库重跑（逻辑幂等，
+   重跑无副作用但无意义；回归见 tests/server/backfill*.test.js）。
    db/backfill-009.js — 一次性数据订正（P5-M1，HANDOFF-P5-PLAN §5.2）
    导入单主结算行单价回填：job_settlement_lines / settlement_items 的
    kind='spray' 且 unit_price_cents IS NULL 行，从 raw_json.raw.price_yuan
