@@ -326,6 +326,35 @@ test('adjustments：正负 adjust 双语义归一（抹零=Σ|adjust|）、超�
   assert.strictEqual(yr.rows[0].overpaid_cents, q.rows.reduce((a, r) => a + r.overpaid_cents, 0));
 });
 
+test('P5-M1 label：by-period/adjustments 每行带人类可读 label（period 原键不变）', async () => {
+  for (const d of ['2026-01-01', '2026-03-31', '2026-04-01']) {
+    await createSettledJobAt(d);
+  }
+  const mon = await getJson(`${base}/reports/by-period?granularity=month`);
+  assert.strictEqual(mon.work.find(r => r.period === '2026-01').label, '1月');
+  assert.strictEqual(mon.work.find(r => r.period === '2026-03').label, '3月');
+  assert.strictEqual(mon.work.find(r => r.period === '2026-04').label, '4月');
+  assert.ok(mon.pl.length && /^\d+月$/.test(mon.pl[0].label), 'pl 轴行也有 label');
+  assert.ok(/^\d{4}-\d{2}$/.test(mon.work[0].period), 'period 原始键不变（跳转/拼接/缓存依赖）');
+
+  const wk = await getJson(`${base}/reports/by-period?granularity=week`);
+  assert.strictEqual(wk.work.find(r => r.period === '2026-W00').label, 'W00(01-01)');
+  assert.strictEqual(wk.work.find(r => r.period === '2026-W13').label, 'W13(03-31)');
+
+  const q = await getJson(`${base}/reports/by-period?granularity=quarter`);
+  assert.strictEqual(q.work.find(r => r.period === '2026-Q1').label, 'Q1');
+  const yr = await getJson(`${base}/reports/by-period?granularity=year`);
+  assert.strictEqual(yr.work[0].label, '2026');
+
+  // adjustments rows[] 同样追加 label（bills.issued_at 分桶；确认建账单 issued_at=当下，统一拨到 04-10）
+  db.prepare("UPDATE bills SET issued_at = '2026-04-10T08:00:00'").run();
+  const adjM = await getJson(`${base}/reports/adjustments?granularity=month`);
+  assert.ok(adjM.rows.length, '有账单桶');
+  assert.strictEqual(adjM.rows[0].label, '4月');
+  const adjWk = await getJson(`${base}/reports/adjustments?granularity=week`);
+  assert.strictEqual(adjWk.rows[0].label, 'W14(04-10)');
+});
+
 test('cost-breakdown：journal=500 科目现金口径、job=作业快照口径（导入单=0）且两口径不可相加', async () => {
   const r1 = await createSettledJob();
   await post(`${base}/payments`, { category: 'fuel', amount_cents: 12000, note: '油费' });

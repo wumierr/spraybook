@@ -155,6 +155,35 @@ function pct(cur, prev) {
 }
 
 /**
+ * 人类可读期间标签（P5-M1，HANDOFF-P5-PLAN §2.3；只用于显示层）：
+ *   月 2026-01 → 1月   季 2026-Q1 → Q1   年 2026 → 2026
+ *   周 2026-W05 → W05(01-26)（period_start 的 MM-DD；缺失退化为 W05；W00 同法）
+ * period 原始键不变——ov-jump-month 校验、C7/C9 双轴按 period 拼接、
+ * _periodCache 粒度缓存均依赖原始 key。
+ */
+function periodLabel(period, granularity, periodStart) {
+  const p = String(period == null ? '' : period);
+  if (granularity === 'month') {
+    const m = /^(\d{4})-(\d{2})$/.exec(p);
+    return m ? `${Number(m[2])}月` : p;
+  }
+  if (granularity === 'quarter') {
+    const m = /^(\d{4})-Q(\d)$/.exec(p);
+    return m ? `Q${m[2]}` : p;
+  }
+  if (granularity === 'year') return p;
+  if (granularity === 'week') {
+    const m = /^(\d{4})-W(\d{2})$/.exec(p);
+    if (!m) return p;
+    const md = typeof periodStart === 'string' && /^\d{4}-\d{2}-\d{2}/.test(periodStart)
+      ? periodStart.slice(5, 10)
+      : null;
+    return md ? `W${m[2]}(${md})` : `W${m[2]}`;
+  }
+  return p;
+}
+
+/**
  * GET /api/reports/by-period?granularity=month|week|quarter|year&from=&to=
  * 双轴分桶，避免账簿（确认时点 occurred_at）/作业（job_date）混轴：
  *   pl[]   = 盈亏轴（journal income/expense 科目，按凭证 occurred_at 分桶）
@@ -181,6 +210,7 @@ function byPeriod(db, { granularity, from, to } = {}) {
       const prev = i > 0 ? arr[i - 1] : null;
       return {
         ...r, profit_cents: r.income_cents - r.expense_cents,
+        label: periodLabel(r.period, granularity, r.period_start),
         income_pct: pct(r.income_cents, prev && prev.income_cents),
         expense_pct: pct(r.expense_cents, prev && prev.expense_cents),
         profit_pct: pct(r.income_cents - r.expense_cents, prev && prev.income_cents - prev.expense_cents)
@@ -217,6 +247,7 @@ function byPeriod(db, { granularity, from, to } = {}) {
       const prev = i > 0 ? arr[i - 1] : null;
       return {
         ...r,
+        label: periodLabel(r.period, granularity, r.period_start),
         jobs_pct: pct(r.jobs_count, prev && prev.jobs_count),
         area_pct: pct(r.area_mu, prev && prev.area_mu)
       };
@@ -253,6 +284,7 @@ function adjustments(db, { granularity, from, to } = {}) {
   ).all(...range.args)
     .map(r => ({
       ...r,
+      label: periodLabel(r.period, gran, r.period_start),
       collection_rate: r.billed_cents > 0 ? Math.round(r.collected_cents / r.billed_cents * 10000) / 100 : null
     }));
   const t = rows.reduce((a, r) => ({
@@ -349,5 +381,5 @@ function partyBalance(db, partyId) {
 
 module.exports = {
   summary, byMonth, byCustomer, byJob, partyBalance,
-  byPeriod, adjustments, costBreakdown, GRANULARITIES
+  byPeriod, adjustments, costBreakdown, GRANULARITIES, periodLabel
 };

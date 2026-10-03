@@ -3,7 +3,7 @@
    内联 SVG 手绘（零库/零 CDN）；纯几何函数在 core.js（可测）。
    数据端点：/api/reports/by-period（双轴）、/reports/adjustments、
    /reports/cost-breakdown、/reports/by-customer?include_all=1、/api/overview。
-   交互：每卡 月/周/季/年（data-act="gran-set"，粒度按图保存+按粒度缓存）；
+   交互：每卡 周/月/季/年（P5-M1 起从小到大；data-act="gran-set"，粒度按图保存+按粒度缓存）；
    月粒度柱/点 data-act="ov-jump-month" 跳总表当月。
    本文件按钮的 act 不走 app-extra 前缀正则，由 app.js handleAct switch
    （gran-set / ov-jump-month）转发到 LedgerCharts.handleAct。
@@ -24,8 +24,26 @@
   function esc(s) { return T.esc(s); }
   function r2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
 
-  const GRANS = [['month', '月'], ['week', '周'], ['quarter', '季'], ['year', '年']];
+  /* P5-M1 反馈④:粒度按钮从小到大 周→月→季→年(服务端 GRANULARITIES 白名单仅校验用,顺序无关) */
+  const GRANS = [['week', '周'], ['month', '月'], ['quarter', '季'], ['year', '年']];
   function gran(key) { return st().gran[key] || 'month'; }
+
+  /* P5-M1 反馈①:人类可读期间标签(显示层;period 原始键仍用于跳转/拼接/缓存)。
+     优先服务端 label 字段,缺失时前端按同规则兜底映射。 */
+  function periodLabel(row) {
+    if (row && row.label) return String(row.label);
+    const p = row && row.period != null ? String(row.period) : '';
+    let m;
+    if ((m = /^\d{4}-(\d{2})$/.exec(p))) return `${Number(m[1])}月`;
+    if ((m = /^\d{4}-Q(\d)$/.exec(p))) return `Q${m[1]}`;
+    if (/^\d{4}$/.test(p)) return p;
+    if ((m = /^\d{4}-W(\d{2})$/.exec(p))) {
+      const ps = row && typeof row.period_start === 'string' && /^\d{4}-\d{2}-\d{2}/.test(row.period_start)
+        ? row.period_start.slice(5, 10) : null;
+      return ps ? `W${m[1]}(${ps})` : `W${m[1]}`;
+    }
+    return p;
+  }
 
   async function loadPeriod(g) {
     const s = st();
@@ -147,10 +165,10 @@
         (d ? `<path d="${d}" fill="none" stroke="${line.color}" stroke-width="2"/>` : '') + dots;
     }).join('');
 
-    // X 标签：最多 12 个，其余抽稀
+    // X 标签：最多 12 个，其余抽稀（P5-M1:显示用人类 label,跳转 data-month 仍用原始 period）
     const k = Math.ceil(n / 12);
     const xLabels = rows.map((row, i) => (i % k === 0
-      ? `<text x="${r2(PAD_L + slot * (i + 0.5))}" y="${PAD_T + PLOT_H + 16}" text-anchor="middle">${esc(row.period)}</text>`
+      ? `<text x="${r2(PAD_L + slot * (i + 0.5))}" y="${PAD_T + PLOT_H + 16}" text-anchor="middle">${esc(periodLabel(row))}</text>`
       : '')).join('');
     const yAxis = `<line class="lg-chart-axis" x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${PAD_T + PLOT_H}"/>`;
 
@@ -228,7 +246,7 @@
         lines: [{ key: 'profit_cents', color: C3, fmt: v => fmtAxisYuan(v) }],
         jump: isMonth('pl'),
         yFmt: fmtAxisYuan,
-        tip: r => `${r.period}\n收入 ${yuan(r.income_cents)} 元\n支出 ${yuan(r.expense_cents)} 元\n利润 ${yuan(r.profit_cents)} 元\n收入环比 ${pctText(r.income_pct)} · 支出环比 ${pctText(r.expense_pct)}`
+        tip: r => `${periodLabel(r)}(${r.period})\n收入 ${yuan(r.income_cents)} 元\n支出 ${yuan(r.expense_cents)} 元\n利润 ${yuan(r.profit_cents)} 元\n收入环比 ${pctText(r.income_pct)} · 支出环比 ${pctText(r.expense_pct)}`
       }),
       foot: '账簿确认口径（按凭证 occurred_at 分桶）；红冲不回溯历史期间，冲销当月可能出现负尖峰；导入单利润=收入（成本快照为 0）。月粒度可点柱/点跳总表当月。'
     });
@@ -245,9 +263,9 @@
         lines: [{ key: 'jobs_count', color: C3, fmt: v => fmtAxisNum(v) }],
         jump: isMonth('work'),
         yFmt: fmtAxisNum,
-        tip: r => `${r.period}\n单数 ${r.jobs_count}\n亩数 ${r.area_mu}\n客户数 ${r.customer_count}\n单数环比 ${pctText(r.jobs_pct)} · 亩数环比 ${pctText(r.area_pct)}`
+        tip: r => `${periodLabel(r)}(${r.period})\n单数 ${r.jobs_count}\n亩数 ${r.area_mu}\n客户数 ${r.customer_count}\n单数环比 ${pctText(r.jobs_pct)} · 亩数环比 ${pctText(r.area_pct)}`
       }),
-      extra: work.length ? `<div class="lg-chart-legend">客户数 ${work.map(r => `<span class="lg-tag">${esc(r.period)} · ${r.customer_count}</span>`).join(' ')}</div>` : '',
+      extra: work.length ? `<div class="lg-chart-legend">客户数 ${work.map(r => `<span class="lg-tag">${esc(periodLabel(r))} · ${r.customer_count}</span>`).join(' ')}</div>` : '',
       foot: '作业执行口径（按 job_date 分桶）；客户数=结算分项挂客户去重数。' + weekFoot
     });
 
@@ -263,7 +281,7 @@
         lines: [{ key: 'collection_rate', color: C4, fmt: v => v + '%' }],
         jump: isMonth('adj'),
         yFmt: fmtAxisYuan,
-        tip: r => `${r.period}\n应收 ${yuan(r.billed_cents)} 元\n实收 ${yuan(r.collected_cents)} 元\n回收率 ${r.collection_rate == null ? '—' : r.collection_rate + '%'}\n未收 ${yuan(r.due_cents)} 元`
+        tip: r => `${periodLabel(r)}(${r.period})\n应收 ${yuan(r.billed_cents)} 元\n实收 ${yuan(r.collected_cents)} 元\n回收率 ${r.collection_rate == null ? '—' : r.collection_rate + '%'}\n未收 ${yuan(r.due_cents)} 元`
       }),
       foot: '账单口径：按 bills.issued_at 分桶、非 void；回收率=实收/应收（分母 0 记 —）；存在超收月份可 >100%。' + weekFoot
     });
@@ -279,7 +297,7 @@
         lines: [],
         jump: isMonth('adj'),
         yFmt: fmtAxisYuan,
-        tip: r => `${r.period}\n抹零 ${yuan(r.discount_cents)} 元\n超收 ${yuan(r.overpaid_cents)} 元\n未收 ${yuan(r.due_cents)} 元`
+        tip: r => `${periodLabel(r)}(${r.period})\n抹零 ${yuan(r.discount_cents)} 元\n超收 ${yuan(r.overpaid_cents)} 元\n未收 ${yuan(r.due_cents)} 元`
       }),
       foot: '抹零=Σ|adjust|（导入正数抹零与手工负数抹零统一按优惠金额计）；超收=ΣMAX(0, paid−(amount−|adjust|))，手工收款路径仍禁止超收，此处只统计导入历史。'
     });
@@ -322,6 +340,7 @@
       const w = wMap.get(p.period);
       return {
         period: p.period,
+        label: p.label,
         perMu: w && w.area_mu > 0 ? Math.round(p.income_cents / w.area_mu) : null,
         perJob: w && w.jobs_count > 0 ? Math.round(p.income_cents / w.jobs_count) : null
       };
@@ -338,7 +357,7 @@
           { key: 'perJob', color: C3, fmt: v => fmtAxisYuan(v) }
         ],
         jump: isMonth('unit'),
-        tip: r => `${r.period}\n亩均 ${r.perMu == null ? '—' : yuan(r.perMu)} 元/亩\n客单价 ${r.perJob == null ? '—' : yuan(r.perJob)} 元/单`
+        tip: r => `${periodLabel(r)}(${r.period})\n亩均 ${r.perMu == null ? '—' : yuan(r.perMu)} 元/亩\n客单价 ${r.perJob == null ? '—' : yuan(r.perJob)} 元/单`
       }),
       foot: '两条折线各自归一化（非同一值域），看趋势与点值；=账簿收入 ÷ 作业轴亩数/单数（两轴按期间键拼接）。'
     });
@@ -366,7 +385,7 @@
       <table class="lg-table"><thead><tr>
         <th>期间</th><th>收入(元)</th><th>环比</th><th>支出(元)</th><th>环比</th><th>利润(元)</th><th>环比</th><th>单数</th><th>环比</th><th>亩数</th><th>环比</th>
       </tr></thead><tbody>${pctRows.length ? pctRows.map(r => `<tr>
-        <td>${esc(r.period)}</td>
+        <td title="${esc(r.period)}">${esc(periodLabel(r))}</td>
         <td class="num">${yuan(r.income_cents)}</td>${pctTd(r.income_pct)}
         <td class="num">${yuan(r.expense_cents)}</td>${pctTd(r.expense_pct)}
         <td class="num"><b>${yuan(r.profit_cents)}</b></td>${pctTd(r.profit_pct)}

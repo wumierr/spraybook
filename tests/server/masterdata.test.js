@@ -71,6 +71,40 @@ test('bootstrap：主数据 + 每户欠款/预收/最近作业', async () => {
   assert.ok(zhang.receivable_cents > 0, '张大国未收款，应有欠款');
 });
 
+test('P5-M1 bootstrap last_job 单价：kind=spray 过滤 extra 行、COALESCE 优先回填价、÷100 恢复元/亩', async () => {
+  const now = new Date().toISOString();
+  // 客户A：extra 行（带面积，模拟未来污染，旧查询会选中它）在前，
+  // 后接两条 spray 行——首条带回填价 2500 分（派生应为 23000 分，证 COALESCE 优先）
+  const ca = (await post(`${base}/parties`, { type: 'customer', name: '单价测试户' })).data;
+  const jobA = db.prepare(
+    `INSERT INTO jobs (job_no, client_job_id, job_type, status, job_date, plant_type_name, created_at, updated_at)
+     VALUES ('J20260901-99', 'md-price-a', 'spray', 'settled', '2026-09-01', '水稻', ?, ?)`)
+    .run(now, now).lastInsertRowid;
+  const insLine = db.prepare(
+    `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, spray_fee_cents, included, kind, unit_price_cents)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?)`);
+  insLine.run(jobA, String(ca.id), '单价测试户', 1, 990000, 'extra', 990000);
+  insLine.run(jobA, String(ca.id), '单价测试户', 5, 115000, 'spray', 2500);
+  insLine.run(jobA, String(ca.id), '单价测试户', 4, 80000, 'spray', null);
+
+  // 客户B：计算器来源单（raw_json 无 price_yuan、行无回填价）→ 派生 115000/50=2300 分=23 元/亩
+  const cb = (await post(`${base}/parties`, { type: 'customer', name: '派生测试户' })).data;
+  const jobB = db.prepare(
+    `INSERT INTO jobs (job_no, client_job_id, job_type, status, job_date, plant_type_name, raw_json, created_at, updated_at)
+     VALUES ('J20260902-99', 'md-price-b', 'spray', 'settled', '2026-09-02', '水稻', ?, ?, ?)`)
+    .run(JSON.stringify({ snapshot: {}, result: {} }), now, now).lastInsertRowid;
+  insLine.run(jobB, String(cb.id), '派生测试户', 50, 115000, 'spray', null);
+
+  const bs = await getJson(`${base}/bootstrap`);
+  const pa = bs.parties.find(p => p.name === '单价测试户');
+  const pb = bs.parties.find(p => p.name === '派生测试户');
+  assert.ok(pa && pa.last_job, '客户A 最近作业存在');
+  assert.strictEqual(pa.last_job.price_yuan, 25, 'COALESCE 优先回填价 2500 分 → 25 元/亩（旧查询取 extra 行得 990000）');
+  assert.ok(pa.last_job.price_yuan > 0 && pa.last_job.price_yuan <= 100, '合理区间，无分/亩冒充元/亩');
+  assert.ok(pb && pb.last_job, '客户B 最近作业存在');
+  assert.strictEqual(pb.last_job.price_yuan, 23, '无回填价派生 2300 分 → 23 元/亩（旧式 115000/50=2300 冒充元/亩）');
+});
+
 test('bootstrap 下发 operator（计算器同步 operator_names 的数据源）', async () => {
   await fetch(`${base}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operator: '老沈' }) });
   const bs = await getJson(`${base}/bootstrap`);
