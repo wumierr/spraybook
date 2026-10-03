@@ -144,13 +144,26 @@ function updateReceipt(db, id, { amount_cents, method, occurred_at, note, collec
   const bill = r.bill_id ? getActive(db, 'bills', r.bill_id) : null;
   const newAmount = amount_cents != null ? amount_cents : r.amount_cents;
   if (!Number.isInteger(newAmount) || newAmount <= 0) throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
+  const newMethod = method || r.method;
+  const newOccurred = occurred_at || r.occurred_at;
+  // P6-M2(F5)：金额/方式/日期任一变化才需要红冲重过账；只改备注/经手人走短路，不产生冗余凭证
+  const journalAffecting = (amount_cents != null && amount_cents !== r.amount_cents) ||
+    (method != null && method !== r.method) ||
+    (occurred_at != null && occurred_at !== r.occurred_at);
   const now = nowISO();
   const tx = db.transaction(() => {
+    if (!journalAffecting) {
+      db.prepare(
+        `UPDATE receipts SET note=COALESCE(?, note), collector_name=COALESCE(?, collector_name), updated_at=? WHERE id=?`)
+        .run(note ?? null, collector_name ?? null, now, id);
+      logEdit(db, { table: 'receipts', recordId: id, action: 'update',
+        before: { note: r.note, collector_name: r.collector_name },
+        after: { note: note ?? r.note, collector_name: collector_name ?? r.collector_name } });
+      return;
+    }
     // 红冲目标 = 未被红冲的最新 active 分录（编辑过多次后不得再红冲最初分录）
     const entry = findActiveEntry(db, 'receipt', id, { eventType: 'receipt' });
     if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '编辑收款 ' + r.receipt_no });
-    const newMethod = method || r.method;
-    const newOccurred = occurred_at || r.occurred_at;
     const cashCode = newMethod === 'wechat' ? '1002' : newMethod === 'alipay' ? '1003' : newMethod === 'bank' ? '1004' : '1001';
     db.prepare(
       `UPDATE receipts SET amount_cents=?, method=?, occurred_at=?, note=COALESCE(?, note), collector_name=COALESCE(?, collector_name), updated_at=? WHERE id=?`)
@@ -193,8 +206,21 @@ function updatePayment(db, id, { category, amount_cents, occurred_at, note, meth
   if (!Number.isInteger(newAmount) || newAmount <= 0) throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
   const newCategory = category || p.category;
   if (!PAYMENT_CATEGORIES.includes(newCategory)) throw new ApiError('VALIDATION', 'category 非法');
+  // P6-M2(F5)：金额/类别/日期任一变化才红冲重过账；只改备注/收款方走短路
+  const journalAffecting = (amount_cents != null && amount_cents !== p.amount_cents) ||
+    (category != null && category !== p.category) ||
+    (occurred_at != null && occurred_at !== p.occurred_at);
   const now = nowISO();
   const tx = db.transaction(() => {
+    if (!journalAffecting) {
+      db.prepare(
+        `UPDATE payments SET note=COALESCE(?, note), payee_party_id=COALESCE(?, payee_party_id), updated_at=? WHERE id=?`)
+        .run(note ?? null, payee_party_id ?? null, now, id);
+      logEdit(db, { table: 'payments', recordId: id, action: 'update',
+        before: { note: p.note, payee_party_id: p.payee_party_id },
+        after: { note: note ?? p.note, payee_party_id: payee_party_id ?? p.payee_party_id } });
+      return;
+    }
     // 红冲目标 = 未被红冲的最新 active 分录（编辑过多次后不得再红冲最初分录）
     const entry = findActiveEntry(db, 'payment', id, { eventType: 'payment' });
     // payments 表无 method 列：重过账前从原 active 分录的贷方行回读付款方式科目，

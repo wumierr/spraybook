@@ -10,6 +10,15 @@
 
   function renderImport() {
     return `<div class="lg-panel">
+      <h2>粘贴计算器作业包（离线单；在计算器「导出 → ⬇ 下载作业包」后粘贴 JSON）</h2>
+      <textarea id="calcJobJson" rows="6" placeholder='粘贴 {"type":"drone-spray-config","schemaVersion":"2.1",...} 完整内容' style="width:100%;font-family:monospace;font-size:12px"></textarea>
+      <div class="lg-form" style="margin-top:8px">
+        <button class="lg-btn primary" data-act="imp-calc-json">解析并导入作业</button>
+        <span class="hint" style="color:var(--muted);font-size:12px">幂等：同一单重复导入自动去重；成功后可在「总表」看到并走结算收款</span>
+      </div>
+      <div id="calcJobResult"></div>
+    </div>
+    <div class="lg-panel">
       <h2>上传历史 Excel（.xlsx，月度记账表格式）</h2>
       <div class="lg-form">
         <label>文件<input type="file" id="impFile" accept=".xlsx"></label>
@@ -337,6 +346,24 @@
       case 'md-disable':
         confirmThen(`停用客户 ${btn.dataset.name}？（软删除，可恢复）`, () => Api.post(`/api/master/parties/${btn.dataset.id}/void`));
         break;
+      case 'imp-calc-json': {
+        // P6-M1：计算器导出 JSON → /api/jobs（幂等；成功后切总表）
+        const text = document.getElementById('calcJobJson').value;
+        if (!text.trim()) return toast('先粘贴作业包 JSON', true);
+        const parsed = Core.calculatorJobPayload(text, new Date().toISOString().slice(0, 10));
+        if (!parsed.ok) {
+          document.getElementById('calcJobResult').innerHTML = `<div class="lg-detail">✗ ${esc(parsed.error)}</div>`;
+          return toast(parsed.error, true);
+        }
+        run(async () => {
+          const d = await Api.createJob(parsed.payload);
+          document.getElementById('calcJobJson').value = '';
+          document.getElementById('calcJobResult').innerHTML =
+            `<div class="lg-detail">✓ 已导入：${esc(d.job_no)}${d.duplicated ? '（该单此前已导入，幂等返回原单）' : ''}</div>`;
+          return d;
+        }, '计算器作业已导入');
+        break;
+      }
       case 'imp-upload': {
         const f = document.getElementById('impFile').files[0];
         if (!f) return toast('先选 .xlsx 文件', true);

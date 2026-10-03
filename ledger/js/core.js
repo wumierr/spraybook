@@ -99,6 +99,7 @@
       region: r.region || '', addr,
       areaMu: r.total_area_mu != null ? r.total_area_mu : null,
       unitPriceYuan: fmtYuan(r.unit_price_cents),
+      jobIncomeCents: r.income_cents != null ? r.income_cents : 0,
       plantLabel: r.plant_label || '',
       extraCents: r.extra_cents || 0,
       referral: r.referral_name || '',
@@ -179,8 +180,48 @@
     return out;
   }
 
+  /**
+   * 计算器导出 JSON → /api/jobs 同步协议载荷（P6-M1 离线数据通路）。
+   * 返回 { ok:true, payload } 或 { ok:false, error }。
+   * 规则：
+   *  - 必须 type='drone-spray-config'；schemaVersion='2.1' 才带 result（可导入），
+   *    2.0/缺失 → 友好报错（老版本导出没有计算结果快照）；
+   *  - client_job_id：优先用导出自带，否则本地生成（幂等键，含随机后缀防撞）；
+   *  - job_date 取 exportedAt 的日期前缀，缺省 todayStr；
+   *  - snapshot = 原导出对象剥离 result/schemaVersion/client_job_id（服务端原样存 raw_json）。
+   */
+  function calculatorJobPayload(text, todayStr) {
+    let obj;
+    try { obj = JSON.parse(typeof text === 'string' ? text.trim() : ''); }
+    catch (e) { return { ok: false, error: '不是合法的 JSON' }; }
+    if (!obj || obj.type !== 'drone-spray-config') {
+      return { ok: false, error: '不是计算器导出的作业 JSON（缺少 type 标识）' };
+    }
+    if (obj.schemaVersion !== '2.1' || !obj.result) {
+      return { ok: false, error: '旧版导出（无计算结果快照）。请在计算器重新计算后用「⬇ 下载作业包」导出' };
+    }
+    const mode = obj.mode === 'haul' ? 'haul' : 'spray';
+    const exported = String(obj.exportedAt || '');
+    const jobDate = /^\d{4}-\d{2}-\d{2}/.test(exported) ? exported.slice(0, 10) : (todayStr || exported);
+    const snapshot = { ...obj };
+    delete snapshot.result;
+    delete snapshot.schemaVersion;
+    delete snapshot.client_job_id;
+    return {
+      ok: true,
+      payload: {
+        client_job_id: obj.client_job_id || 'paste-' + (todayStr || '') + '-' + Math.random().toString(36).slice(2, 8),
+        job_type: mode,
+        job_date: jobDate,
+        note: (obj.workOrder && obj.workOrder.note) || undefined,
+        snapshot,
+        result: obj.result
+      }
+    };
+  }
+
   const Core = {
-    monthKeys, csvCell, csvRow,
+    monthKeys, csvCell, csvRow, calculatorJobPayload,
     fmtYuan, yuanInputToCents, statusLabel,
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
     colwKey, clampColw, parseColw,
