@@ -480,12 +480,12 @@ function applyJobRow(db, parsed, batchId, rowId, operator) {
   const jobNo = nextBizNo(db, 'jobs', 'job_no', 'J', parsed.date); // 可读单号 J+日期-当日序号
   const jobInfo = db.prepare(
     `INSERT INTO jobs (job_no, client_job_id, job_type, status, job_date, note, operator_names, source,
-       plant_type_name, total_area_mu, income_cents, total_cost_cents, profit_cents, referral_name,
+       purpose, total_area_mu, income_cents, total_cost_cents, profit_cents, referral_name,
        raw_json, created_at, updated_at)
      VALUES (?, ?, 'spray', 'settled', ?, ?, ?, 'import', ?, ?, ?, 0, ?, ?, ?, ?, ?)`
   ).run(
     jobNo, `import-${batchId}-${rowId}`, parsed.date, parsed.note || null,
-    JSON.stringify(parsed.operators || []), parsed.purpose || null,
+    JSON.stringify(parsed.operators || []), parsed.purpose || null, // 008：作业目的走 purpose 列，plant_type_name 还给作物语义
     parsed.area_mu, totalReceivable, totalReceivable,
     parsed.referral || null,
     JSON.stringify({ batch_id: batchId, row_id: rowId, raw: parsed }),

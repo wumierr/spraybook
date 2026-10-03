@@ -74,6 +74,31 @@ function reverseEntry(db, entryId, { occurred_at, memo } = {}) {
   });
 }
 
+/**
+ * 取某业务单据当前「未被红冲」的最新 active 分录——编辑/作废红冲的唯一正确目标。
+ * 背景：红冲 = 等额反向新分录（reversal_of 指向原分录），原分录 status 保持 'active'
+ * 永不改动；因此只按 status='active' 过滤会在第二次编辑/作废时命中早已红冲过的
+ * 最初分录（实测：重复红冲 → 现金负数、幽灵收入/应收）。
+ * 规则：排除已被 reversal_of 指向的分录，再按 id 倒序取最新一条；
+ * 多次编辑产生多条 active 分录时旧分录已被指向，天然只剩未红冲的最新分录。
+ * eventType 精确匹配（编辑收款/支出、结算撤回）；notEventType 排除（作废时跳过红冲凭证本身）。
+ */
+function findActiveEntry(db, refType, refId, { eventType, notEventType } = {}) {
+  const conds = [
+    'ref_type = ?',
+    'ref_id = ?',
+    "status = 'active'",
+    // 子查询必须过滤 NULL：x NOT IN (…, NULL) 恒为 UNKNOWN，会漏掉全部行
+    'id NOT IN (SELECT reversal_of FROM journal_entries WHERE reversal_of IS NOT NULL)'
+  ];
+  const args = [refType, refId];
+  if (eventType) { conds.push('event_type = ?'); args.push(eventType); }
+  if (notEventType) { conds.push('event_type != ?'); args.push(notEventType); }
+  return db.prepare(
+    `SELECT id FROM journal_entries WHERE ${conds.join(' AND ')} ORDER BY id DESC LIMIT 1`
+  ).get(...args) || null;
+}
+
 /** 查询：entries + lines（含科目名），可按日期/来源过滤 */
 function getJournal(db, { from, to, ref_type, ref_id } = {}) {
   const where = ['1=1'];
@@ -92,4 +117,4 @@ function getJournal(db, { from, to, ref_type, ref_id } = {}) {
   return entries.map(e => ({ ...e, lines: lineStmt.all(e.id) }));
 }
 
-module.exports = { postEntry, reverseEntry, getJournal, accountIdByCode };
+module.exports = { postEntry, reverseEntry, getJournal, accountIdByCode, findActiveEntry };

@@ -10,7 +10,7 @@
 
 const { ApiError } = require('./apiError');
 const { nextBizNo, logEdit } = require('./audit');
-const { postEntry, reverseEntry } = require('./journal');
+const { postEntry, reverseEntry, findActiveEntry } = require('./journal');
 
 function nowISO() { return new Date().toISOString(); }
 
@@ -146,8 +146,8 @@ function updateReceipt(db, id, { amount_cents, method, occurred_at, note, collec
   if (!Number.isInteger(newAmount) || newAmount <= 0) throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
   const now = nowISO();
   const tx = db.transaction(() => {
-    const entry = db.prepare(
-      "SELECT id FROM journal_entries WHERE ref_type='receipt' AND ref_id=? AND status='active' AND event_type='receipt'").get(id);
+    // 红冲目标 = 未被红冲的最新 active 分录（编辑过多次后不得再红冲最初分录）
+    const entry = findActiveEntry(db, 'receipt', id, { eventType: 'receipt' });
     if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '编辑收款 ' + r.receipt_no });
     const newMethod = method || r.method;
     const newOccurred = occurred_at || r.occurred_at;
@@ -195,11 +195,21 @@ function updatePayment(db, id, { category, amount_cents, occurred_at, note, meth
   if (!PAYMENT_CATEGORIES.includes(newCategory)) throw new ApiError('VALIDATION', 'category 非法');
   const now = nowISO();
   const tx = db.transaction(() => {
-    const entry = db.prepare(
-      "SELECT id FROM journal_entries WHERE ref_type='payment' AND ref_id=? AND status='active' AND event_type='payment'").get(id);
+    // 红冲目标 = 未被红冲的最新 active 分录（编辑过多次后不得再红冲最初分录）
+    const entry = findActiveEntry(db, 'payment', id, { eventType: 'payment' });
+    // payments 表无 method 列：重过账前从原 active 分录的贷方行回读付款方式科目，
+    // 否则 method 未传时硬编码回退现金，微信/支付宝/预支付款付款会被改记成现金
+    let prevCreditCode = null;
+    if (entry) {
+      const cl = db.prepare(
+        `SELECT a.code AS code FROM journal_lines l JOIN accounts a ON a.id = l.account_id
+         WHERE l.entry_id = ? AND l.direction = 'credit' ORDER BY l.id LIMIT 1`).get(entry.id);
+      prevCreditCode = cl ? cl.code : null;
+    }
     if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '编辑支出 ' + p.payment_no });
-    const newMethod = method || 'cash';
-    const cashCode = newMethod === 'wechat' ? '1002' : newMethod === 'alipay' ? '1003' : newMethod === 'bank' ? '1004' : '1001';
+    const METHOD_CODE = { cash: '1001', wechat: '1002', alipay: '1003', bank: '1004' };
+    const methodCode = method ? (METHOD_CODE[method] || '1001') : null;
+    const cashCode = methodCode || prevCreditCode || '1001';
     db.prepare(
       `UPDATE payments SET category=?, amount_cents=?, occurred_at=?, note=COALESCE(?, note), payee_party_id=COALESCE(?, payee_party_id), updated_at=? WHERE id=?`)
       .run(newCategory, newAmount, occurred_at || p.occurred_at, note ?? null, payee_party_id ?? null, now, id);
@@ -208,7 +218,7 @@ function updatePayment(db, id, { category, amount_cents, occurred_at, note, meth
       occurred_at: occurred_at || p.occurred_at, memo: '支出(改) ' + p.payment_no,
       lines: [
         { account_code: CATEGORY_ACCOUNT[newCategory], direction: 'debit', amount_cents: newAmount, party_id: p.payee_party_id, job_id: p.job_id, memo: note || p.note },
-        { account_code: cashCode, direction: 'credit', amount_cents: newAmount, party_id: p.payee_party_id, memo: '付款' }
+        { account_code: cashCode, direction: 'credit', amount_cents: newAmount, party_id: p.payee_party_id, memo: cashCode === '1221' ? '预支付款' : '付款' }
       ]
     });
     logEdit(db, { table: 'payments', recordId: id, action: 'update',
@@ -408,10 +418,8 @@ function voidFinanceRecord(db, table, id) {
   if (row.status === 'void') return row;
   const now = nowISO();
   const tx = db.transaction(() => {
-    // 1) 红冲原分录
-    const entry = db.prepare(
-      `SELECT id FROM journal_entries WHERE ref_type = ? AND ref_id = ? AND status = 'active' AND event_type != 'reversal'`)
-      .get(table.replace(/s$/, ''), id);
+    // 1) 红冲原分录（目标 = 未被红冲的最新 active 分录，编辑过的单据不得重复红冲最初分录）
+    const entry = findActiveEntry(db, table.replace(/s$/, ''), id, { notEventType: 'reversal' });
     if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '作废 ' + row[noCol] });
     // 2) 回滚业务副作用
     if (table === 'receipts') {

@@ -190,23 +190,28 @@ function createImportRouter(db) {
       if (!rows.length) throw new ApiError('VALIDATION', '没有 confirmed 行可落库（先复核确认）');
 
       const result = { jobs: 0, expenses: 0, skipped_zero: 0 };
-      for (const row of rows) {
-        const { kind, parsed } = JSON.parse(row.parsed_json || '{}');
-        if (kind === 'job') {
-          if (!parsed.receivable_cents && !parsed.paid_cents) { result.skipped_zero++; continue; }
-          applyJobRow(db, parsed, b.id, row.id, operator);
-          result.jobs++;
-        } else if (kind === 'expense') {
-          if (!parsed.amount_cents) { result.skipped_zero++; continue; }
-          applyExpenseRow(db, parsed, b.id, row.id, operator);
-          result.expenses++;
+      // 整体单事务：毒行中断 → 全部回滚零残留（批次保持 reviewing，修复后可重试）；
+      // 不包事务时前面行已提交、批次卡死，重试还撞 client_job_id UNIQUE
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          const { kind, parsed } = JSON.parse(row.parsed_json || '{}');
+          if (kind === 'job') {
+            if (!parsed.receivable_cents && !parsed.paid_cents) { result.skipped_zero++; continue; }
+            applyJobRow(db, parsed, b.id, row.id, operator);
+            result.jobs++;
+          } else if (kind === 'expense') {
+            if (!parsed.amount_cents) { result.skipped_zero++; continue; }
+            applyExpenseRow(db, parsed, b.id, row.id, operator);
+            result.expenses++;
+          }
         }
-      }
-      db.prepare("UPDATE import_batches SET status = 'applied' WHERE id = ?")
-        .run(b.id);
-      // 行状态保持 'confirmed'（001 CHECK 枚举无 applied；批次 status='applied' 表达已落库）
-      logEdit(db, { table: 'import_batches', recordId: b.id, action: 'update',
-        before: { status: 'reviewing' }, after: { status: 'applied', result }, operator });
+        db.prepare("UPDATE import_batches SET status = 'applied' WHERE id = ?")
+          .run(b.id);
+        // 行状态保持 'confirmed'（001 CHECK 枚举无 applied；批次 status='applied' 表达已落库）
+        logEdit(db, { table: 'import_batches', recordId: b.id, action: 'update',
+          before: { status: 'reviewing' }, after: { status: 'applied', result }, operator });
+      });
+      tx();
       res.json({ ok: true, data: result });
     } catch (err) { next(err); }
   });

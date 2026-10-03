@@ -201,3 +201,71 @@ test('复核编辑：改村名/金额后落库生效；拒绝行不落库', asyn
   const rejected = pending.find(p => p.status === 'rejected');
   if (expRow) assert.ok(rejected && rejected.n === 1, 'rejected 行保持 rejected');
 });
+
+/** 各正式表行数快照（毒行回滚断言用） */
+function snapshotCounts() {
+  const one = (sql) => db.prepare(sql).get().n;
+  return {
+    jobs: one("SELECT COUNT(*) n FROM jobs WHERE source='import'"),
+    parties: one("SELECT COUNT(*) n FROM parties WHERE source='import'"),
+    settlements: one('SELECT COUNT(*) n FROM settlements'),
+    bills: one('SELECT COUNT(*) n FROM bills'),
+    receipts: one('SELECT COUNT(*) n FROM receipts'),
+    payments: one('SELECT COUNT(*) n FROM payments'),
+    entries: one('SELECT COUNT(*) n FROM journal_entries'),
+    lines: one('SELECT COUNT(*) n FROM journal_lines')
+  };
+}
+
+test('落库事务：毒行中断零残留（整体回滚、批次不卡死），修复后重试成功', async () => {
+  const d = await parseFixture();
+  const rows = await getJson(`${base}/import/batches/${d.batch_id}/rows`);
+  for (const r of rows) await patch(`${base}/import/rows/${r.id}`, { action: 'confirm' });
+
+  const before = snapshotCounts();
+  // 造毒行：中间某 confirmed 作业行的 parsed_json 改为非法 JSON（模拟坏数据）
+  const jobRows = rows.filter(r => r.parsed.kind === 'job');
+  const poison = jobRows[Math.floor(jobRows.length / 2)];
+  const goodJson = db.prepare('SELECT parsed_json FROM raw_import_rows WHERE id = ?').get(poison.id).parsed_json;
+  db.prepare('UPDATE raw_import_rows SET parsed_json = ? WHERE id = ?').run('{broken json', poison.id);
+
+  // apply 整体失败，且前面的行不残留（原实现无事务：前 100+ 单已提交、批次永久卡死）
+  const bad = await post(`${base}/import/batches/${d.batch_id}/apply`, {});
+  assert.strictEqual(bad.ok, false, `毒行应使 apply 整体失败: ${JSON.stringify(bad).slice(0, 200)}`);
+  assert.deepStrictEqual(snapshotCounts(), before, '失败后零残留（apply 必须整体回滚）');
+  const bAfter = (await getJson(`${base}/import/batches`)).find(x => x.id === d.batch_id);
+  assert.strictEqual(bAfter.status, 'reviewing', '批次保持 reviewing（未卡死）');
+
+  // 修复毒行后原批重试成功（原实现重试会撞 client_job_id UNIQUE）
+  db.prepare('UPDATE raw_import_rows SET parsed_json = ? WHERE id = ?').run(goodJson, poison.id);
+  const retry = await post(`${base}/import/batches/${d.batch_id}/apply`, {});
+  assert.strictEqual(retry.ok, true, JSON.stringify(retry).slice(0, 300));
+  assert.ok(retry.data.jobs > 0, `重试落库作业数 ${retry.data.jobs}`);
+  const bFinal = (await getJson(`${base}/import/batches`)).find(x => x.id === d.batch_id);
+  assert.strictEqual(bFinal.status, 'applied', '重试后批次 applied');
+  const t = db.prepare(
+    `SELECT COALESCE(SUM(CASE WHEN direction='debit' THEN amount_cents END),0) AS dr,
+            COALESCE(SUM(CASE WHEN direction='credit' THEN amount_cents END),0) AS cr
+     FROM journal_lines`).get();
+  assert.strictEqual(t.dr, t.cr, '重试后总账借贷平衡');
+});
+
+test('落库 purpose 列：作业目的写 jobs.purpose，plant_type_name 不再被占用', async () => {
+  const d = await parseFixture();
+  const rows = await getJson(`${base}/import/batches/${d.batch_id}/rows`);
+  for (const r of rows) await patch(`${base}/import/rows/${r.id}`, { action: 'confirm' });
+  const applyRes = await post(`${base}/import/batches/${d.batch_id}/apply`, {});
+  assert.strictEqual(applyRes.ok, true, JSON.stringify(applyRes).slice(0, 300));
+
+  const polluted = db.prepare(
+    "SELECT COUNT(*) n FROM jobs WHERE source='import' AND plant_type_name IS NOT NULL").get().n;
+  assert.strictEqual(polluted, 0, '导入作业不得再占用 plant_type_name（作物语义归还计算器）');
+  const withPurpose = db.prepare(
+    "SELECT COUNT(*) n FROM jobs WHERE source='import' AND purpose IS NOT NULL").get().n;
+  assert.ok(withPurpose >= 20, `fixture 含 27 行作业目的，应落 purpose 列: ${withPurpose}`);
+  // 抽查一行的 raw 目的与列值同源
+  const sample = db.prepare(
+    `SELECT purpose, json_extract(raw_json,'$.raw.purpose') AS raw_purpose
+     FROM jobs WHERE source='import' AND purpose IS NOT NULL LIMIT 1`).get();
+  assert.strictEqual(sample.purpose, sample.raw_purpose, 'purpose 列与解析值同源');
+});

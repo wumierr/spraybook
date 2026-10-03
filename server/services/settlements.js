@@ -14,7 +14,7 @@
 
 const { ApiError } = require('./apiError');
 const { nextBizNo, logEdit } = require('./audit');
-const { postEntry, reverseEntry } = require('./journal');
+const { postEntry, reverseEntry, findActiveEntry } = require('./journal');
 const { findPartyByNamePhone } = require('./parties');
 
 function nowISO() { return new Date().toISOString(); }
@@ -178,8 +178,8 @@ function reopenSettlement(db, id) {
   }
   const now = nowISO();
   const tx = db.transaction(() => {
-    const entry = db.prepare(
-      "SELECT id FROM journal_entries WHERE ref_type='settlement' AND ref_id=? AND event_type='settlement_confirm' AND status='active'").get(id);
+    // 红冲目标 = 未被红冲的最新 confirm 分录（撤回→再确认→再撤回不得重复红冲最初分录）
+    const entry = findActiveEntry(db, 'settlement', id, { eventType: 'settlement_confirm' });
     if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '撤回结算 ' + s.settlement_no });
     db.prepare("UPDATE bills SET status = 'void', updated_at = ? WHERE settlement_id = ? AND status != 'void'").run(now, id);
     db.prepare("UPDATE settlements SET status = 'draft', confirmed_at = NULL, updated_at = ? WHERE id = ?").run(now, id);
@@ -197,8 +197,8 @@ function voidSettlement(db, id) {
   if (s.status === 'confirmed') {
     const now = nowISO();
     const tx = db.transaction(() => {
-      const entry = db.prepare(
-        "SELECT id FROM journal_entries WHERE ref_type='settlement' AND ref_id=? AND event_type='settlement_confirm' AND status='active'").get(id);
+      // 红冲目标 = 未被红冲的最新 confirm 分录（确认→撤回→再确认→作废不得重复红冲最初分录）
+      const entry = findActiveEntry(db, 'settlement', id, { eventType: 'settlement_confirm' });
       if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '作废结算 ' + s.settlement_no });
       db.prepare("UPDATE bills SET status = 'void', updated_at = ? WHERE settlement_id = ? AND status != 'void'").run(now, id);
       db.prepare("UPDATE settlements SET status = 'void', updated_at = ? WHERE id = ?").run(now, id);
