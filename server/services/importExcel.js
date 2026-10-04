@@ -1,6 +1,6 @@
 /* ============================================================
    services/importExcel.js — 历史 Excel 导入 v2（P2，按用户裁决 A–G）
-   裁决来源：docs/HANDOFF-P2.md §3。要点：
+   裁决来源：本地 docs/HANDOFF-P2.md §3（docs/ 为工程本地资产，不入库）。要点：
    - B 应收/实收独立：实收>应收照记（paid 可超应收），小额抹零保留
    - C/G 右侧区横读流水：日期→[经手/事由]→金额 = 支出；作业人员列里的
      日期属于流水，不属于作业人员
@@ -40,8 +40,11 @@ function cleanStr(v) { const x = cellVal(v); return x == null ? '' : String(x).t
 /* ---------- 村/队/大区域 三段拆分（裁决 F） ---------- */
 
 const REGION_TOWNS = ['通安', '彰冠', '鹿厂', '铜矿']; // 会理已知乡镇前缀，可后台维护
-// 仅整格等于这些值时视为脏（人名当地址=乱填、合计行标记）
-const DIRTY_ADDR = new Set(['已结算', '[已移除]']);
+// 仅整格等于这些值时视为脏（人名当地址=乱填、合计行标记）。
+// 黑名单内容含真实人名，放 data/dirty-addresses.json 本地配置（data/ 不入库）；
+// 文件缺失时视为空集——只影响重导历史 Excel 这种边缘场景的乱填地址过滤。
+let DIRTY_ADDR = new Set();
+try { DIRTY_ADDR = new Set(require('../../data/dirty-addresses.json')); } catch { /* 本地配置不存在 */ }
 
 function splitAddress(raw) {
   let s = cleanStr(raw).replace(/\s+/g, '');
@@ -203,7 +206,7 @@ function scanZone(ws, r, inv, cmax, sheetYear, sheetMonth, dict) {
     } else if (isNum(catRaw) && isNum(amtRaw)) {
       out.dirty.push(`标准列数字对超出单价量级 c${stdCatCol}=${catRaw}/c${stdAmtCol}=${amtRaw}——未入账`);
     }
-    // cat 文本 + amt 非数值（5月"[已移除]收/应转[已移除]"）→ 裁决 E：忽略
+    // cat 文本 + amt 非数值（如"某人收/应转某人"式手写流水行）→ 裁决 E：忽略
   }
 
   // 状态机横读：日期开记录 → 文本进 desc → 数值闭合为支出

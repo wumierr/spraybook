@@ -5,7 +5,7 @@
 > 计算器 `http://<本机IP>:8080/`（手机同 WiFi 可开）· 记账后台 `http://127.0.0.1:8080/ledger/`
 >
 > 架构：根目录=计算器（离线优先，可打包 APK / 部署静态托管）· `server/`=Express+SQLite API · `ledger/`=记账后台（原生 JS）
-> 运维与同步配置见 **docs/OPS.md**，总体计划见 **docs/PLAN.md**，历史 Excel 导入规则见 **docs/PLAN.md §8**。
+> 运维与同步配置见本地 **docs/OPS.md**（开发/运维文档不入库）。
 
 ---
 
@@ -32,7 +32,7 @@
 
 Linux / macOS 用 `scripts/*.sh`，行为与 Windows 版一致。
 
-> 📖 **公网部署完整说明（服务器配置要求 + 8 条部署路线 + 常见问题）→ [docs/DEPLOY.md](docs/DEPLOY.md)**
+> 📖 **公网部署**：详细说明见本地 docs/DEPLOY.md（不入库）；要点如下
 >
 > - 最快上公网：双击 `6-部署Cloudflare.bat`，5 分钟拿到 `https://xxx.pages.dev`，免费 + 自动 HTTPS
 > - 有自己的服务器：`sudo bash deploy/install-linux.sh` 一条命令搞定（Caddy / nginx / Docker / systemd 四选一）
@@ -144,7 +144,7 @@ git push origin main
 # 4. 等待 1-2 分钟，访问 https://<你的用户名>.github.io/drone-spray-calculator/
 ```
 
-> 📌 详细步骤见 [docs/github-upload.md](docs/github-upload.md)
+> 📌 详细步骤见本地 docs/github-upload.md（不入库）
 
 ### 方式 4：打包为安卓 APK（WebView）
 
@@ -205,13 +205,12 @@ drone-spray-calculator/
 │   ├── app/                    # Android 应用代码 + 资源 + Web 资源
 │   ├── scripts/                # 一键构建/同步/预览脚本
 │   └── gradle/                 # Gradle wrapper 配置
-├── docs/
-│   ├── usage.md                # 详细使用说明
-│   └── github-upload.md        # GitHub 上传指引
 ├── README.md                   # 本文件
 ├── LICENSE                     # MIT
 └── .gitignore
 ```
+
+> 说明：开发/运维文档（docs/）、测试（tests/）与 APK 产物为本地资产，不入库——仓库只保留软件纯净本体。
 
 ---
 

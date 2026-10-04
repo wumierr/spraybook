@@ -49,3 +49,12 @@ androidapp/app/build/
 androidapp/local.properties
 androidapp/*.iml
 androidapp/app/*.iml
+
+# 工程本地资产（不入库）：测试与 fixture（含真实客户数据）、开发/运维文档、
+# 计划与截图等 agent 工作文件、样例生成器。仓库只保留软件纯净本体。
+/tests/
+/docs/
+/scripts/dump-export-sample.cjs
+
+# APK 产物走本地分发，不进 git
+*.apk
