@@ -67,6 +67,10 @@
     importApply: (id) => Api.post('/api/import/batches/' + id + '/apply', {}),
     importRecon: (id) => Api.get('/api/import/batches/' + id + '/reconciliation'),
     importOpening: (b) => Api.post('/api/import/opening', b),
+    // P8：本地 LLM 文本导入
+    llmParse: (b) => Api.post('/api/llm/parse', b),
+    llmStatus: () => Api.get('/api/llm/status'),
+    llmCancelBatch: (id) => Api.post('/api/llm/batches/' + id + '/cancel', {}),
     editReceipt: (id, b) => Api.patch('/api/receipts/' + id, b),
     editPayment: (id, b) => Api.patch('/api/payments/' + id, b),
     editAdvanceNote: (id, b) => Api.patch('/api/advances/' + id, b),

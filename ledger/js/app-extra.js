@@ -28,17 +28,28 @@
       <div id="impStats"></div>
     </div>
     <div class="lg-panel">
+      <h2>🤖 粘贴文本（本地 LLM 整理；Ollama 全程本机运行）</h2>
+      <textarea id="llmText" rows="5" placeholder="把杂乱记账记录粘进来，一行一条，例如：&#10;3月12日 李洪富 金桂村 打药 12亩 25元/亩 应收300 收300&#10;3.12 油钱200 加油站&#10;4月 收入540 不知道谁的" style="width:100%;font-size:13px"></textarea>
+      <div class="lg-form" style="margin-top:8px">
+        <button class="lg-btn primary" data-act="llm-parse" id="llmParseBtn">解析并预览</button>
+        <span class="hint" id="llmStatus" style="color:var(--muted);font-size:12px">检查本机 LLM…</span>
+      </div>
+      <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">硬约束：金额必须能在原文定位（防幻觉）、派生金额由代码算、拿不准自动进需复核；解析后进「待入库」，逐行确认后才落账</div>
+    </div>
+    <div class="lg-panel">
       <h2>批次</h2>
-      <table class="lg-table" data-colw="import-batches"><thead><tr><th>批次</th><th>文件</th><th>状态</th><th>导入时间</th><th>操作</th></tr></thead>
-      <tbody id="impBatches"><tr><td colspan="5">加载中…</td></tr></tbody></table>
+      <table class="lg-table" data-colw="import-batches"><thead><tr><th>批次</th><th>文件</th><th>来源</th><th>状态</th><th>导入时间</th><th>操作</th></tr></thead>
+      <tbody id="impBatches"><tr><td colspan="6">加载中…</td></tr></tbody></table>
     </div>
     <div class="lg-panel" id="impRowsPanel" style="display:none">
-      <h2>行级复核（确认后才能落库；建议对照纸表/原 Excel）</h2>
+      <h2>行级复核（确认后才能落库；建议对照纸表/原 Excel/原文消息）</h2>
       <div style="margin-bottom:8px">
         <button class="lg-btn" data-act="imp-filter" data-st="">全部</button>
         <button class="lg-btn" data-act="imp-filter" data-st="pending">待复核</button>
         <button class="lg-btn primary" data-act="imp-confirm-all">确认全部待复核</button>
-        <button class="lg-btn primary" data-act="imp-apply">落库已确认行</button>
+        <button class="lg-btn primary" data-act="imp-apply">确认并落库</button>
+        <button class="lg-btn" data-act="imp-keep">放入待入库</button>
+        <button class="lg-btn danger" data-act="imp-cancel-batch">取消批次</button>
         <button class="lg-btn" data-act="imp-recon">对账报告</button>
       </div>
       <div id="impRecon"></div>
@@ -51,15 +62,34 @@
   async function loadImportBatches() {
     const batches = await Api.importBatches();
     const tb = document.getElementById('impBatches');
+    const srcTag = (t) => t === 'llm' ? tag('LLM 文本') : t === 'excel' ? tag('Excel') : tag(t || '—');
     tb.innerHTML = batches.map(b => `<tr>
-      <td>#${b.id}</td><td>${esc(b.filename)}</td>
-      <td>${b.status === 'applied' ? tag('已落库') : b.status === 'reviewing' ? tag('待确认', 'warn') : tag(b.status)}</td>
+      <td>#${b.id}</td><td>${esc(b.filename)}</td><td>${srcTag(b.source_type)}</td>
+      <td>${b.status === 'applied' ? tag('已落库') : b.status === 'reviewing' ? tag('待入库', 'warn') : b.status === 'rejected' ? tag('已取消', 'err') : tag(b.status)}</td>
       <td>${(b.imported_at || '').slice(0, 16).replace('T', ' ')}</td>
       <td><button class="lg-btn" data-act="imp-open" data-id="${b.id}">打开复核</button></td>
-    </tr>`).join('') || '<tr><td colspan="5">暂无批次</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="6">暂无批次</td></tr>';
     if (batches.length && !importState.batchId) {
       importState.batchId = batches[0].id;
       await loadImportRows(batches[0].id);
+    }
+  }
+
+  async function loadLlmStatus() {
+    const el = document.getElementById('llmStatus');
+    if (!el) return;
+    try {
+      const st = await Api.llmStatus();
+      const btn = document.getElementById('llmParseBtn');
+      if (st.ollama_ok) {
+        el.textContent = `本机 LLM 就绪（${st.model}）`;
+      } else {
+        el.textContent = `本机 LLM 未就绪：${st.hint || st.error}`;
+        el.style.color = 'var(--err, #c62828)';
+        if (btn) btn.disabled = true;
+      }
+    } catch (err) {
+      el.textContent = 'LLM 状态检查失败（服务端较旧？）';
     }
   }
 
@@ -70,15 +100,17 @@
     const rows = importState.rows.map(r => {
       const p = r.parsed || {};
       const isJob = p.kind === 'job';
+      const isPair = p.kind === 'income_pair';
+      const kindText = isJob ? '作业' : p.kind === 'expense' ? '支出' : isPair ? '收入对' : p.kind === 'note' ? '备注' : (p.kind || '—');
       const pp = p.parsed || {};
       return `<tr>
         <td>${esc(r.sheet_name)} / ${r.row_no}</td>
-        <td>${isJob ? '作业' : '支出'}</td>
-        <td>${esc(pp.name || pp.category_raw || '—')}</td>
+        <td>${kindText}</td>
+        <td>${esc(pp.name || pp.category_raw || (isPair ? '（无姓名）' : '—'))}</td>
         <td>${esc(pp.village || '')}${pp.team ? '/' + esc(pp.team) + '队' : ''}</td>
         <td>${esc(pp.date || '—')}</td>
         <td class="num">${isJob ? Core.fmtYuan(pp.receivable_cents) : '—'}</td>
-        <td class="num">${isJob ? Core.fmtYuan(pp.paid_cents) : Core.fmtYuan(pp.amount_cents)}</td>
+        <td class="num">${isJob ? Core.fmtYuan(pp.paid_cents) : isPair ? Core.fmtYuan(pp.income_cents) : Core.fmtYuan(pp.amount_cents)}</td>
         <td>${(p.needs_review || []).length ? tag(p.needs_review.map(n => n.code).join(','), 'warn') : tag('OK')}</td>
         <td>${r.status === 'confirmed' ? tag('已确认') : r.status === 'rejected' ? tag('已拒绝', 'err') : actions(
           `<button class="lg-btn primary" data-act="imp-row-confirm" data-id="${r.id}">确认</button>`,
@@ -383,6 +415,30 @@
         rd.readAsDataURL(f);
         break;
       }
+      case 'llm-parse': {
+        const text = (document.getElementById('llmText') || {}).value || '';
+        if (text.trim().length < 5) return toast('先把记账记录粘进文本框', true);
+        run(async () => {
+          const d = await Api.llmParse({ text, filename: '粘贴文本.txt' });
+          document.getElementById('llmText').value = '';
+          await loadImportBatches();
+          await loadImportRows(d.batch_id);
+          return d;
+        }, '解析完成，请逐行复核后落库').then(d => {
+          if (d) {
+            document.getElementById('impStats') && (document.getElementById('impStats').innerHTML =
+              `<div class="lg-detail">LLM 批次 #${d.batch_id}（模型 ${d.model}）：共 ${d.stats.rows} 行，无疑问 ${d.stats.ok}，<b>需复核 ${d.review_count}</b>。有疑虑的行逐条改字段或驳回；确认后点「确认并落库」。</div>`);
+          }
+        });
+        break;
+      }
+      case 'imp-keep':
+        toast('批次保持在「待入库」，随时回来继续处理');
+        break;
+      case 'imp-cancel-batch':
+        confirmThen('取消整个批次？所有未落库行将被拒绝，不再出现在待入库。', () => Api.llmCancelBatch(importState.batchId))
+          .then(r => { if (r) { toast('批次已取消'); loadImportRows(importState.batchId); loadImportBatches(); } });
+        break;
       case 'imp-open':
         importState.batchId = Number(btn.dataset.id);
         document.getElementById('impRowsPanel').style.display = '';
@@ -443,7 +499,7 @@
       // master 分支是 renderMasterData().then(html=>innerHTML)、import 分支同步 innerHTML 后
       // 异步 loadImportBatches——都须等 innerHTML 落位后再 apply（同步调会早于 DOM 更新）
       const done = tab === 'import'
-        ? ($main.innerHTML = renderImport(), loadImportBatches())
+        ? ($main.innerHTML = renderImport(), loadImportBatches(), loadLlmStatus())
         : renderMasterData().then(html => { $main.innerHTML = html; });
       return Promise.resolve(done).then(() => { if (T && T.applyColWidths) T.applyColWidths(); });
     },

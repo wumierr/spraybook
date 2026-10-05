@@ -15,6 +15,7 @@ const { ApiError } = require('./services/apiError');
 const { createJobsRouter } = require('./routes/jobs');
 const { createLedgerRouter } = require('./routes/ledger');
 const { createImportRouter } = require('./routes/import');
+const { createLlmRouter } = require('./routes/llm');
 const { createMasterdataRouter } = require('./routes/masterdata');
 
 const ROOT = path.join(__dirname, '..');      // 仓库根（计算器所在）
@@ -46,6 +47,7 @@ function buildApp(db) {
   app.use('/api', createJobsRouter(db));
   app.use('/api', createLedgerRouter(db));
   app.use('/api', createImportRouter(db));
+  app.use('/api', createLlmRouter(db));
   app.use('/api', createMasterdataRouter(db));
 
   app.use('/api', (req, res) => {
