@@ -13,6 +13,11 @@
     } catch (e) {
       throw new Error('无法连接账本服务（' + path + '）：' + e.message);
     }
+    // E9（P7-R4）：服务端在列表打满上限时置 X-Has-More——记录到全局，
+    // doRender 尾部统一 toast，替代过去的静默截断
+    try {
+      window.__lgHasMore = res.headers.get('X-Has-More') === '1';
+    } catch (e) { /* 忽略 */ }
     let j = null;
     try { j = await res.json(); } catch (e) { /* 非 JSON */ }
     if (!res.ok || !j || j.ok !== true) {

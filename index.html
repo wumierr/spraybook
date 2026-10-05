@@ -54,7 +54,7 @@
     <div class="header-left">
       <span class="app-logo" aria-hidden="true">🚁</span>
       <h1><span class="t-full">无人机作业计算器</span><span class="t-short">打药计算器</span></h1>
-      <span class="app-version">v4.7</span>
+      <span class="app-version" id="appVersion">v4.8.0</span>
     </div>
     <div class="header-actions">
       <button id="presetBtn" class="icon-btn" title="预设管理" aria-label="预设管理">📚</button>
@@ -370,6 +370,7 @@
         <button class="tab-btn active" data-exp="text">📝 文本格式（易读）</button>
         <button class="tab-btn" data-exp="json">⚙️ JSON格式（精确）</button>
       </div>
+      <div style="font-size:12px;color:#8a8a8a;margin:4px 0 6px">勾选只影响配置文本/JSON 的分节；「⬇ 下载作业包」始终含全部数据与计算结果，不受勾选影响</div>
       <div class="export-sections" id="exportSections">
         <label><input type="checkbox" data-sec="params" checked>作业参数</label>
         <label><input type="checkbox" data-sec="plots" checked>地块与作业组</label>
@@ -515,6 +516,7 @@
     <a href="docs/usage.md" target="_blank">使用说明</a>
   </footer>
 
+  <script src="js/version.js"></script>
   <script src="js/data.js"></script>
   <script src="js/calculator.js"></script>
   <script src="js/storage.js"></script>

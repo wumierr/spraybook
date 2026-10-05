@@ -6,14 +6,17 @@
    - 缓存版本号管理，更新时自动清理旧缓存
    ============================================================ */
 
-/* 改任何 JS/CSS 后必须递增此版本号，否则 PWA 用户拿到的仍是旧缓存 */
-const CACHE_VERSION = 'drone-spray-v4.8.0';
+/* 版本单一来源：js/version.js（P7-C3）。改 APP_VERSION 即换缓存，
+   仍遵守"改任何 JS/CSS 后必须递增版本"规则——现在只需改 version.js 一处 */
+importScripts('./js/version.js');
+const CACHE_VERSION = 'drone-spray-v' + APP_VERSION;
 const CACHE_NAME = CACHE_VERSION;
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './css/style.css',
+  './js/version.js',
   './js/data.js',
   './js/calculator.js',
   './js/storage.js',

@@ -79,6 +79,29 @@ function createMasterdataRouter(db) {
       tx();
       res.json({ ok: true, data: { voided: true } });
     });
+
+    /* E8（P7-R4）：恢复软删记录（与停用确认文案"可恢复"对齐）。
+       parties 有 name+phone 唯一索引：与现存档案撞业务键时给可读冲突，不炸 500。 */
+    router.post(`/master/${table}/:id/restore`, (req, res) => {
+      const id = Number(req.params.id);
+      const before = getRow(table, id);
+      if (!before.deleted_at) throw new ApiError('INVALID_STATE', '该记录未停用，无需恢复');
+      const now = new Date().toISOString();
+      try {
+        const tx = db.transaction(() => {
+          db.prepare(`UPDATE ${table} SET deleted_at = NULL, updated_at = ? WHERE id = ?`).run(now, id);
+          logEdit(db, { table, recordId: id, action: 'update',
+            before: { deleted_at: before.deleted_at }, after: { deleted_at: null, restored: true } });
+        });
+        tx();
+      } catch (e) {
+        if (/UNIQUE/.test(String(e.message))) {
+          throw new ApiError('CONFLICT', `恢复失败：已有同业务键的现存档案（${before.name}），请先合并或改名`, 409);
+        }
+        throw e;
+      }
+      res.json({ ok: true, data: getRow(table, id) });
+    });
   }
 
   /* ---- 设置（operator 等，键值表） ---- */

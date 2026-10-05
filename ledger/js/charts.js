@@ -457,7 +457,7 @@
     const opRowsAll = ((operator && operator.rows) || []);
     const un = (operator && operator.unrecorded) || { jobs_count: 0, income_cents: 0 };
     const c11 = chartCard({
-      title: '地区收入占比（账单金额按客户主数据地区分桶）',
+      title: '地区收入占比·全期（账单金额按客户主数据地区分桶；不随月份/筛选变化）',
       body: `<div class="lg-chart-grid lg-chart-grid--in">
         ${chartBox('c11', 230, regionRows.length)}
         <table class="lg-table" data-colw="charts-c11"><thead><tr><th>地区</th><th>单数</th><th>收入(元)</th><th>占比</th></tr></thead><tbody>${
@@ -467,7 +467,7 @@
       foot: '收入=Σ账单金额（非 void），(未填) 桶=客户主数据未填区域、占比照实呈现（先在主数据补客户区域即消失）；「金桂村/金桂」疑似同村异写，village 级占比会拆分，数据问题用主数据编辑解决。'
     });
     const c12 = chartCard({
-      title: '飞手收入占比（账单金额按作业人数均摊，纯展示口径）',
+      title: '飞手收入占比·全期（账单金额按作业人数均摊，纯展示口径；不随月份/筛选变化）',
       body: `<div class="lg-chart-grid lg-chart-grid--in">
         ${chartBox('c12', 230, opRowsAll.length || un.income_cents > 0)}
         <table class="lg-table" data-colw="charts-c12"><thead><tr><th>飞手</th><th>参与单数</th><th>均摊收入(元)</th><th>占比</th></tr></thead><tbody>${

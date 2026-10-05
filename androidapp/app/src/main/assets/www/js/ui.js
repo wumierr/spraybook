@@ -2705,7 +2705,9 @@ const UI = {
     if (!this._lastResult) {
       this.toast('尚未计算（无结果快照），作业包不含 result——记账端将无法导入，请先开始计算', 'warn');
     }
-    const d = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // E6（P7-R4）：文件名加时分——一天多单不再互相覆盖
+    const now = new Date(), p2 = (n) => (n < 10 ? '0' + n : '' + n);
+    const d = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}-${p2(now.getHours())}${p2(now.getMinutes())}`;
     const blob = new Blob([json], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -2719,7 +2721,12 @@ const UI = {
   /** P6-M1：账本同步设置弹层 */
   openSyncCfgModal() {
     const s = window.SpraySync ? window.SpraySync.getSettings() : { base_url: '', enabled: false };
-    document.getElementById('syncCfgUrl').value = s.base_url || '';
+    const urlInput = document.getElementById('syncCfgUrl');
+    urlInput.value = s.base_url || '';
+    // E6（P7-R4）：同源部署时预填本服务地址，省掉"同步开不起来"最常见的摩擦
+    if (!urlInput.value && location.protocol.startsWith('http')) {
+      urlInput.value = location.origin;
+    }
     document.getElementById('syncCfgEnabled').checked = !!s.enabled;
     document.getElementById('syncCfgTestResult').textContent = '';
     this.openModal('syncCfgModal');

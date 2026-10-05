@@ -62,7 +62,9 @@ if ($SkipSync) {
     if (Test-Path $WwwDir) { Remove-Item $WwwDir -Recurse -Force }
     New-Item -ItemType Directory -Path $WwwDir -Force | Out-Null
 
-    foreach ($f in @('index.html', 'manifest.json', 'sw.js', 'drone-spray-calculator-standalone.html')) {
+    # P7-C4：www 收敛——APK 只带散装版（standalone 是给网页分享的单文件版，
+    # WebView 里双份共存纯属 321KB 冗余）；dist/ 仍含 standalone 供网页下载
+    foreach ($f in @('index.html', 'manifest.json', 'sw.js')) {
         $src = Join-Path $ProjectRoot $f
         if (Test-Path $src) { Copy-Item $src -Destination $WwwDir -Force }
     }
@@ -81,7 +83,7 @@ if ($SkipSync) {
             if (-not (Test-Path $dst) -or (Get-FileHash $_.FullName).Hash -ne (Get-FileHash $dst).Hash) { $mismatch++; Write-Host "  不一致: $rel" }
         }
     }
-    foreach ($f in @('index.html', 'manifest.json', 'sw.js', 'drone-spray-calculator-standalone.html')) {
+    foreach ($f in @('index.html', 'manifest.json', 'sw.js')) {
         $src = Join-Path $ProjectRoot $f
         $dst = Join-Path $WwwDir $f
         if ((Test-Path $src) -and ((-not (Test-Path $dst)) -or (Get-FileHash $src).Hash -ne (Get-FileHash $dst).Hash)) { $mismatch++; Write-Host "  不一致: $f" }
@@ -91,7 +93,6 @@ if ($SkipSync) {
         Wait-Exit 1
     }
     Write-Ok '同步校验通过（根目录与 www 逐字节一致）'
-}
 }
 
 # ============================================================

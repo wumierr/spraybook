@@ -143,6 +143,17 @@
   var _retryTimer = null;
   var _pollMs = 60000; // 轮询间隔（离线时指数退避到 5 分钟）
 
+  /** E3：同步失败时解除工单上的防重标记（允许直接重试，不再弹确认） */
+  function _clearSyncMarker(entry) {
+    try {
+      var wo = window.UI && window.UI.state && window.UI.state.workOrder;
+      if (wo && wo._synced_client_job_id === entry.client_job_id) {
+        delete wo._synced_client_job_id;
+        delete wo._synced_job_no;
+      }
+    } catch (e) { /* 只读环境忽略 */ }
+  }
+
   function _scheduleRetry(attempts) {
     if (_retryTimer) return;
     _retryTimer = setTimeout(function () {
@@ -181,33 +192,41 @@
       var chain = Promise.resolve();
       targets.forEach(function (entry) {
         chain = chain.then(function () {
-          entry.status = 'syncing';
-          _updateUI();
-          return fetch(apiUrl('/api/jobs'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(entry.payload)
-          }).then(function (res) {
-            return res.json().catch(function () { return null; }).then(function (j) {
-              if (res.ok && j && j.ok) {
-                entry.server_job_no = (j.data && j.data.job_no) || entry.job_no;
-                entry.status = 'done';            // synced：移出队列
-                acc.sent += 1;
-              } else if (res.status >= 500) {
-                entry.attempts += 1;
-                entry.last_error = 'HTTP ' + res.status;
-                entry.status = isDead(entry.attempts) ? 'dead' : 'pending';
-              } else {
-                entry.status = 'failed';          // 4xx 校验错，不会自愈
-                entry.last_error = (j && j.error && j.error.message) || ('HTTP ' + res.status);
-              }
+            entry.status = 'syncing';
+            _updateUI();
+            return fetch(apiUrl('/api/jobs'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(entry.payload)
+            }).then(function (res) {
+              return res.json().catch(function () { return null; }).then(function (j) {
+                if (res.ok && j && j.ok) {
+                  entry.server_job_no = (j.data && j.data.job_no) || entry.job_no;
+                  entry.status = 'done';            // synced：移出队列
+                  acc.sent += 1;
+                  // E3：同步成功——把账本单号回写到工单状态行
+                  if (window.UI && window.UI.state && window.UI.state.workOrder &&
+                      window.UI.state.workOrder._synced_client_job_id === entry.client_job_id) {
+                    window.UI.state.workOrder._synced_job_no = entry.server_job_no;
+                  }
+                } else if (res.status >= 500) {
+                  entry.attempts += 1;
+                  entry.last_error = 'HTTP ' + res.status;
+                  entry.status = isDead(entry.attempts) ? 'dead' : 'pending';
+                  _clearSyncMarker(entry);          // E3：失败解除防重标记，允许直接重试
+                } else {
+                  entry.status = 'failed';          // 4xx 校验错，不会自愈
+                  entry.last_error = (j && j.error && j.error.message) || ('HTTP ' + res.status);
+                  _clearSyncMarker(entry);          // E3：失败解除防重标记
+                }
+              });
+            }).catch(function (err) {
+              entry.attempts += 1;
+              entry.last_error = String((err && err.message) || err) || 'network';
+              entry.status = isDead(entry.attempts) ? 'dead' : 'pending';
+              acc.offline = true;
+              _clearSyncMarker(entry);              // E3：网络失败解除防重标记
             });
-          }).catch(function (err) {
-            entry.attempts += 1;
-            entry.last_error = String((err && err.message) || err) || 'network';
-            entry.status = isDead(entry.attempts) ? 'dead' : 'pending';
-            acc.offline = true;
-          });
         });
       });
       return chain;
@@ -248,6 +267,17 @@
     }
     var UI = window.UI;
     if (!UI || !UI._lastResult) return { ok: false, reason: 'no-result' };
+    // E3（P7-R4）同步防重：本工单已入队/已同步过（_synced_client_job_id 标记）
+    // 再点同步 = 账本会多出一张相同作业单（幂等键每次新生成拦不住）——
+    // 弹确认让用户明确"我要再建一单"，默认拦住手滑重复点击。
+    var wo = UI.state && UI.state.workOrder;
+    if (wo && wo._synced_client_job_id) {
+      var allowed = false;
+      try {
+        allowed = window.confirm('该工单此前已同步（队列单号 ' + (wo._synced_job_no || wo._synced_client_job_id.slice(0, 8)) + '）。\n再次同步将在账本新建一单，继续吗？');
+      } catch (e) { allowed = true; } // 无 confirm 的环境（测试 vm）不拦
+      if (!allowed) return { ok: false, reason: 'already-synced' };
+    }
     var payload = buildJobPayload(UI.state, UI._lastResult, UI.state.mode || 'spray');
     if (!payload) return { ok: false, reason: 'no-result' };
     var q = loadQueue();
@@ -255,6 +285,10 @@
     for (var i = 0; i < q.queue.length; i++) {
       if (q.queue[i].client_job_id === payload.client_job_id) return { ok: false, reason: 'dup' };
     }
+    // E3：入队即在本工单上记同步标记（成功/排队中都会拦重复点击；失败自动清除）
+    try {
+      if (wo) { wo._synced_client_job_id = payload.client_job_id; wo._synced_job_no = payload.job_no; }
+    } catch (e) { /* 只读环境忽略 */ }
     q.queue.push({
       client_job_id: payload.client_job_id,
       job_no: payload.job_no,
@@ -378,6 +412,16 @@
       }
       row.textContent = text;
       row.hidden = !text;
+    }
+    // E3：工单面板同步按钮态——已入队/已同步的工单显示提示文案
+    var syncBtn = document.getElementById('syncWorkOrder');
+    if (syncBtn) {
+      var wo = window.UI && window.UI.state && window.UI.state.workOrder;
+      var done = wo && wo._synced_client_job_id;
+      var base = '☁ 同步到账本';
+      syncBtn.textContent = done ? '☁ 已同步（再点将新建一单）' : base;
+      if (done) syncBtn.title = '该工单已同步过' + (wo._synced_job_no ? '（单号 ' + wo._synced_job_no + '）' : '') + '；再次同步将新建一单';
+      else syncBtn.removeAttribute('title');
     }
   }
 

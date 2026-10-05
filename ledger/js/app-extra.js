@@ -126,6 +126,7 @@
   /* ---------- 主数据（客户行内直填 + 新增客户 + 地块档案） ---------- */
   let mdEditId = null;      // 行内编辑中的客户 id
   let mdPlotEditId = null;  // 行内编辑中的地块 id
+  let mdShowDeleted = false; // E8：显示已停用客户（软删）与恢复入口
 
   async function renderMasterData() {
     let parties = [];
@@ -133,6 +134,19 @@
     const settings = await Api.settings().catch(() => ({}));
     const bootstrap = await Api.get('/api/bootstrap').catch(() => null);
     const balMap = new Map((bootstrap ? bootstrap.parties : []).map(p => [p.id, p]));
+    // E8：已停用（软删）客户——默认隐藏，勾选后置灰展示并提供「恢复」
+    let deletedRows = '';
+    if (mdShowDeleted) {
+      let all = [];
+      try { all = await Api.masterList('parties'); } catch (e) { all = []; }
+      deletedRows = all.filter(p => p.deleted_at && p.type === 'customer').map(p0 => `<tr class="lg-detail">
+        <td>${esc(p0.name)}（已停用）</td>
+        <td>${esc(p0.region || '—')}</td>
+        <td>${esc(p0.village || '—')}${p0.team ? '/' + esc(p0.team) + '队' : ''}</td>
+        <td>${esc(p0.phone || '—')}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td>—</td>
+        <td><button class="lg-btn primary" data-act="md-restore" data-id="${p0.id}" data-name="${esc(p0.name)}">恢复</button></td>
+      </tr>`).join('');
+    }
     const custRows = parties.filter(p => p.type === 'customer').map(p0 => {
       if (mdEditId === p0.id) return mdCustomerEditRow(p0);
       const b = balMap.get(p0.id) || {};
@@ -206,10 +220,12 @@
       </div>
     </div>
     <div class="lg-panel">
-      <h2>客户（点「编辑」行内直填，回车或点保存生效）</h2>
+      <h2>客户（点「编辑」行内直填，回车或点保存生效）
+        <label style="font-size:13px;font-weight:normal;margin-left:12px"><input type="checkbox" data-act="md-show-deleted" ${mdShowDeleted ? 'checked' : ''}> 显示已停用客户</label>
+      </h2>
       <table class="lg-table" data-colw="master-parties"><thead><tr>
         <th>姓名</th><th>区域</th><th>村/队</th><th>电话</th><th>默认单价</th><th>欠款(元)</th><th>预收(元)</th><th>最近作业</th><th>操作</th>
-      </tr></thead><tbody>${custRows}</tbody></table>
+      </tr></thead><tbody>${custRows}${deletedRows}</tbody></table>
     </div>
     <div class="lg-panel">
       <h2>地块档案（按客户维护地块；计算器同步的作业按地块名自动关联）</h2>
@@ -378,6 +394,15 @@
       case 'md-disable':
         confirmThen(`停用客户 ${btn.dataset.name}？（软删除，可恢复）`, () => Api.post(`/api/master/parties/${btn.dataset.id}/void`));
         break;
+      case 'md-show-deleted':
+        // E8：复选框经 click 委托进入；checked 即为目标态
+        mdShowDeleted = !!btn.checked;
+        window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
+        break;
+      case 'md-restore':
+        confirmThen(`恢复客户 ${btn.dataset.name}？（回到客户列表）`, () => Api.post(`/api/master/parties/${btn.dataset.id}/restore`))
+          .then(r => { if (r) { toast('已恢复'); window.LedgerExtra.renderTab('master', document.getElementById('lgMain')); } });
+        break;
       case 'imp-calc-json': {
         // P6-M1：计算器导出 JSON → /api/jobs（幂等；成功后切总表）
         const text = document.getElementById('calcJobJson').value;
@@ -387,13 +412,19 @@
           document.getElementById('calcJobResult').innerHTML = `<div class="lg-detail">✗ ${esc(parsed.error)}</div>`;
           return toast(parsed.error, true);
         }
-        run(async () => {
-          const d = await Api.createJob(parsed.payload);
+        // E2（P7-R4）：结果写在 run()（含尾部 render）完成之后——否则内联提示
+        // 会被重绘抹掉；幂等返回给"该单此前已导入"的独立文案，与首导可区分。
+        run(async () => Api.createJob(parsed.payload)).then(d => {
+          if (!d) return; // 失败：run 已 toast
           document.getElementById('calcJobJson').value = '';
-          document.getElementById('calcJobResult').innerHTML =
-            `<div class="lg-detail">✓ 已导入：${esc(d.job_no)}${d.duplicated ? '（该单此前已导入，幂等返回原单）' : ''}</div>`;
-          return d;
-        }, '计算器作业已导入');
+          const box = document.getElementById('calcJobResult');
+          if (d.duplicated) {
+            if (box) box.innerHTML = `<div class="lg-detail">ℹ 该单此前已导入（单号 ${esc(d.job_no)}），幂等返回原单，未重复建单。</div>`;
+            toast('该单此前已导入（幂等），未重复建单');
+          } else {
+            if (box) box.innerHTML = `<div class="lg-detail">✓ 已导入：单号 ${esc(d.job_no)}——可在「总表」查看并走结算收款。</div>`;
+          }
+        });
         break;
       }
       case 'imp-upload': {

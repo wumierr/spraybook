@@ -173,7 +173,7 @@ const Storage = {
       // 打药模式导出
       if (on('params')) {
       const plant = state.plant;
-      lines.push(`【植物】${plant.icon || ''} ${plant.name} (calcMode=${plant.calcMode})`);
+      lines.push(`【植物】${plant.icon || ''} ${plant.name}`); // E4：calcMode 是内部字段且未定义，文本导出不再输出 undefined
       lines.push(`  飞行高度: ${plant.flightHeight} 米`);
       lines.push(`  每亩水量: ${plant.waterPerMu} 升`);
       lines.push(`  每亩棵数: ${plant.treesPerMu}`);
@@ -287,7 +287,13 @@ const Storage = {
       version: '2.0',
       schemaVersion: '2.1',
       mode: mode,
-      exportedAt: new Date().toISOString(),
+      // E1（P7-R4）：导出时间用本地墙钟串（原 toISOString 是 UTC，导入端直接取日期
+      // 会把北京时间 0:00–8:00 的作业记到前一天）。格式 'YYYY-MM-DD HH:mm:ss'；
+      // 导入端 core.js 对含 T 的旧 ISO 串按 +8 换算兼容。
+      exportedAt: (() => {
+        const d = new Date(), p = (n) => (n < 10 ? '0' + n : '' + n);
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+      })(),
       client_job_id: opts && opts.clientJobId ? opts.clientJobId : undefined,
       plant: (mode === 'spray' && on('params')) ? { ...state.plant } : undefined,
       field: on('plots') ? { ...state.field } : undefined,

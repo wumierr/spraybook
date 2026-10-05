@@ -96,10 +96,13 @@ function createLedgerRouter(db) {
 
   /* ---------- 总表（P4-M1）：作业粒度聚合只读视图 ---------- */
   router.get('/overview', (req, res) => {
-    res.json({ ok: true, data: overview.listOverview(db, {
+    const data = overview.listOverview(db, {
       from: req.query.from, to: req.query.to, status: req.query.status,
       limit: req.query.limit ? Number(req.query.limit) : undefined
-    }) });
+    });
+    // E9（P7-R4）：静默截断改为可感知——行数打到上限时置响应头，前端 toast 提示
+    if ((data.rows || []).length >= 2000) res.set('X-Has-More', '1');
+    res.json({ ok: true, data });
   });
 
   /* ---------- 报表（M6） ---------- */
@@ -153,10 +156,12 @@ function createLedgerRouter(db) {
 
   /* ---------- 复式记账查询 ---------- */
   router.get('/journal', (req, res) => {
-    res.json({ ok: true, data: journal.getJournal(db, {
+    const rows = journal.getJournal(db, {
       from: req.query.from, to: req.query.to,
       ref_type: req.query.ref_type, ref_id: req.query.ref_id ? Number(req.query.ref_id) : undefined
-    }) });
+    });
+    if (rows.length >= 500) res.set('X-Has-More', '1'); // E9：500 条截断上限可感知
+    res.json({ ok: true, data: rows });
   });
 
   return router;

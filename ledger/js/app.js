@@ -577,7 +577,7 @@
     const liveRows = list.filter(r => r.status !== 'void');
     return `<div class="lg-panel">
       <h2>支出流水（原表支出项目/金额列；登记与作废在「支出」页）</h2>
-      ${toolbarHtml('ovpay', { category: true, searchPh: '收款方/单号/备注' })}
+      ${toolbarHtml('ovpay', { category: true, searchPh: '收款方/单号/备注', csvname: 'ovpay' })}
       ${monthStrip('ovpay', listAll, 'occurred_at')}
       <table class="lg-table" data-colw="ov-pay"><thead><tr>
         <th>单号</th><th>类别</th><th>金额(元)</th><th>收款方</th><th>日期</th><th>备注</th><th>状态</th>
@@ -690,7 +690,7 @@
     return out;
   }
   /** 检索工具条（搜索框 + 状态/类别筛选 + 客户过滤徽标） */
-  function toolbarHtml(tab, { statusMap = null, category = false, searchPh = '客户名/单号/备注' } = {}) {
+  function toolbarHtml(tab, { statusMap = null, category = false, searchPh = '客户名/单号/备注', csvname = null } = {}) {
     const f = state.filter[tab] = state.filter[tab] || {};
     const statusOpts = statusMap ? Object.entries(statusMap).map(([v, t]) =>
       `<option value="${v}" ${f.status === v ? 'selected' : ''}>${esc(t)}</option>`).join('') : '';
@@ -701,7 +701,7 @@
       ${statusMap ? `<select id="ftStatus" data-tab="${tab}"><option value="">全部状态</option>${statusOpts}</select>` : ''}
       ${category ? `<select id="ftCategory" data-tab="${tab}"><option value="">全部类别</option>${catOpts}</select>` : ''}
       ${state.custFilter ? `<span class="lg-tag warn">只看：${esc(state.custFilter)} <button class="lg-btn" data-act="cust-filter-clear">×</button></span>` : ''}
-      <button class="lg-btn" data-act="csv-export" title="导出当前月份与筛选口径为 CSV（Excel 可开）">⬇ 导出CSV</button>
+      <button class="lg-btn" data-act="csv-export" ${csvname ? `data-csvname="${esc(csvname)}"` : ''} title="导出当前月份与筛选口径为 CSV（Excel 可开）">⬇ 导出CSV</button>
     </div>`;
   }
   /** 可点击的客户名（点=只看此客户；再次点同名的取消） */
@@ -777,6 +777,11 @@
     applyColWidths(); // P5-M3：全量重绘后统一恢复列宽（含明细插槽外各表的手柄注入）
     refreshSummary();
     updateFab();
+    // E9（P7-R4）：列表达到服务端截断上限时给出可感知提示（替代静默截断）
+    if (window.__lgHasMore) {
+      toast('注意：列表已达服务端单次返回上限，更早数据未显示（可用搜索/月份缩小范围）');
+      window.__lgHasMore = false;
+    }
   }
 
   async function refreshSummary() {

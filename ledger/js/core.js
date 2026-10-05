@@ -202,7 +202,24 @@
     }
     const mode = obj.mode === 'haul' ? 'haul' : 'spray';
     const exported = String(obj.exportedAt || '');
-    const jobDate = /^\d{4}-\d{2}-\d{2}/.test(exported) ? exported.slice(0, 10) : (todayStr || exported);
+    // E1（P7-R4）：日期口径与同步通路（sync.js localDateStr）对齐——
+    // 新作业包 exportedAt 是本地墙钟串，直接取前 10 位；旧包（ISO/UTC，含 T）
+    // 按北京时间 +8 换算取日期，避免凌晨导出的作业记到前一天。
+    let jobDate;
+    if (/^\d{4}-\d{2}-\d{2}/.test(exported)) {
+      if (exported.includes('T')) {
+        const d = new Date(exported);
+        if (!isNaN(d)) {
+          const p = (n) => (n < 10 ? '0' + n : '' + n);
+          const loc = new Date(d.getTime() + 8 * 3600 * 1000);
+          jobDate = `${loc.getUTCFullYear()}-${p(loc.getUTCMonth() + 1)}-${p(loc.getUTCDate())}`;
+        } else jobDate = todayStr || exported.slice(0, 10);
+      } else {
+        jobDate = exported.slice(0, 10);
+      }
+    } else {
+      jobDate = todayStr || exported;
+    }
     const snapshot = { ...obj };
     delete snapshot.result;
     delete snapshot.schemaVersion;
