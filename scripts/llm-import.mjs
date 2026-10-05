@@ -61,10 +61,24 @@ async function main() {
   const db = initDb(dbPath);
   try {
     console.log(`[llm-import] 解析 ${file}（${text.length} 字符 → ${dbPath}）…`);
-    const r = await parseTextToBatch(db, { text, filename: path.basename(file) });
-    console.log(`[llm-import] 批次 #${r.batch_id} 建立（模型 ${r.model}）：共 ${r.stats.rows} 行，无疑问 ${r.stats.ok}，需复核 ${r.stats.review}`);
+    let r, batchId;
+    const crypto = await import('node:crypto');
+    const hash = crypto.createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 32);
+    try {
+      r = await parseTextToBatch(db, { text, filename: path.basename(file) });
+      batchId = r.batch_id;
+      console.log(`[llm-import] 批次 #${batchId} 建立（模型 ${r.model}）：共 ${r.stats.rows} 行，无疑问 ${r.stats.ok}，需复核 ${r.stats.review}`);
+    } catch (e) {
+      if (e && e.code === 'DUPLICATE') {
+        // 同文本已预览过 → 复用既有批次继续（先预览后 apply 的自然工作流）
+        const dup = db.prepare('SELECT id FROM import_batches WHERE note LIKE ? ORDER BY id DESC').get(`%"hash":"${hash}"%`);
+        if (!dup) { console.error('[llm-import] DUPLICATE 但找不到既有批次'); process.exitCode = 1; return; }
+        batchId = dup.id;
+        console.log(`[llm-import] 同文本已导入过，复用批次 #${batchId} 继续`);
+      } else { throw e; }
+    }
 
-    const rows = db.prepare('SELECT * FROM raw_import_rows WHERE batch_id = ? ORDER BY id').all(r.batch_id);
+    const rows = db.prepare('SELECT * FROM raw_import_rows WHERE batch_id = ? ORDER BY id').all(batchId);
     for (const row of rows) {
       const meta = JSON.parse(row.parsed_json || '{}');
       const p = meta.parsed || {};
@@ -96,10 +110,14 @@ async function main() {
       console.log('[llm-import] 没有零疑虑行可自动落库——请到记账后台「导入」页人工复核。');
       return;
     }
-    const result = applyBatch(db, r.batch_id, { operator: 'llm-cli' });
+    const result = applyBatch(db, batchId, { operator: 'llm-cli' });
+    const reviewLeft = rows.filter(row => {
+      const meta = JSON.parse(row.parsed_json || '{}');
+      return row.status !== 'applied' && ((meta.needs_review || []).length || meta.kind === 'note');
+    }).length;
     console.log(`[llm-import] 已落库：作业 ${result.jobs}，支出 ${result.expenses}，收入对 ${result.income_pairs}`
       + (result.skipped_unsupported ? `，未支持 ${result.skipped_unsupported}` : '')
-      + `。需复核 ${r.stats.review} 行留在批次 #${r.batch_id}（后台「导入」页处理）。`);
+      + `。需复核 ${reviewLeft} 行留在批次 #${batchId}（后台「导入」页处理）。`);
     console.log('[llm-import] 建议：npm run reconcile 对账三平。');
   } catch (e) {
     console.error('[llm-import] 失败:', e.message || e);
