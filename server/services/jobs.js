@@ -164,18 +164,38 @@ function insertSubtables(db, jobId, body) {
     // P6-M2(F7)：计算器路径把每亩单价落到主结算行（此前只有导入路径有单价，总表单价列对计算器单恒空）
     const unitPriceCents = (s.income && s.income.pricePerMu != null)
       ? yuanToCents(s.income.pricePerMu, 'income.pricePerMu') : null;
+    // B7（P7-R1）：分户金额守恒对齐。计算器前端的最大余数法在"元·3位小数"粒度守恒，
+    // 逐行元→分四舍五入后 Σ明细可能比 income 差 1 分（实测 27.775/66.66/83.325 例）。
+    // 差额吸收到金额最大的行（ spray 优先，不足再 pesticide），保证 Σ明细 = income_cents。
+    const lineCents = (r.settlement || []).map(st => ({
+      st,
+      spray: yuanToCents(st.sprayFee, 'settlement.sprayFee') ?? 0,
+      pesticide: yuanToCents(st.pesticideFee, 'settlement.pesticideFee') ?? 0
+    }));
+    const incomeCents = r.income != null ? Math.round(Number(r.income) * 100) : null;
+    if (incomeCents != null && lineCents.length) {
+      let diff = incomeCents - lineCents.reduce((a, x) => a + x.spray + x.pesticide, 0);
+      if (diff !== 0) {
+        const biggest = [...lineCents].sort((x, y) => (y.spray + y.pesticide) - (x.spray + x.pesticide))[0];
+        if (diff > 0 || biggest.spray + biggest.pesticide + diff >= 0) {
+          if (biggest.spray + diff >= 0) biggest.spray += diff;
+          else biggest.pesticide += diff;
+        }
+      }
+    }
     const insLine = db.prepare(
       `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, spray_fee_cents,
          used_sets, self_sets, supplement_sets, pesticide_fee_cents, included, unit_price_cents)
        VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
-    (r.settlement || []).forEach(st => {
+    for (const x of lineCents) {
+      const st = x.st;
       insLine.run(jobId, st.farmerId || null, st.farmerName || '未知农户', st.area ?? null,
-        yuanToCents(st.sprayFee, 'settlement.sprayFee') ?? 0, st.usedSets ?? null,
+        x.spray, st.usedSets ?? null,
         st.selfSets ?? null, st.supplementSets ?? null,
-        yuanToCents(st.pesticideFee, 'settlement.pesticideFee') ?? 0,
+        x.pesticide,
         st.included === true ? 1 : 0,
         unitPriceCents);
-    });
+    }
   }
 
   const insBattery = db.prepare(

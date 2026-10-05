@@ -406,7 +406,15 @@
         break;
       case 'imp-apply':
         confirmThen('落库已确认行到正式账本？（不可自动撤销，作废需逐笔处理）', () => Api.importApply(importState.batchId))
-          .then(r => { if (r) { toast('落库完成 ' + JSON.stringify(r)); loadImportRows(importState.batchId); loadImportBatches(); } });
+          .then(r => {
+            if (r) {
+              // B6：未知类型行不再静默丢弃——随 apply 结果显式提示
+              const skipped = r.skipped_unsupported ? `；⚠ ${r.skipped_unsupported} 行类型不支持未入账` : '';
+              const pairs = r.income_pairs ? `，收入对 ${r.income_pairs}` : '';
+              toast(`落库完成：作业 ${r.jobs}，支出 ${r.expenses}${pairs}${skipped}`);
+              loadImportRows(importState.batchId); loadImportBatches();
+            }
+          });
         break;
       case 'imp-recon':
         run(async () => Api.importRecon(importState.batchId)).then(rec => {

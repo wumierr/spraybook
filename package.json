@@ -4,6 +4,7 @@
   "description": "spraybook 计算器+记账一体化（server/ 内有独立 package.json；本文件只提供根目录前端测试入口）",
   "scripts": {
     "test": "node --test tests/calc.test.js tests/sync.test.js tests/ledger-core.test.js",
-    "test:server": "cd server && npm test"
+    "test:server": "cd server && npm test",
+    "reconcile": "node server/db/reconcile.js"
   }
 }

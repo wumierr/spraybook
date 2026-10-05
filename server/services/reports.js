@@ -82,7 +82,7 @@ function byCustomer(db, { from, to, include_all } = {}) {
   const income = include_all
     ? db.prepare(
       `SELECT p.id AS party_id, p.name,
-         COALESCE(SUM(CASE WHEN a.type='income' THEN (CASE l.direction WHEN 'credit' THEN l.amount_cents ELSE -l.amount_cents END) END),0) AS income_cents
+         COALESCE(SUM(CASE WHEN e.id IS NOT NULL AND a.type='income' THEN (CASE l.direction WHEN 'credit' THEN l.amount_cents ELSE -l.amount_cents END) END),0) AS income_cents
        FROM parties p
        LEFT JOIN journal_lines l ON l.party_id = p.id
        LEFT JOIN journal_entries e ON e.id = l.entry_id ${rangeOn}
@@ -328,8 +328,10 @@ function costBreakdown(db, { source, from, to } = {}) {
   }
   if (source === 'job') {
     const { cond, args } = rangeCond(from, to, 'j.job_date');
+    // B3（P7-R1）：battery_depreciation_cents 存的是"元/次充电"费率（jobs.js 写侧语义），
+    // 周期总额 = 费率 × charge_count（充电次数）；导入单费率为 NULL 不参与。
     const SUMS = `COALESCE(SUM(j.fuel_expense_cents),0) AS fuel_cents,
-       COALESCE(SUM(j.battery_depreciation_cents),0) AS battery_cents,
+       COALESCE(SUM(j.battery_depreciation_cents * COALESCE(j.charge_count, 1)),0) AS battery_cents,
        COALESCE(SUM(j.labor_cost_cents),0) AS labor_cents,
        COALESCE(SUM(j.pesticide_cost_cents),0) AS pesticide_cents,
        COALESCE(SUM(j.equipment_cost_cents),0) AS equipment_cents,
@@ -345,7 +347,7 @@ function costBreakdown(db, { source, from, to } = {}) {
     ).get(...args);
     const items = [
       { key: 'fuel', name: '油费', cents: r.fuel_cents },
-      { key: 'battery', name: '电池折旧', cents: r.battery_cents },
+      { key: 'battery', name: '电池折旧(元/次×次数)', cents: r.battery_cents },
       { key: 'labor', name: '人工', cents: r.labor_cents },
       { key: 'pesticide', name: '药剂', cents: r.pesticide_cents },
       { key: 'equipment', name: '设备分摊', cents: r.equipment_cents },

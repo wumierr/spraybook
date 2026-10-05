@@ -24,8 +24,18 @@ function nextBizNo(db, table, column, prefix, dateStr) {
   return `${prefix}${day}-${String(row.n + 1).padStart(3, '0')}`;
 }
 
-/** 编辑留痕（operator P0 固定 local，M7 补设置页 TODO） */
-function logEdit(db, { table, recordId, action, before, after, operator = 'local' }) {
+/** 设置页「记账人」读取（P7-D3：edit_logs 贯穿——未显式传 operator 时自动带上） */
+function readOperator(db) {
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'operator'").get();
+    const v = row && String(row.value || '').trim();
+    return v || 'local';
+  } catch (e) { return 'local'; } // settings 表缺失（老库/测试裸库）时兜底
+}
+
+/** 编辑留痕。operator 缺省时读设置页「记账人」（P7-D3），再兜底 'local' */
+function logEdit(db, { table, recordId, action, before, after, operator }) {
+  const op = operator || readOperator(db);
   db.prepare(
     `INSERT INTO edit_logs (table_name, record_id, action, before_json, after_json, operator, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -33,8 +43,8 @@ function logEdit(db, { table, recordId, action, before, after, operator = 'local
     table, recordId, action,
     before === undefined ? null : JSON.stringify(before),
     after === undefined ? null : JSON.stringify(after),
-    operator, new Date().toISOString()
+    op, new Date().toISOString()
   );
 }
 
-module.exports = { generateJobNo, nextBizNo, logEdit };
+module.exports = { generateJobNo, nextBizNo, logEdit, readOperator };

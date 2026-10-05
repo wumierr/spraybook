@@ -514,9 +514,28 @@ function listSplits(db) {
      ORDER BY s.id DESC LIMIT 500`).all();
 }
 
+/**
+ * 其他收入落账（P7-B6/A3(d)：无作业归属的收入，如导入的"无姓名收入对"）。
+ * 借 1001 现金 / 贷 6099 其他收入（seed 幂等补种）。ref 指向来源行以便溯源；
+ * 重复调用由调用方用 booked 标记防重（本函数不查重）。
+ */
+function postOtherIncome(db, { amount_cents, occurred_at, note, ref_type, ref_id, party_id }) {
+  if (!Number.isInteger(amount_cents) || amount_cents <= 0) {
+    throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
+  }
+  return postEntry(db, {
+    event_type: 'other_income', ref_type: ref_type || null, ref_id: ref_id || null,
+    occurred_at: occurred_at || nowISO(), memo: note || '其他收入',
+    lines: [
+      { account_code: '1001', direction: 'debit', amount_cents, party_id: party_id || null, memo: '其他收入实收' },
+      { account_code: '6099', direction: 'credit', amount_cents, party_id: party_id || null, memo: note || '其他收入' }
+    ]
+  });
+}
+
 module.exports = {
   createReceipt, updateReceipt, createPayment, updatePayment, updateAdvanceNote,
-  createAdvance, settleAdvance, createSplit,
+  createAdvance, settleAdvance, createSplit, postOtherIncome,
   voidFinanceRecord, listReceipts, listPayments, listAdvances, listSplits,
   PAYMENT_CATEGORIES
 };

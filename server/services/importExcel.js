@@ -13,6 +13,8 @@
    ============================================================ */
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { logEdit, nextBizNo } = require('./audit');
 const { postEntry } = require('./journal');
 
@@ -41,10 +43,25 @@ function cleanStr(v) { const x = cellVal(v); return x == null ? '' : String(x).t
 
 const REGION_TOWNS = ['通安', '彰冠', '鹿厂', '铜矿']; // 会理已知乡镇前缀，可后台维护
 // 仅整格等于这些值时视为脏（人名当地址=乱填、合计行标记）。
-// 黑名单内容含真实人名，放 data/dirty-addresses.json 本地配置（data/ 不入库）；
-// 文件缺失时视为空集——只影响重导历史 Excel 这种边缘场景的乱填地址过滤。
-let DIRTY_ADDR = new Set();
-try { DIRTY_ADDR = new Set(require('../../data/dirty-addresses.json')); } catch { /* 本地配置不存在 */ }
+// 黑名单内容含真实人名，放 <数据目录>/dirty-addresses.json 本地配置（不入库）；
+// 路径跟随 SPRAYBOOK_DATA_DIR（#25：隔离实例/测试各自独立），缺省仓库 data/。
+// 缺文件 = 正常态（新克隆无此配置），静默置空集；文件存在但格式非法才 warn。
+// 降级只影响重导历史 Excel 时的乱填地址过滤，不阻塞启动。见 docs/OPS.md。
+function loadDirtyAddresses(dataDir) {
+  const dir = dataDir || process.env.SPRAYBOOK_DATA_DIR || path.join(__dirname, '..', '..', 'data');
+  const file = path.join(dir, 'dirty-addresses.json');
+  try {
+    const arr = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!Array.isArray(arr)) throw new Error('内容不是 JSON 数组');
+    return new Set(arr.map(x => String(x)));
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      console.warn('[importExcel] dirty-addresses.json 加载失败，黑名单置空：' + e.message);
+    }
+    return new Set();
+  }
+}
+const DIRTY_ADDR = loadDirtyAddresses();
 
 function splitAddress(raw) {
   let s = cleanStr(raw).replace(/\s+/g, '');
@@ -58,9 +75,12 @@ function splitAddress(raw) {
   }
   let region = null;
   for (const t of REGION_TOWNS) {
-    if (s.startsWith(t) && s.length > t.length) { region = t; s = s.slice(t.length); break; }
+    // B4：>= 使「镇+队」地址（剥掉队号后与镇名全等，如 铜矿7队→铜矿）也能落 region；
+    // 全等时 village 置空（下方 s||null）——镇+队即完整地址，不进复核（flag 由 team 兜住）。
+    if (s.startsWith(t) && s.length >= t.length) { region = t; s = s.slice(t.length); break; }
   }
-  return { region, village: s || null, team, flag: s ? null : '地址只有大区域无村名: ' + region };
+  // 只有"孤零零一个镇名"（无村无队）才算地址不完整；有队号即完整
+  return { region, village: s || null, team, flag: (s || team) ? null : '地址只有大区域无村名: ' + region };
 }
 
 /* ---------- 日期 ---------- */
@@ -373,7 +393,8 @@ function parseWorkbook(wb) {
       }
 
       const addr = splitAddress(rawAddr);
-      const addrFlag = addr.flag || (addr.village ? null : '地址为空');
+      // B4：镇+队完整地址 village 为空但 team 有值，不算"地址为空"（配合 splitAddress 的 >= 守卫）
+      const addrFlag = addr.flag || ((addr.village || addr.team) ? null : '地址为空');
       if (addrFlag) needs.push({ code: 'address', detail: addrFlag + '（原文: ' + cleanStr(rawAddr) + '）' });
 
       const recvCents = isNum(rawRecv) ? Math.round(rawRecv * 100) : 0;
@@ -529,11 +550,14 @@ function applyJobRow(db, parsed, batchId, rowId, operator) {
   }
 
   const billNo = nextBizNo(db, 'bills', 'bill_no', 'B');
+  // B1（P7-R1）：抹零统一记负数——全系统约定 应付 = amount + adjust（core.js），
+  // 抹零 = 应付减免 → adjust 为负。此前写正数导致账单页"应收"虚高、与 1122 口径分叉。
+  const adjustCents = -(parsed.discount_cents || 0);
   const bInfo = db.prepare(
     `INSERT INTO bills (bill_no, settlement_id, party_id, farmer_name, amount_cents, adjust_cents, paid_cents,
        status, issued_at, note, opening, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, 0, 'unpaid', ?, ?, 0, ?, ?)`)
-    .run(billNo, sid, partyId, parsed.name, totalReceivable, parsed.discount_cents || 0,
+    .run(billNo, sid, partyId, parsed.name, totalReceivable, adjustCents,
       parsed.date, '导入 ' + jobNo, now, now);
   const billId = bInfo.lastInsertRowid;
 
@@ -550,7 +574,7 @@ function applyJobRow(db, parsed, batchId, rowId, operator) {
 
   if (totalPaid > 0) {
     const receiptNo = nextBizNo(db, 'receipts', 'receipt_no', 'R');
-    const payable = totalReceivable - (parsed.discount_cents || 0);
+    const payable = totalReceivable + adjustCents;
     const rInfo = db.prepare(
       `INSERT INTO receipts (receipt_no, bill_id, party_id, amount_cents, method, occurred_at, note, status, collector_name, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'other', ?, ?, 'active', ?, ?, ?)`)
@@ -602,4 +626,4 @@ function applyExpenseRow(db, parsed, batchId, rowId, operator) {
   return { payment_id: pid };
 }
 
-module.exports = { parseWorkbook, applyJobRow, applyExpenseRow, splitAddress, parseDate, splitOperators, buildStaffDict, expenseCategory, cellVal, scanZone };
+module.exports = { parseWorkbook, applyJobRow, applyExpenseRow, splitAddress, parseDate, splitOperators, buildStaffDict, expenseCategory, cellVal, scanZone, loadDirtyAddresses };

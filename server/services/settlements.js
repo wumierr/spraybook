@@ -15,7 +15,7 @@
 const { ApiError } = require('./apiError');
 const { nextBizNo, logEdit } = require('./audit');
 const { postEntry, reverseEntry, findActiveEntry } = require('./journal');
-const { findPartyByNamePhone } = require('./parties');
+// B5 后本文件不再按姓名匹配客户（同名歧义不猜，见 createSettlement）；保留引用备用
 
 function nowISO() { return new Date().toISOString(); }
 
@@ -58,10 +58,16 @@ function createSettlement(db, job_id, { party_id } = {}) {
     if (job.job_type === 'spray') {
       const lines = db.prepare('SELECT * FROM job_settlement_lines WHERE job_id = ?').all(job_id);
       for (const l of lines) {
-        const party = findPartyByNamePhone(db, l.farmer_name, '');
+        // B5（P7-R1）：结算分项客户匹配保守化——姓名全库唯一才自动挂接；
+        // 同名多档（现网 8 组）绝不猜（挂错档案=钱挂错人），置空并在 note 标注，
+        // 账单仍按 farmer_name 快照落，客户归属留给人工在主数据/分项里确认。
+        const sameName = db.prepare(
+          `SELECT id FROM parties WHERE type='customer' AND name = ? AND deleted_at IS NULL`).all(l.farmer_name);
+        const party = sameName.length === 1 ? sameName[0] : null;
+        const ambNote = sameName.length > 1 ? '同名客户多档，未自动挂接，请人工确认' : null;
         insItem.run(sid, party ? party.id : null, l.farmer_name, l.area_mu,
           l.spray_fee_cents || 0, l.used_sets, l.self_sets, l.supplement_sets,
-          l.pesticide_fee_cents || 0, l.included, null);
+          l.pesticide_fee_cents || 0, l.included, ambNote);
       }
     } else { // haul：单行，party 由调用方指定（计算器吊运无客户字段）
       insItem.run(sid, party_id || null, '（吊运客户）', null,

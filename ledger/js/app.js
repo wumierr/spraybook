@@ -88,9 +88,12 @@
           <input data-line="${l.id}" data-field="pesticide_fee_cents" value="${(l.pesticide_fee_cents || 0) / 100}" type="number" step="0.01" min="0" title="药钱(元)">
         </td>`) : '<td></td>'}
       </tr>`).join('');
-    // 成本构成快照（007，仅计算器来源单有值）
+    // 成本构成快照（007，仅计算器来源单有值）。B3：电池折旧列语义=元/次充电费率，
+    // 明细处标注口径并换算合计（charge_count=充电次数）。
+    const batteryTotal = (j.battery_depreciation_cents != null && j.charge_count != null)
+      ? `（${j.charge_count} 次 ≈ ${Core.fmtYuan(j.battery_depreciation_cents * j.charge_count)}）` : '';
     const parts = [
-      ['油费', j.fuel_expense_cents], ['电池折旧', j.battery_depreciation_cents],
+      ['油费', j.fuel_expense_cents], [`电池折旧(元/次)${batteryTotal}`, j.battery_depreciation_cents],
       ['人工', j.labor_cost_cents], ['药剂', j.pesticide_cost_cents],
       ['设备分摊', j.equipment_cost_cents], ['杂费', j.misc_cost_cents]
     ].filter(([, v]) => v != null)
