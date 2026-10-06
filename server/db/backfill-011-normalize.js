@@ -17,6 +17,9 @@
      3) 单事务逐条 UPDATE parties：SET <kind列> = canonical WHERE <kind列> = alias；
         每条断言只动 region/village/team 其中一列（逐行全列 diff，出现任何
         预期外列变更即 throw 回滚）；金额列分文不动；
+     3b) 同批把映射 upsert 进 place_aliases（评审 #2：只改存量不落别名表，
+        写侧归一会空转、新导入继续写回异写——D4 闭环断裂）；同 (kind,alias)
+        已存在且 canonical 不同 → 按映射文件（最新裁决）覆盖；
      4) 内置执行前后金额 SUM 断言（分录借贷/账单三列/收款/支出/结算应收/作业收入），
         任何变化即报错 exit 1；
      5) edit_logs 留痕（record_id=0 批次级订正，backfill-010 惯例）。
@@ -115,20 +118,39 @@ function updateOneColumn(db, kind, alias, canonical, now) {
 
 /** 应用映射（单事务；任何异常整体回滚）。返回报告。 */
 function applyMappings(db, mappings) {
-  const report = { updated: {}, warnings: [], before: null, after: null };
+  const report = { updated: {}, alias_rows: {}, warnings: [], before: null, after: null };
   for (const kind of KINDS) {
     report.updated[kind] = 0;
+    report.alias_rows[kind] = 0;
   }
   report.before = snapshotSums(db);
 
   const tx = db.transaction(() => {
     const now = new Date().toISOString();
+    // 映射落 place_aliases（评审 #2：backfill 只 UPDATE parties 会让写侧归一空转，
+    // D4 闭环断裂）——文件是用户最新裁决，upsert 以文件为准：
+    // 已有同 (kind,alias) 且 canonical 不同 → 按文件覆盖（并在报告计数）。
+    const upAlias = db.prepare(
+      `INSERT INTO place_aliases (kind, alias, canonical, created_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(kind, alias) DO UPDATE SET canonical = excluded.canonical`);
     for (const kind of KINDS) {
       for (const [alias, canonical] of Object.entries(mappings[kind] || {})) {
         if (alias === canonical) {
           report.warnings.push(`跳过自映射 ${kind}: "${alias}" → "${canonical}"`);
           continue;
         }
+        report.alias_rows[kind] += upAlias.run(kind, alias, canonical, now).changes;
+      }
+      if (report.alias_rows[kind]) {
+        logEdit(db, { table: 'place_aliases', recordId: 0, action: 'update',
+          after: { backfill: '011-normalize', kind, aliases: report.alias_rows[kind],
+            note: '地名别名落库（映射文件=裁决结果，同别名冲突按文件覆盖）' } });
+      }
+    }
+    // parties 存量三列归一
+    for (const kind of KINDS) {
+      for (const [alias, canonical] of Object.entries(mappings[kind] || {})) {
+        if (alias === canonical) continue; // 与上面同批跳过
         const { changes } = updateOneColumn(db, kind, alias, canonical, now);
         report.updated[kind] += changes;
         if (changes) {

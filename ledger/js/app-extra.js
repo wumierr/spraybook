@@ -281,7 +281,7 @@
       ['电话', i => esc(m[i].phone || '—')],
       ['账单', i => `${m[i].bill_count} 张 / ${Core.fmtYuan(m[i].bill_amount_cents)} 元`],
       ['未收', i => Core.fmtYuan(m[i].due_cents)],
-      ['最近作业', i => esc(m[i].last_job_date || '—')]
+      ['最近作业', i => `<span title="按导入单精确关联（farmer_ref=档案id）；计算器来源单无法在同名组内精确归属，不显示">${esc(m[i].last_job_date || '—')}</span>`]
     ];
     const head = m.map(x => `<th>#${esc(x.id)}</th>`).join('');
     const body = rows.map(([label, cell]) =>
@@ -434,12 +434,24 @@
           `确认把 ${g.name} 的 #${fromIds.join('、#')} 并入 #${intoId}？\n` +
           `引用将全部改挂到 #${intoId}，其余档案停用（可恢复）；金额分文不动。`,
           async () => {
-            for (const fid of fromIds) await Api.mergeParties({ from_id: fid, into_id: intoId, keep });
-            return fromIds.length;
-          }).then(n => {
-            if (!n) return;
+            // 评审 #4：逐档独立事务，前面的合并已生效、后面可能失败（如业务键与
+            // 组内在线成员互撞）——不能靠 run() 的 catch（只 toast 不重绘，页面
+            // 停在过期状态，重试会对已软删档撞 INVALID_STATE）。此处自行收集
+            // 成败并返回结果，失败即停，.then 里无论成败都重绘刷新。
+            const done = [], failed = [];
+            for (const fid of fromIds) {
+              try { await Api.mergeParties({ from_id: fid, into_id: intoId, keep }); done.push(fid); }
+              catch (e) { failed.push({ id: fid, msg: e.message }); break; }
+            }
+            return { done, failed, intoId };
+          }).then(r => {
+            if (!r) return; // 用户取消确认框
             mdMergeGroup = null;
-            toast(`已合并 ${n} 档 → #${intoId}。请到计算器侧删除多余农户档案（本地档案不会自动消失）`);
+            if (r.failed.length) {
+              toast(`已合并 ${r.done.length} 档；#${r.failed[0].id} 合并失败：${r.failed[0].msg}。列表已刷新，请重新点「合并…」处理剩余档案`, true);
+            } else {
+              toast(`已合并 ${r.done.length} 档 → #${r.intoId}。请到计算器侧删除多余农户档案（本地档案不会自动消失）`);
+            }
             window.LedgerExtra.renderTab(mdMergeReturnTab, document.getElementById('lgMain'));
           });
         break;

@@ -136,6 +136,10 @@ function createMasterdataRouter(db) {
     /* 疑似重复：同名组（成员带 id/村/电话/单数/金额/最近作业，供合并预览并排对照） */
     const dupeNames = db.prepare(
       `SELECT name, COUNT(*) AS n FROM parties WHERE ${live} GROUP BY name HAVING n > 1 ORDER BY n DESC, name`).all();
+    // 最近作业只按 farmer_ref=party.id 精确关联（导入路径写入的 String(id)）。
+    // 不做 farmer_name 近似：同名组成员恰好按 name 成组，name 匹配会把另一成员的
+    // 作业日期算到自己头上，合并预览的决策信号会误导（评审 #3）。
+    // 计算器来源单 farmer_ref='farmer_xxx' 无法精确归属 → 该列显示 —，宁缺勿错。
     const memberStmt = db.prepare(
       `SELECT p.id, p.name, p.region, p.village, p.team, p.phone,
               (SELECT COUNT(*) FROM bills b WHERE b.party_id = p.id AND b.status != 'void') AS bill_count,
@@ -144,7 +148,7 @@ function createMasterdataRouter(db) {
                  FROM bills b WHERE b.party_id = p.id AND b.status IN ('unpaid','partial')) AS due_cents,
               (SELECT MAX(j.job_date) FROM job_settlement_lines l JOIN jobs j ON j.id = l.job_id
                 WHERE j.deleted_at IS NULL AND j.status != 'void'
-                  AND (l.farmer_ref = CAST(p.id AS TEXT) OR l.farmer_name = p.name)) AS last_job_date
+                  AND l.farmer_ref = CAST(p.id AS TEXT)) AS last_job_date
          FROM parties p WHERE p.id = ?`);
     const suspect_dupes = dupeNames.map(g => ({
       key: `dupe:${g.name}`,

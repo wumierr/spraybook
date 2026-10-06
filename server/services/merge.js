@@ -83,16 +83,21 @@ function mergeParties(db, fromId, intoId, keep) {
       moved[table] = db.prepare(`UPDATE ${table} SET ${col} = ? WHERE ${col} = ?`).run(into, from).changes;
     }
 
-    // 2) keep 覆盖存续档
+    // 2) from 先软删——必须先于 keep 覆盖：业务键唯一索引（003: name+phone+village+team
+    //    WHERE deleted_at IS NULL）只看在线行，若 keep 把存续档改写成 from（或其同组
+    //    在线成员）当前持有的键值，先 keep 会撞 from 自己 → CONFLICT 整体回滚，
+    //    而合并源马上就要软删，报错指引「先处理冲突档案」用户无从照办（评审 #1）。
+    //    先软删即释放 from 的业务键；keep 仍撞第三方（组外在线档）时的 CONFLICT
+    //    是真实冲突，回滚（含此软删）语义不变。
+    const newNotes = [fromRow.notes, `已并入 #${into}（原名保留）`].filter(Boolean).join('；');
+    db.prepare('UPDATE parties SET deleted_at = ?, notes = ?, updated_at = ? WHERE id = ?')
+      .run(now, newNotes, now, from);
+
+    // 3) keep 覆盖存续档（from 已不在唯一索引视野内）
     if (keepSets.length) {
       db.prepare(`UPDATE parties SET ${keepSets.map(f => `${f} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
         .run(...keepSets.map(f => keep[f]), now, into);
     }
-
-    // 3) from 软删 + notes 追加（历史名与快照列一律保留）
-    const newNotes = [fromRow.notes, `已并入 #${into}（原名保留）`].filter(Boolean).join('；');
-    db.prepare('UPDATE parties SET deleted_at = ?, notes = ?, updated_at = ? WHERE id = ?')
-      .run(now, newNotes, now, from);
 
     // 4) 事务内前后断言：合并只重挂引用，金额口径必须分文不变；破坏即 throw 回滚
     const after = snapshotInvariants(db);
