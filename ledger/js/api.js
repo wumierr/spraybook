@@ -85,6 +85,10 @@
     masterList: (t) => Api.get('/api/master/' + t),
     masterCreate: (t, b) => Api.post('/api/' + t, b),
     masterPatch: (t, id, b) => Api.patch('/api/' + t + '/' + id, b),
+    // P9-R2 数据体检 + 客户合并
+    dataHealth: () => Api.get('/api/data-health'),
+    dismissHealth: (key) => Api.post('/api/data-health/dismiss', { key }),
+    mergeParties: (b) => Api.post('/api/master/parties/merge', b),
     settings: () => Api.get('/api/settings'),
     saveSettings: (b) => Api.put('/api/settings', b)
   };

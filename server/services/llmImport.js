@@ -17,6 +17,7 @@ const { ApiError } = require('./apiError');
 const { logEdit } = require('./audit');
 const ollama = require('./ollamaClient');
 const { validateRows } = require('./llmValidate');
+const { normalizeParsedPlaces } = require('./normalize');
 
 async function parseTextToBatch(db, { text, filename }) {
   const raw = String(text || '');
@@ -34,6 +35,10 @@ async function parseTextToBatch(db, { text, filename }) {
 
   const textLines = raw.split(/\r?\n/);
   const validated = validateRows(gen.rows, raw);
+  // P9-R2 ②：village/team 别名归一。llmValidate 是纯函数不持 db，归一放在编排层
+  // parsed 生成后、写 staging 前（侵入最小）；needs_review/llm 元数据不动，
+  // evidence 金额回源校验发生在归一前，金额口径不受影响。
+  for (const v of validated) normalizeParsedPlaces(db, v.parsed);
   const now = new Date().toISOString();
 
   const tx = db.transaction(() => {

@@ -36,7 +36,7 @@ function createImportRouter(db) {
 
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(buf);
-      const { rows, stats } = parseWorkbook(wb);
+      const { rows, stats } = parseWorkbook(wb, db); // P9-R2：传 db 供村/队/region 别名归一
 
       // 原始列合计（对账基线）。
       // ⚠ 双向绑定：本探针的支出/收入对口径必须与 services/importExcel.js 的

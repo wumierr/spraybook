@@ -771,7 +771,8 @@
       $main.innerHTML = renderSplits(await Api.splits());
     } else if (tab === 'journal') {
       $main.innerHTML = renderJournal(await Api.journal());
-    } else if (tab === 'import' || tab === 'master') {
+    } else if (tab === 'import' || tab === 'master' || tab === 'health') {
+      // P9-R2：health（数据体检）也归 app-extra.js——与 master 共用疑似重复组与合并弹窗
       await window.LedgerExtra.renderTab(tab, $main);
     }
     applyColWidths(); // P5-M3：全量重绘后统一恢复列宽（含明细插槽外各表的手柄注入）
@@ -1011,8 +1012,9 @@
   function handleAct(btn) {
     const act = btn.dataset.act;
     const id = Number(btn.dataset.id);
-    // 导入/主数据页签的处理在 app-extra.js（P2-4 拆分）
-    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
+    // 导入/主数据/体检页签的处理在 app-extra.js（P2-4 拆分；P9-R2 增 dh- 体检动作前缀，
+    // md- 合并弹窗复用既有 md- 前缀——漏加前缀=按钮静默无效，P3 教训）
+    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-|dh-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
     switch (act) {
       case 'csv-export': {
         // 导出「按钮所在面板」的第一张表（月份+筛选口径；编辑态取输入值；展开明细与隐藏 slot 不导）。

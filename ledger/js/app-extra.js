@@ -7,6 +7,10 @@
   let T = null;
   let run, toast, confirmThen, needAmount, collectInputs, esc, tag, actions, Core, Api, state, switchNav;
   const importState = { batchId: null, rows: [] };
+  // P9-R2：数据体检缓存（主数据「疑似重复」区与「体检」页共用）+ 合并预览弹窗状态
+  let mdHealth = null;            // GET /api/data-health 的最近一次结果
+  let mdMergeGroup = null;        // 弹窗当前展示的重复组（suspect_dupes 元素）
+  let mdMergeReturnTab = 'master'; // 打开弹窗时的页签（确认/取消后回到哪页）
 
   function renderImport() {
     return `<div class="lg-panel">
@@ -134,6 +138,8 @@
     const settings = await Api.settings().catch(() => ({}));
     const bootstrap = await Api.get('/api/bootstrap').catch(() => null);
     const balMap = new Map((bootstrap ? bootstrap.parties : []).map(p => [p.id, p]));
+    // P9-R2：疑似重复组（拉不到就不显示该区，不影响主数据页其余功能）
+    mdHealth = await Api.dataHealth().catch(() => null);
     // E8：已停用（软删）客户——默认隐藏，勾选后置灰展示并提供「恢复」
     let deletedRows = '';
     if (mdShowDeleted) {
@@ -190,7 +196,20 @@
     }).join('');
     const custOpts = parties.filter(p => p.type === 'customer')
       .map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-    return `<div class="lg-panel">
+    // P9-R2：疑似重复（同名组）——并排展示 + 合并按钮开预览弹窗
+    const dupePanel = (mdHealth && mdHealth.suspect_dupes && mdHealth.suspect_dupes.length)
+      ? `<div class="lg-panel">
+      <h2>⚠ 疑似重复（同名客户组——同村同名未必同一人，逐组人工判后再合并）</h2>
+      <table class="lg-table" data-colw="master-dupes"><thead><tr>
+        <th>姓名</th><th>档案数</th><th>成员（#id · 村/队 · 电话 · 账单数 · 金额 · 未收）</th><th>操作</th>
+      </tr></thead><tbody>${mdHealth.suspect_dupes.map(g => `<tr>
+        <td><b>${esc(g.name)}</b></td><td>${g.members.length}</td>
+        <td>${g.members.map(m => `#${m.id} · ${esc(m.village || '—')}${m.team ? '/' + esc(m.team) + '队' : ''} · ${esc(m.phone || '无电话')} · ${m.bill_count} 张 · ${Core.fmtYuan(m.bill_amount_cents)} 元 · 未收 ${Core.fmtYuan(m.due_cents)}`).join('<br>')}</td>
+        <td><button class="lg-btn primary" data-act="md-merge-open" data-key="${esc(g.key)}">合并…</button></td>
+      </tr>`).join('')}</tbody></table>
+    </div>`
+      : '';
+    return `${dupePanel}<div class="lg-panel">
       <h2>设置</h2>
       <div class="lg-form">
         <label>记账人（写入 edit_logs 与工单 operator）<input id="mdOperator" value="${esc(settings.operator || 'local')}"></label>
@@ -244,7 +263,111 @@
       <h2>药品/用药类型（计算器类型库镜像；编辑暂走计算器端）</h2>
       <table class="lg-table" data-colw="master-chems"><thead><tr><th>名称</th><th>key</th><th>水量/亩</th><th>兑水/套</th><th>药价/套</th></tr></thead>
       <tbody>${chems || '<tr><td colspan="5">暂无（首次计算器同步后生成）</td></tr>'}</tbody></table>
+    </div>${mdMergeModalHtml()}`;
+  }
+
+  /* ---------- P9-R2：合并预览弹窗（主数据/体检两页共用） ---------- */
+  /** 弹窗：组内两/三档并排对照（单数/金额/村/最近作业）+ 存续档选择 + 保留字段选择。 */
+  function mdMergeModalHtml() {
+    if (!mdMergeGroup) return '';
+    const g = mdMergeGroup;
+    const m = g.members;
+    // 并排成员表：每列一个档案
+    const rows = [
+      ['存续档', i => `<input type="radio" name="mdMergeInto" data-minto value="${m[i].id}" ${i === 0 ? 'checked' : ''} title="勾选的档案保留，其余并入">`],
+      ['#id', i => esc(m[i].id)],
+      ['村/队', i => esc((m[i].village || '—') + (m[i].team ? '/' + m[i].team + '队' : ''))],
+      ['区域', i => esc(m[i].region || '—')],
+      ['电话', i => esc(m[i].phone || '—')],
+      ['账单', i => `${m[i].bill_count} 张 / ${Core.fmtYuan(m[i].bill_amount_cents)} 元`],
+      ['未收', i => Core.fmtYuan(m[i].due_cents)],
+      ['最近作业', i => esc(m[i].last_job_date || '—')]
+    ];
+    const head = m.map(x => `<th>#${esc(x.id)}</th>`).join('');
+    const body = rows.map(([label, cell]) =>
+      `<tr><td><b>${label}</b></td>${m.map((x, i) => `<td>${cell(i)}</td>`).join('')}</tr>`).join('');
+    // 保留字段选择：每字段选一档的值覆盖存续档（默认=第一档）
+    const KEEP_UI = [['village', '村'], ['team', '队'], ['region', '区域'], ['phone', '电话']];
+    const keepRows = KEEP_UI.map(([f, label]) => {
+      const seen = new Set();
+      const opts = m.map(x => ({ id: x.id, v: String(x[f] == null ? '' : x[f]) }))
+        .filter(o => { const k = o.id + '\u0000' + o.v; if (seen.has(k)) return false; seen.add(k); return true; })
+        .map(o => `<option value="${esc(o.v)}">#${o.id}：${o.v === '' ? '（空）' : esc(o.v)}</option>`).join('');
+      return `<tr><td><b>保留·${label}</b></td><td colspan="${m.length}"><select data-mkeep="${f}" title="该字段以所选档案的值覆盖存续档">${opts}</select></td></tr>`;
+    }).join('');
+    return `<div style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center" id="mdMergeBox">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px;max-width:92vw;max-height:88vh;overflow:auto" class="lg-detail">
+        <h2>合并预览：${esc(g.name)}（${m.length} 档 → 1 档）</h2>
+        <div class="hint" style="color:var(--muted);font-size:12px;margin-bottom:8px">勾「存续档」选保留哪个档案，其余档案的账单/收款/分录等引用全部改挂过去后停用（历史单据上的姓名快照不改）。金额分文不动。</div>
+        <table class="lg-table"><thead><tr><th></th>${head}</tr></thead><tbody>${body}${keepRows}</tbody></table>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="lg-btn primary" data-act="md-merge-run">确认合并</button>
+          <button class="lg-btn" data-act="md-merge-cancel">取消</button>
+        </div>
+      </div>
     </div>`;
+  }
+
+  /* ---------- P9-R2：数据体检页（问题分组清单 + 忽略登记） ---------- */
+  async function renderHealth() {
+    mdHealth = await Api.dataHealth().catch(() => null);
+    if (!mdHealth) {
+      return '<div class="lg-panel"><h2>数据体检</h2><div class="lg-detail">体检数据拉取失败（服务端较旧？需重启服务生效）</div></div>';
+    }
+    const dismissBtn = it => `<button class="lg-btn" data-act="dh-dismiss" data-key="${esc(it.key)}" title="登记忽略（存 settings 键 datahealth.dismissed）">忽略</button>`;
+    const dupes = (mdHealth.suspect_dupes || []).map(g => `<tr>
+        <td><b>${esc(g.name)}</b></td><td>${g.members.length}</td>
+        <td>${g.members.map(m => `#${m.id} · ${esc(m.village || '—')}${m.team ? '/' + esc(m.team) + '队' : ''} · ${esc(m.phone || '无电话')} · ${m.bill_count} 张 · ${Core.fmtYuan(m.bill_amount_cents)} 元`).join('<br>')}</td>
+        <td>${actions(`<button class="lg-btn primary" data-act="md-merge-open" data-key="${esc(g.key)}">合并…</button>`, dismissBtn(g))}</td>
+      </tr>`).join('');
+    const variants = (mdHealth.village_variants || []).map(v => `<tr>
+        <td>${v.values.map(esc).join(' ↔ ')}（合计 ${v.party_count} 户）</td>
+        <td>${dismissBtn(v)}</td>
+      </tr>`).join('');
+    const regionRows = (mdHealth.region_missing || []).map(r => `<tr>
+        <td>#${r.id}</td><td>${esc(r.name)}</td><td>${esc(r.village || '—')}${r.team ? '/' + esc(r.team) + '队' : ''}</td>
+        <td>${dismissBtn(r)}</td>
+      </tr>`).join('');
+    const phoneRows = (mdHealth.no_phone || []).map(r => `<tr>
+        <td>#${r.id}</td><td>${esc(r.name)}</td><td>${esc(r.village || '—')}${r.team ? '/' + esc(r.team) + '队' : ''}</td>
+        <td>${dismissBtn(r)}</td>
+      </tr>`).join('');
+    const outliers = (mdHealth.amount_outliers || []).map(o => `<tr>
+        <td>${esc(o.payment_no)}</td><td class="num"><b>${Core.fmtYuan(o.amount_cents)}</b></td>
+        <td>${esc(Core.MAPS.PAYMENT_CATEGORY[o.category] || o.category)}</td>
+        <td>${esc((o.occurred_at || '').slice(0, 10))}</td><td>${esc(o.note || '—')}</td>
+        <td>${dismissBtn(o)}</td>
+      </tr>`).join('');
+    const cnt = a => (a || []).length;
+    return `<div class="lg-panel">
+      <h2>数据体检（同名 / 村异写 / region 未填 / 空电话 / 金额离群；忽略=登记不显示）</h2>
+      <div class="hint" style="color:var(--muted);font-size:12px">体检生成于 ${(mdHealth.generated_at || '').slice(0, 19).replace('T', ' ')} · 已忽略 ${mdHealth.dismissed_count || 0} 项。region 回填与村名统一走主数据「编辑」，金额存疑先对照原始单据。</div>
+    </div>
+    <div class="lg-panel">
+      <h2>疑似重复（同名组）· ${cnt(mdHealth.suspect_dupes)} 组</h2>
+      <table class="lg-table" data-colw="health-dupes"><thead><tr><th>姓名</th><th>档案数</th><th>成员</th><th>操作</th></tr></thead>
+      <tbody>${dupes || '<tr><td colspan="4">无同名组 ✓</td></tr>'}</tbody></table>
+    </div>
+    <div class="lg-panel">
+      <h2>村名多写（互为前缀的在用村名）· ${cnt(mdHealth.village_variants)} 组</h2>
+      <table class="lg-table" data-colw="health-variants"><thead><tr><th>写法对</th><th>操作</th></tr></thead>
+      <tbody>${variants || '<tr><td colspan="2">无多写 ✓</td></tr>'}</tbody></table>
+    </div>
+    <div class="lg-panel">
+      <h2>region 未填 · ${cnt(mdHealth.region_missing)} 户</h2>
+      <table class="lg-table" data-colw="health-region"><thead><tr><th>id</th><th>姓名</th><th>村/队</th><th>操作</th></tr></thead>
+      <tbody>${regionRows || '<tr><td colspan="4">全部已填 ✓</td></tr>'}</tbody></table>
+    </div>
+    <div class="lg-panel">
+      <h2>空电话 · ${cnt(mdHealth.no_phone)} 户</h2>
+      <table class="lg-table" data-colw="health-phone"><thead><tr><th>id</th><th>姓名</th><th>村/队</th><th>操作</th></tr></thead>
+      <tbody>${phoneRows || '<tr><td colspan="4">全部已填 ✓</td></tr>'}</tbody></table>
+    </div>
+    <div class="lg-panel">
+      <h2>金额离群（支出单笔 > 5000 元）· ${cnt(mdHealth.amount_outliers)} 笔</h2>
+      <table class="lg-table" data-colw="health-outliers"><thead><tr><th>单号</th><th>金额</th><th>类别</th><th>日期</th><th>备注</th><th>操作</th></tr></thead>
+      <tbody>${outliers || '<tr><td colspan="6">无离群 ✓</td></tr>'}</tbody></table>
+    </div>${mdMergeModalHtml()}`;
   }
 
   /** 客户行内编辑行（region/village/team/phone/price 直填） */
@@ -285,6 +408,47 @@
     const act = btn.dataset.act;
     const id = Number(btn.dataset.id);
     switch (act) {
+      /* ---- P9-R2：合并预览弹窗（md- 前缀复用既有委托通道） ---- */
+      case 'md-merge-open': {
+        mdMergeReturnTab = state.tab; // 主数据页或体检页打开都回原页
+        const g = ((mdHealth && mdHealth.suspect_dupes) || []).find(x => x.key === btn.dataset.key);
+        if (!g || !g.members || g.members.length < 2) return toast('找不到该重复组（先刷新页面）', true);
+        mdMergeGroup = g;
+        window.LedgerExtra.renderTab(mdMergeReturnTab, document.getElementById('lgMain'));
+        break;
+      }
+      case 'md-merge-cancel':
+        mdMergeGroup = null;
+        window.LedgerExtra.renderTab(mdMergeReturnTab, document.getElementById('lgMain'));
+        break;
+      case 'md-merge-run': {
+        const box = document.getElementById('mdMergeBox');
+        const intoRadio = box && box.querySelector('input[data-minto]:checked');
+        if (!intoRadio) return toast('先勾选存续档案', true);
+        const intoId = Number(intoRadio.value);
+        const g = mdMergeGroup;
+        const fromIds = g.members.filter(m => m.id !== intoId).map(m => m.id);
+        const keep = {};
+        box.querySelectorAll('select[data-mkeep]').forEach(sel => { keep[sel.dataset.mkeep] = sel.value; });
+        confirmThen(
+          `确认把 ${g.name} 的 #${fromIds.join('、#')} 并入 #${intoId}？\n` +
+          `引用将全部改挂到 #${intoId}，其余档案停用（可恢复）；金额分文不动。`,
+          async () => {
+            for (const fid of fromIds) await Api.mergeParties({ from_id: fid, into_id: intoId, keep });
+            return fromIds.length;
+          }).then(n => {
+            if (!n) return;
+            mdMergeGroup = null;
+            toast(`已合并 ${n} 档 → #${intoId}。请到计算器侧删除多余农户档案（本地档案不会自动消失）`);
+            window.LedgerExtra.renderTab(mdMergeReturnTab, document.getElementById('lgMain'));
+          });
+        break;
+      }
+      /* ---- P9-R2：体检页忽略登记（dh- 前缀，app.js 委托正则已加） ---- */
+      case 'dh-dismiss':
+        confirmThen(`忽略该问题项（${btn.dataset.key}）？登记后体检页不再显示。`, () => Api.dismissHealth(btn.dataset.key))
+          .then(r => { if (r) { toast('已登记忽略'); window.LedgerExtra.renderTab(state.tab, document.getElementById('lgMain')); } });
+        break;
       case 'md-save-operator':
         run(() => Api.saveSettings({ operator: document.getElementById('mdOperator').value || 'local' }), '记账人已保存');
         break;
@@ -531,7 +695,9 @@
       // 异步 loadImportBatches——都须等 innerHTML 落位后再 apply（同步调会早于 DOM 更新）
       const done = tab === 'import'
         ? ($main.innerHTML = renderImport(), loadImportBatches(), loadLlmStatus())
-        : renderMasterData().then(html => { $main.innerHTML = html; });
+        : tab === 'health'
+          ? renderHealth().then(html => { $main.innerHTML = html; }) // P9-R2 数据体检
+          : renderMasterData().then(html => { $main.innerHTML = html; });
       return Promise.resolve(done).then(() => { if (T && T.applyColWidths) T.applyColWidths(); });
     },
     handleAct(btn, tools) {

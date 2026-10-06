@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { logEdit, nextBizNo } = require('./audit');
 const { postEntry } = require('./journal');
+const { normalizePlace } = require('./normalize');
 
 const CN_NUM = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
 
@@ -290,7 +291,7 @@ function scanZone(ws, r, inv, cmax, sheetYear, sheetMonth, dict) {
 
 /* ---------- 主解析 ---------- */
 
-function parseWorkbook(wb) {
+function parseWorkbook(wb, db) {
   const rows = [];
   const stats = { sheets: 0, jobs: 0, expenses: 0, incomes: 0, skipped: 0, review: 0 };
   const allPersonValues = [];
@@ -393,6 +394,11 @@ function parseWorkbook(wb) {
       }
 
       const addr = splitAddress(rawAddr);
+      // P9-R2 ①：村/队/region 别名归一（place_aliases 命中才改写；db 缺省时跳过，
+      // 兼容未传 db 的旧调用）。复核 flag 仍按原文口径，不受归一影响。
+      addr.region = db ? normalizePlace(db, 'region', addr.region) : addr.region;
+      addr.village = db ? normalizePlace(db, 'village', addr.village) : addr.village;
+      addr.team = db ? normalizePlace(db, 'team', addr.team) : addr.team;
       // B4：镇+队完整地址 village 为空但 team 有值，不算"地址为空"（配合 splitAddress 的 >= 守卫）
       const addrFlag = addr.flag || ((addr.village || addr.team) ? null : '地址为空');
       if (addrFlag) needs.push({ code: 'address', detail: addrFlag + '（原文: ' + cleanStr(rawAddr) + '）' });
@@ -473,9 +479,15 @@ function parseWorkbook(wb) {
 /* ---------- 落库 apply ---------- */
 
 function upsertImportParty(db, parsed) {
+  // P9-R2 ③：parties 查找前村/队/region 归一（Excel apply 与 LLM apply 共用本函数，
+  // 计算器同步路径 upsertCustomersFromCalculator 无村/队字段故不涉及）。
+  // 只改匹配键与建档值；parsed 本体不动——raw_json 里的原文快照保持解析时原样。
+  const region = parsed.region ? normalizePlace(db, 'region', parsed.region) : parsed.region;
+  const village = parsed.village ? normalizePlace(db, 'village', parsed.village) : parsed.village;
+  const team = parsed.team ? normalizePlace(db, 'team', parsed.team) : parsed.team;
   let party = db.prepare(
     `SELECT * FROM parties WHERE type='customer' AND name=? AND IFNULL(village,'')=? AND IFNULL(team,'')=? AND deleted_at IS NULL`)
-    .get(parsed.name, parsed.village || '', parsed.team || '');
+    .get(parsed.name, village || '', team || '');
   if (!party) {
     party = db.prepare(
       `SELECT * FROM parties WHERE type='customer' AND name=? AND village IS NULL AND deleted_at IS NULL`)
@@ -486,7 +498,7 @@ function upsertImportParty(db, parsed) {
     const info = db.prepare(
       `INSERT INTO parties (type, name, region, village, team, source, created_at, updated_at)
        VALUES ('customer', ?, ?, ?, ?, 'import', ?, ?)`)
-      .run(parsed.name, parsed.region || null, parsed.village || null, parsed.team || null, now, now);
+      .run(parsed.name, region || null, village || null, team || null, now, now);
     party = { id: info.lastInsertRowid };
   }
   return party.id;

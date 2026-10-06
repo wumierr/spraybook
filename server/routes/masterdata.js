@@ -8,6 +8,7 @@
 const express = require('express');
 const { ApiError } = require('../services/apiError');
 const { logEdit } = require('../services/audit');
+const { mergeParties } = require('../services/merge');
 
 const TABLES = {
   parties: ['name', 'phone', 'address', 'region', 'village', 'team', 'default_price_cents', 'default_area_mu', 'notes', 'enabled', 'type'],
@@ -103,6 +104,114 @@ function createMasterdataRouter(db) {
       res.json({ ok: true, data: getRow(table, id) });
     });
   }
+
+  /* ---- P9-R2：客户合并（重挂引用+软删留痕，金额分文不动） ---- */
+  router.post('/master/parties/merge', (req, res) => {
+    const body = req.body || {};
+    if (body.from_id == null || body.into_id == null) {
+      throw new ApiError('VALIDATION', 'from_id 与 into_id 必填');
+    }
+    const result = mergeParties(db, body.from_id, body.into_id, body.keep || {});
+    res.json({ ok: true, data: result });
+  });
+
+  /* ---- P9-R2：数据体检（问题分组；同名/村异写/region 未填/空电话/金额离群） ---- */
+  // 金额离群阈值：支出单笔 > 5000 元（P9 探针口径，P20261001-052 17,065 元即由此钓出）
+  const OUTLIER_CENTS = 5000 * 100;
+
+  /** settings 键 datahealth.dismissed（JSON 数组）——用户点「忽略」的问题项，GET 时过滤 */
+  function readDismissed() {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'datahealth.dismissed'").get();
+    if (!row) return [];
+    try {
+      const arr = JSON.parse(row.value);
+      return Array.isArray(arr) ? arr.filter(k => typeof k === 'string') : [];
+    } catch (e) { return []; }
+  }
+  const filterDismissed = (items, dismissed) => items.filter(it => !dismissed.includes(it.key));
+
+  router.get('/data-health', (req, res) => {
+    const live = `type='customer' AND deleted_at IS NULL`;
+
+    /* 疑似重复：同名组（成员带 id/村/电话/单数/金额/最近作业，供合并预览并排对照） */
+    const dupeNames = db.prepare(
+      `SELECT name, COUNT(*) AS n FROM parties WHERE ${live} GROUP BY name HAVING n > 1 ORDER BY n DESC, name`).all();
+    const memberStmt = db.prepare(
+      `SELECT p.id, p.name, p.region, p.village, p.team, p.phone,
+              (SELECT COUNT(*) FROM bills b WHERE b.party_id = p.id AND b.status != 'void') AS bill_count,
+              (SELECT COALESCE(SUM(b.amount_cents),0) FROM bills b WHERE b.party_id = p.id AND b.status != 'void') AS bill_amount_cents,
+              (SELECT COALESCE(SUM(b.amount_cents + b.adjust_cents - b.paid_cents),0)
+                 FROM bills b WHERE b.party_id = p.id AND b.status IN ('unpaid','partial')) AS due_cents,
+              (SELECT MAX(j.job_date) FROM job_settlement_lines l JOIN jobs j ON j.id = l.job_id
+                WHERE j.deleted_at IS NULL AND j.status != 'void'
+                  AND (l.farmer_ref = CAST(p.id AS TEXT) OR l.farmer_name = p.name)) AS last_job_date
+         FROM parties p WHERE p.id = ?`);
+    const suspect_dupes = dupeNames.map(g => ({
+      key: `dupe:${g.name}`,
+      name: g.name,
+      members: db.prepare(`SELECT id FROM parties WHERE ${live} AND name = ? ORDER BY id`).all(g.name)
+        .map(r => memberStmt.get(r.id))
+    }));
+
+    /* 村名多写：互为前缀的两个在用村名（金桂/金桂村、大发/大发梁子形态） */
+    const villages = db.prepare(
+      `SELECT village, COUNT(*) AS n FROM parties WHERE ${live} AND village IS NOT NULL AND village != ''
+       GROUP BY village ORDER BY n DESC, village`).all();
+    const village_variants = [];
+    for (let i = 0; i < villages.length; i++) {
+      for (let j = i + 1; j < villages.length; j++) {
+        const a = villages[i].village, b = villages[j].village;
+        if (a.startsWith(b) || b.startsWith(a)) {
+          village_variants.push({
+            key: `village:${[a, b].sort().join('|')}`,
+            values: [a, b],
+            party_count: villages[i].n + villages[j].n
+          });
+        }
+      }
+    }
+
+    const region_missing = db.prepare(
+      `SELECT id, name, village, team FROM parties WHERE ${live} AND (region IS NULL OR region = '')
+       ORDER BY village, id`).all().map(r => ({ ...r, key: `region_missing:${r.id}` }));
+    const no_phone = db.prepare(
+      `SELECT id, name, village, team FROM parties WHERE ${live} AND (phone IS NULL OR phone = '')
+       ORDER BY village, id`).all().map(r => ({ ...r, key: `no_phone:${r.id}` }));
+    const amount_outliers = db.prepare(
+      `SELECT id, payment_no, category, amount_cents, occurred_at, note
+         FROM payments WHERE status = 'active' AND amount_cents > ?
+         ORDER BY amount_cents DESC`).all(OUTLIER_CENTS)
+      .map(r => ({ ...r, key: `payment_outlier:${r.id}` }));
+
+    const dismissed = readDismissed();
+    res.json({
+      ok: true,
+      data: {
+        generated_at: new Date().toISOString(),
+        dismissed_count: dismissed.length,
+        suspect_dupes: filterDismissed(suspect_dupes, dismissed),
+        village_variants: filterDismissed(village_variants, dismissed),
+        region_missing: filterDismissed(region_missing, dismissed),
+        no_phone: filterDismissed(no_phone, dismissed),
+        amount_outliers: filterDismissed(amount_outliers, dismissed)
+      }
+    });
+  });
+
+  router.post('/data-health/dismiss', (req, res) => {
+    const key = req.body && req.body.key;
+    if (!key || typeof key !== 'string') throw new ApiError('VALIDATION', 'key 必填（问题项 key）');
+    const dismissed = readDismissed();
+    if (!dismissed.includes(key)) dismissed.push(key);
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+      .run('datahealth.dismissed', JSON.stringify(dismissed), now);
+    logEdit(db, { table: 'settings', recordId: 0, action: 'update',
+      after: { key: 'datahealth.dismissed', dismiss: key, total: dismissed.length } });
+    res.json({ ok: true, data: { key, dismissed } });
+  });
 
   /* ---- 设置（operator 等，键值表） ---- */
   router.get('/settings', (req, res) => {
