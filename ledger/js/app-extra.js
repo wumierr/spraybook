@@ -20,34 +20,56 @@
   }
 
   function renderImport() {
-    return `<div class="lg-panel">
-      <h2>粘贴计算器作业包（离线单；在计算器「导出 → ⬇ 下载作业包」后粘贴 JSON）</h2>
-      <textarea id="calcJobJson" rows="6" placeholder='粘贴 {"type":"drone-spray-config","schemaVersion":"2.1",...} 完整内容' style="width:100%;font-family:monospace;font-size:12px"></textarea>
+    // P9-R4（D1 裁决）：统一收件箱置顶——拖拽/点选文件/Ctrl+V 粘贴，按扩展名分派
+    // （分派口径在 core.pickPipeline 纯函数）；默认日期选择器也搬到收件箱（LLM 管线
+    // 两入口共用同一 #llmDate，旧 llm-parse 读同一 id 不改逻辑）。
+    // 旧三面板收进「手动选择管线」折叠区，全部 id/data-act 原样保留（老习惯零回归）。
+    return `<div class="lg-panel" id="impInbox">
+      <h2>📥 导入收件箱（拖文件 / 点选文件 / 粘贴文本，按类型自动分派）</h2>
+      <label id="impDrop" for="impInboxFile" title="点击选择文件，或把文件拖进虚线框">
+        <input type="file" id="impInboxFile" multiple accept=".xlsx,.json,.txt,.md" hidden>
+        <b>把文件拖到这里，或点击选择文件</b><br>
+        <span>.xlsx 月度记账表 → Excel 复核管线 · .json 作业包 → 计算器导入 · .txt / .md → 本机 LLM 文本管线</span>
+      </label>
+      <textarea id="inboxText" rows="3" placeholder="也可把记账文本或计算器作业包 JSON 粘到这里（Ctrl+V 自动分派；图片/语音识别即将支持）" style="width:100%;font-size:13px"></textarea>
       <div class="lg-form" style="margin-top:8px">
-        <button class="lg-btn primary" data-act="imp-calc-json">解析并导入作业</button>
-        <span class="hint" style="color:var(--muted);font-size:12px">幂等：同一单重复导入自动去重；成功后可在「总表」看到并走结算收款</span>
+        <button class="lg-btn primary" data-act="imp-inbox-send">送入管线</button>
+        <button class="lg-btn" data-act="imp-photo" aria-disabled="true" title="多模态模型下轮上线">📷 拍照识别 · 即将支持</button>
+        <button class="lg-btn" data-act="imp-voice" aria-disabled="true" title="多模态模型下轮上线">🎙 语音记账 · 即将支持</button>
+        <label>默认日期（LLM 管线无日期条目按此记，仍进需复核可改）<input type="date" id="llmDate" value="${localToday()}"></label>
       </div>
-      <div id="calcJobResult"></div>
+      <div id="inboxResult"></div>
     </div>
-    <div class="lg-panel">
-      <h2>上传历史 Excel（.xlsx，月度记账表格式）</h2>
-      <div class="lg-form">
-        <label>文件<input type="file" id="impFile" accept=".xlsx"></label>
-        <button class="lg-btn primary" data-act="imp-upload">解析并复核</button>
-        <span class="hint" style="color:var(--muted);font-size:12px">解析后先复核再落库；同文件重复上传会被拒绝</span>
+    <details class="lg-details">
+      <summary>手动选择管线（旧入口：粘贴作业包 JSON / 上传 Excel / 粘贴文本给 LLM）</summary>
+      <div class="lg-panel">
+        <h2>粘贴计算器作业包（离线单；在计算器「导出 → ⬇ 下载作业包」后粘贴 JSON）</h2>
+        <textarea id="calcJobJson" rows="6" placeholder='粘贴 {"type":"drone-spray-config","schemaVersion":"2.1",...} 完整内容' style="width:100%;font-family:monospace;font-size:12px"></textarea>
+        <div class="lg-form" style="margin-top:8px">
+          <button class="lg-btn primary" data-act="imp-calc-json">解析并导入作业</button>
+          <span class="hint" style="color:var(--muted);font-size:12px">幂等：同一单重复导入自动去重；成功后可在「总表」看到并走结算收款</span>
+        </div>
+        <div id="calcJobResult"></div>
       </div>
-      <div id="impStats"></div>
-    </div>
-    <div class="lg-panel">
-      <h2>🤖 粘贴文本（本地 LLM 整理；Ollama 全程本机运行）</h2>
-      <textarea id="llmText" rows="5" placeholder="把杂乱记账记录粘进来，一行一条，例如：&#10;3月12日 李洪富 金桂村 打药 12亩 25元/亩 应收300 收300&#10;3.12 油钱200 加油站&#10;4月 收入540 不知道谁的" style="width:100%;font-size:13px"></textarea>
-      <div class="lg-form" style="margin-top:8px">
-        <label>默认日期（无日期条目按此记，仍进需复核可改）<input type="date" id="llmDate" value="${localToday()}"></label>
-        <button class="lg-btn primary" data-act="llm-parse" id="llmParseBtn">解析并预览</button>
-        <span class="hint" id="llmStatus" style="color:var(--muted);font-size:12px">检查本机 LLM…</span>
+      <div class="lg-panel">
+        <h2>上传历史 Excel（.xlsx，月度记账表格式）</h2>
+        <div class="lg-form">
+          <label>文件<input type="file" id="impFile" accept=".xlsx"></label>
+          <button class="lg-btn primary" data-act="imp-upload">解析并复核</button>
+          <span class="hint" style="color:var(--muted);font-size:12px">解析后先复核再落库；同文件重复上传会被拒绝</span>
+        </div>
+        <div id="impStats"></div>
       </div>
-      <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">硬约束：金额必须能在原文定位（防幻觉）、派生金额由代码算、拿不准自动进需复核；解析后进「待入库」，逐行确认后才落账；长文本自动分块（>500 行请分天导入）</div>
-    </div>
+      <div class="lg-panel">
+        <h2>🤖 粘贴文本（本地 LLM 整理；Ollama 全程本机运行）</h2>
+        <textarea id="llmText" rows="5" placeholder="把杂乱记账记录粘进来，一行一条，例如：&#10;3月12日 李洪富 金桂村 打药 12亩 25元/亩 应收300 收300&#10;3.12 油钱200 加油站&#10;4月 收入540 不知道谁的" style="width:100%;font-size:13px"></textarea>
+        <div class="lg-form" style="margin-top:8px">
+          <button class="lg-btn primary" data-act="llm-parse" id="llmParseBtn">解析并预览</button>
+          <span class="hint" id="llmStatus" style="color:var(--muted);font-size:12px">检查本机 LLM…</span>
+        </div>
+        <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">硬约束：金额必须能在原文定位（防幻觉）、派生金额由代码算、拿不准自动进需复核；解析后进「待入库」，逐行确认后才落账；长文本自动分块（>500 行请分天导入）。默认日期在上方收件箱设置（两个入口共用）。</div>
+      </div>
+    </details>
     <div class="lg-panel">
       <h2>批次</h2>
       <table class="lg-table" data-colw="import-batches"><thead><tr><th>批次</th><th>文件</th><th>来源</th><th>状态</th><th>导入时间</th><th>操作</th></tr></thead>
@@ -133,6 +155,195 @@
     }).join('');
     document.getElementById('impRows').innerHTML = rows || '<tr><td colspan="9">无行</td></tr>';
   }
+
+  /* ---------- P9-R4：导入收件箱（拖拽/点选/Ctrl+V → 按扩展名分派三条既有管线） ----------
+     分派口径是 core.pickPipeline / pickPipelineForText 纯函数；三条管线各自复用旧入口的
+     端点与复核流（excel→POST /api/import/parse+批次表/行级复核，calcjson→core.
+     calculatorJobPayload 校验+POST /api/jobs 幂等，llm→POST /api/llm/parse 带 #llmDate）。
+     反馈沿用 E2 持久提示方案：结果写在 inboxRun 的 T.render()（重绘）之后，才不会被抹掉；
+     失败时 toast + 收件箱反馈区持久留痕，粘贴/输入的内容保留可改。 */
+  function fileToB64(f) {
+    return new Promise((res, rej) => {
+      const rd = new FileReader();
+      rd.onload = () => res(String(rd.result).split(',')[1]);
+      rd.onerror = () => rej(new Error('文件读取失败：' + f.name));
+      rd.readAsDataURL(f);
+    });
+  }
+  function fileToText(f) {
+    return new Promise((res, rej) => {
+      const rd = new FileReader();
+      rd.onload = () => res(String(rd.result || ''));
+      rd.onerror = () => rej(new Error('文件读取失败：' + f.name));
+      rd.readAsText(f, 'utf-8');
+    });
+  }
+  function inboxAppend(html) {
+    const box = document.getElementById('inboxResult');
+    if (!box) return;
+    const div = document.createElement('div');
+    div.className = 'lg-detail';
+    div.innerHTML = html;
+    box.appendChild(div);
+    return div;
+  }
+  function inboxBusyLine(html) {
+    return inboxAppend('⏳ ' + html) || { remove() {} };
+  }
+
+  /** Excel 复核管线（与 imp-upload 同一端点 base64→/api/import/parse 与同一复核流；
+      差异仅在反馈写收件箱区，且在重绘后展开行级复核——render 会重置面板显隐） */
+  async function inboxExcel(f, busy) {
+    let d;
+    try {
+      const b64 = await fileToB64(f);
+      d = await Api.importParse(f.name, b64);
+    } catch (e) {
+      if (busy) busy.remove();
+      toast(e.message, true);
+      inboxAppend(`✗ <b>${esc(f.name)}</b> → Excel 复核管线：${esc(e.message)}`);
+      return false;
+    }
+    importState.batchId = d.batch_id;
+    toast('解析完成，请复核');
+    await T.render(); // 批次表随重绘刷新；行级复核须在重绘后加载才可见（E2）
+    await loadImportRows(d.batch_id);
+    if (busy) busy.remove();
+    inboxAppend(`✓ <b>${esc(f.name)}</b> → Excel 复核管线：批次 #${d.batch_id}——作业 ${d.stats.jobs} / 支出 ${d.stats.expenses} / 跳过 ${d.stats.skipped} / <b>需复核 ${d.review_count}</b>。原始列合计：应收 ${Core.fmtYuan(Math.round(d.raw_totals.receivable * 100))} · 实收 ${Core.fmtYuan(Math.round(d.raw_totals.paid * 100))} · 支出 ${Core.fmtYuan(Math.round(d.raw_totals.expense * 100))}——请在下方逐行复核后落库`);
+    return true;
+  }
+
+  /** 计算器作业导入（与 imp-calc-json 同一校验 core.calculatorJobPayload 与同一幂等端点
+      POST /api/jobs；duplicated 分支与旧入口同文案） */
+  async function inboxCalcJson(text, label, busy) {
+    const parsed = Core.calculatorJobPayload(text, new Date().toISOString().slice(0, 10));
+    if (!parsed.ok) {
+      if (busy) busy.remove();
+      toast(parsed.error, true);
+      inboxAppend(`✗ <b>${esc(label)}</b> → 计算器作业导入：${esc(parsed.error)}`);
+      return false;
+    }
+    let d;
+    try { d = await Api.createJob(parsed.payload); }
+    catch (e) {
+      if (busy) busy.remove();
+      toast(e.message, true);
+      inboxAppend(`✗ <b>${esc(label)}</b> → 计算器作业导入：${esc(e.message)}`);
+      return false;
+    }
+    toast(d.duplicated ? '该单此前已导入（幂等），未重复建单' : '作业包已导入');
+    await T.render();
+    if (busy) busy.remove();
+    inboxAppend(d.duplicated
+      ? `ℹ <b>${esc(label)}</b> → 计算器作业导入：该单此前已导入（单号 ${esc(d.job_no)}），幂等返回原单，未重复建单。`
+      : `✓ <b>${esc(label)}</b> → 计算器作业导入：单号 ${esc(d.job_no)}——可在「总表」查看并走结算收款。`);
+    return true;
+  }
+
+  /** LLM 文本管线（与 llm-parse 同一端点 POST /api/llm/parse，default_date 取收件箱
+      #llmDate；成功后同样展开行级复核） */
+  async function inboxLlm(text, label, busy) {
+    const dateEl = document.getElementById('llmDate');
+    const default_date = dateEl && dateEl.value ? dateEl.value : undefined;
+    let d;
+    try { d = await Api.llmParse({ text, filename: label, default_date }); }
+    catch (e) {
+      if (busy) busy.remove();
+      toast(e.message, true);
+      inboxAppend(`✗ <b>${esc(label)}</b> → LLM 管线：${esc(e.message)}`);
+      return false;
+    }
+    toast('解析完成，请逐行复核后落库');
+    await T.render();
+    await loadImportRows(d.batch_id);
+    if (busy) busy.remove();
+    inboxAppend(`✓ <b>${esc(label)}</b> → LLM 管线：批次 #${d.batch_id}（模型 ${esc(d.model)}${d.chunks > 1 ? `，分 ${d.chunks} 块` : ''}）共 ${d.stats.rows} 行，无疑问 ${d.stats.ok}，<b>需复核 ${d.review_count}</b>——有疑虑的行逐条改字段或驳回；确认后点「确认并落库」。`);
+    return true;
+  }
+
+  /** 单文件分派：扩展名 → 管线；未识别给可读提示（不猜内容，D1 裁决） */
+  async function inboxOneFile(f) {
+    const pipe = Core.pickPipeline(f.name);
+    if (!pipe) {
+      toast('未识别的文件类型：' + f.name, true);
+      inboxAppend(`✗ <b>${esc(f.name)}</b>：未识别的文件类型——收件箱支持 <b>.xlsx</b>（月度记账表）/ <b>.json</b>（计算器作业包）/ <b>.txt .md</b>（记账文本）；图片/语音识别即将支持，可先转成文本粘贴`);
+      return;
+    }
+    const busy = inboxBusyLine(`<b>${esc(f.name)}</b> → ${pipe === 'excel' ? 'Excel 复核管线' : pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
+    if (pipe === 'excel') return inboxExcel(f, busy);
+    const text = await fileToText(f);
+    if (pipe === 'calcjson') return inboxCalcJson(text, f.name, busy);
+    return inboxLlm(text, f.name, busy);
+  }
+
+  /** 多文件按序处理（拖拽可多选；结果逐行追加进收件箱反馈区） */
+  async function inboxHandleFiles(fileList) {
+    const list = [...(fileList || [])];
+    if (!list.length) return;
+    for (const f of list) await inboxOneFile(f);
+  }
+
+  /** 粘贴框内容分派（Ctrl+V 自动触发 + 「送入管线」按钮共用；失败时内容保留可改） */
+  function inboxDispatchText(text, label) {
+    const pipe = Core.pickPipelineForText(text);
+    if (!pipe) return toast('先粘贴内容：记账文本，或计算器导出的作业包 JSON', true);
+    const busy = inboxBusyLine(`<b>${esc(label)}</b> → ${pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
+    if (pipe === 'calcjson') return inboxCalcJson(text, label, busy);
+    return inboxLlm(text, label, busy);
+  }
+
+  /* 收件箱事件绑定：委托在 #lgMain 上（重绘不丢）；测试桩无 addEventListener 时跳过。
+     dragover/drop 只对带 Files 的拖拽接管（防浏览器直接打开文件/误拖整页跳走），
+     文本拖拽不接、交给浏览器默认行为。 */
+  (function bindInbox() {
+    const $m = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('lgMain') : null;
+    if (!$m || typeof $m.addEventListener !== 'function') return;
+    const hasFiles = dt => !!(dt && dt.types && [...dt.types].includes('Files'));
+    $m.addEventListener('change', e => {
+      if (!e.target || e.target.id !== 'impInboxFile') return;
+      inboxHandleFiles(e.target.files).catch(err => toast(err.message, true));
+      e.target.value = ''; // 允许下次再选同一文件
+    });
+    $m.addEventListener('paste', e => {
+      if (!e.target || e.target.id !== 'inboxText') return;
+      const cd = e.clipboardData;
+      if (!cd) return;
+      if (hasFiles(cd)) {
+        e.preventDefault();
+        const files = [...cd.files];
+        const img = files.find(f => /^image\//.test(f.type));
+        if (img) {
+          toast('📷 拍照识别即将支持（多模态模型下轮上线），请先用文本粘贴记账');
+          inboxAppend(`ℹ 收到粘贴的图片「${esc(img.name || '截图')}」——拍照识别即将支持，请先把内容转成文本粘贴`);
+        }
+        const rest = files.filter(f => !/^image\//.test(f.type));
+        if (rest.length) inboxHandleFiles(rest).catch(err => toast(err.message, true));
+        return;
+      }
+      const text = cd.getData ? cd.getData('text/plain') : '';
+      // 不 preventDefault：文本照常落框，分派失败时内容保留可改（成功后重绘自然清空）
+      if (text && text.trim()) inboxDispatchText(text, '粘贴文本.txt');
+    });
+    $m.addEventListener('dragover', e => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault(); // 允许 drop；同时防浏览器默认打开文件
+      const z = e.target && e.target.closest ? e.target.closest('#impDrop') : null;
+      if (z) { e.dataTransfer.dropEffect = 'copy'; z.classList.add('dragover'); }
+      else e.dataTransfer.dropEffect = 'none';
+    });
+    $m.addEventListener('drop', e => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      const z = e.target && e.target.closest ? e.target.closest('#impDrop') : null;
+      if (z) z.classList.remove('dragover');
+      if (!z) return toast('请把文件拖到「导入收件箱」的虚线框里', true);
+      inboxHandleFiles(e.dataTransfer.files).catch(err => toast(err.message, true));
+    });
+    $m.addEventListener('dragleave', e => {
+      const z = e.target && e.target.closest ? e.target.closest('#impDrop') : null;
+      if (z) z.classList.remove('dragover');
+    });
+  })();
 
 
   /* ---------- 主数据（客户行内直填 + 新增客户 + 地块档案） ---------- */
@@ -587,6 +798,18 @@
         confirmThen(`恢复客户 ${btn.dataset.name}？（回到客户列表）`, () => Api.post(`/api/master/parties/${btn.dataset.id}/restore`))
           .then(r => { if (r) { toast('已恢复'); window.LedgerExtra.renderTab('master', document.getElementById('lgMain')); } });
         break;
+      /* ---- P9-R4：收件箱「送入管线」+ 多模态占位（D1：只留占位，多模态模型下轮再上） ---- */
+      case 'imp-inbox-send': {
+        const text = (document.getElementById('inboxText') || {}).value || '';
+        inboxDispatchText(text, '粘贴文本.txt');
+        break;
+      }
+      case 'imp-photo':
+        toast('📷 拍照识别即将支持（多模态模型下轮上线）——现在请把内容用文本粘贴进收件箱');
+        break;
+      case 'imp-voice':
+        toast('🎙 语音记账即将支持（多模态模型下轮上线）——现在请把内容用文本粘贴进收件箱');
+        break;
       case 'imp-calc-json': {
         // P6-M1：计算器导出 JSON → /api/jobs（幂等；成功后切总表）
         const text = document.getElementById('calcJobJson').value;
@@ -633,7 +856,16 @@
       case 'llm-parse': {
         const text = (document.getElementById('llmText') || {}).value || '';
         if (text.trim().length < 5) return toast('先把记账记录粘进文本框', true);
-        // P9-R3：默认日期随解析请求透传（无日期条目按它记，服务端标 date_default 进复核）
+        // P9-R4：按钮 loading + 分批预估文案（Core.estimateLlmChunks 与服务端 llmChunk
+        // 同口径近似；逐批进度条=异步任务化，进 backlog）。成功路径按钮随重绘重建，
+        // 失败路径（无重绘）在 settle 里恢复并重查 LLM 状态。
+        const est = Core.estimateLlmChunks(text);
+        const btn = document.getElementById('llmParseBtn');
+        const st = document.getElementById('llmStatus');
+        if (btn) btn.disabled = true;
+        if (st) st.textContent = '解析中…' + (est > 1 ? `文本较长将分批处理（约 ${est} 批），请勿关闭页面` : '请稍候');
+        // P9-R3：默认日期随解析请求透传（无日期条目按它记，服务端标 date_default 进复核；
+        // P9-R4 起 #llmDate 搬进收件箱，旧入口读同一 id）
         const dateEl = document.getElementById('llmDate');
         const default_date = dateEl && dateEl.value ? dateEl.value : undefined;
         run(async () => {
@@ -647,6 +879,9 @@
             document.getElementById('impStats') && (document.getElementById('impStats').innerHTML =
               `<div class="lg-detail">LLM 批次 #${d.batch_id}（模型 ${d.model}${d.chunks > 1 ? `，分 ${d.chunks} 块` : ''}）：共 ${d.stats.rows} 行，无疑问 ${d.stats.ok}，<b>需复核 ${d.review_count}</b>。有疑虑的行逐条改字段或驳回；确认后点「确认并落库」。</div>`);
           }
+        }).then(() => {
+          const b = document.getElementById('llmParseBtn');
+          if (b && b.isConnected) { b.disabled = false; loadLlmStatus(); }
         });
         break;
       }

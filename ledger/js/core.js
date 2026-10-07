@@ -237,8 +237,54 @@
     };
   }
 
+  /* ---------- 导入收件箱分派（P9-R4；纯函数，node:test 可测） ---------- */
+  /**
+   * 按扩展名选导入管线（大小写不敏感）。只认最后一个扩展名，不做内容嗅探魔法——
+   * 识别不了返回 null，调用方给可读提示，绝不猜（本轮裁决 D1）。
+   *   'excel'    .xlsx 月度记账表 → /api/import/parse 复核管线
+   *   'calcjson' .json 计算器作业包 → /api/jobs 幂等导入
+   *   'llm'      .txt/.md 杂乱记账文本 → /api/llm/parse 本机 LLM
+   */
+  function pickPipeline(filename) {
+    const m = /\.([A-Za-z0-9]+)$/.exec(String(filename == null ? '' : filename).trim());
+    if (!m) return null;
+    switch (m[1].toLowerCase()) {
+      case 'xlsx': return 'excel';
+      case 'json': return 'calcjson';
+      case 'txt': case 'md': return 'llm';
+      default: return null;
+    }
+  }
+
+  /**
+   * 粘贴文本分派（收件箱 Ctrl+V 无文件名时）：`{` 开头一律按计算器作业包走
+   * calcjson——calculatorJobPayload 会给「不是计算器导出的作业 JSON」可读报错，
+   * 比喂给 LLM 产出垃圾行更友好；其余非空文本走 LLM；空白返回 null（没粘内容）。
+   */
+  function pickPipelineForText(text) {
+    const s = String(text == null ? '' : text).trim();
+    if (!s) return null;
+    return s.startsWith('{') ? 'calcjson' : 'llm';
+  }
+
+  /**
+   * LLM 分批预估（收件箱/面板「解析中…约 N 批」文案用）：与服务端 llmChunk
+   * （≤30 行且 ≤2500 字符单块直通）同口径的近似——按 行数/30 与 字符数/2500
+   * 上取整取大。段落边界会让真实块数略多，文案措辞用「约」；精确块数以服务端
+   * 返回 d.chunks 为准（成功提示展示）。
+   */
+  function estimateLlmChunks(text) {
+    const s = String(text == null ? '' : text);
+    if (!s.trim()) return 0;
+    const parts = s.split(/\r?\n/);
+    const lines = s.endsWith('\n') ? parts.length - 1 : parts.length;
+    if (lines <= 30 && s.length <= 2500) return 1;
+    return Math.max(Math.ceil(lines / 30), Math.ceil(s.length / 2500));
+  }
+
   const Core = {
     monthKeys, csvCell, csvRow, calculatorJobPayload,
+    pickPipeline, pickPipelineForText, estimateLlmChunks,
     fmtYuan, yuanInputToCents, statusLabel,
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
     colwKey, clampColw, parseColw,

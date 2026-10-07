@@ -205,3 +205,25 @@ input.lg-inp--sm { width: 70px; }
 .export-sections { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0; font-size: 13px; }
 .export-sections label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .check-label { display: flex; align-items: center; gap: 6px; }
+
+/* ---------- P9-R4 导入收件箱 ---------- */
+/* 拖放/点选区：虚线框，拖入悬停高亮；label 包 hidden file input，整块可点 */
+.imp-drop {
+  display: block; border: 2px dashed var(--border); border-radius: var(--radius);
+  background: var(--bg); padding: 16px 12px; margin-bottom: 10px; text-align: center;
+  color: var(--muted); font-size: 13px; cursor: pointer; user-select: none;
+}
+.imp-drop b { color: var(--text); font-size: 14px; }
+.imp-drop span { display: inline-block; margin-top: 4px; }
+.imp-drop:hover, .imp-drop.dragover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.imp-drop.dragover b { color: var(--accent); }
+/* 「手动选择管线」折叠区（旧三面板收纳；summary 即可点开） */
+.lg-details { margin-bottom: 14px; }
+.lg-details > summary {
+  cursor: pointer; font-weight: 600; color: var(--muted); font-size: 14px;
+  padding: 6px 2px; user-select: none;
+}
+.lg-details > summary:hover { color: var(--accent); }
+.lg-details[open] > summary { margin-bottom: 10px; }
+/* 禁用态占位按钮（拍照/语音）：保留 click 事件以 toast 引导，用 aria-disabled 表达禁用 */
+.lg-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
