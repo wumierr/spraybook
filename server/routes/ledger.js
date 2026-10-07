@@ -98,6 +98,7 @@ function createLedgerRouter(db) {
   router.get('/overview', (req, res) => {
     const data = overview.listOverview(db, {
       from: req.query.from, to: req.query.to, status: req.query.status,
+      county: req.query.county,
       limit: req.query.limit ? Number(req.query.limit) : undefined
     });
     // E9（P7-R4）：静默截断改为可感知——行数打到上限时置响应头，前端 toast 提示
@@ -114,7 +115,8 @@ function createLedgerRouter(db) {
   });
   router.get('/reports/by-customer', (req, res) => {
     res.json({ ok: true, data: reports.byCustomer(db, {
-      from: req.query.from, to: req.query.to, include_all: req.query.include_all
+      from: req.query.from, to: req.query.to, include_all: req.query.include_all,
+      county: req.query.county
     }) });
   });
   router.get('/reports/by-job', (req, res) => {
@@ -130,12 +132,14 @@ function createLedgerRouter(db) {
   });
   router.get('/reports/adjustments', (req, res) => {
     res.json({ ok: true, data: reports.adjustments(db, {
-      granularity: req.query.granularity, from: req.query.from, to: req.query.to
+      granularity: req.query.granularity, from: req.query.from, to: req.query.to,
+      county: req.query.county
     }) });
   });
   router.get('/reports/cost-breakdown', (req, res) => {
     res.json({ ok: true, data: reports.costBreakdown(db, {
-      source: req.query.source, from: req.query.from, to: req.query.to
+      source: req.query.source, from: req.query.from, to: req.query.to,
+      county: req.query.county
     }) });
   });
 

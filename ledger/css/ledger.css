@@ -140,7 +140,7 @@ table.lg-table--wide input[type="number"] { width: 96px; }
 .lg-bardates input[type="date"] { flex: 1 1 112px; width: auto; max-width: none; min-width: 0; }
 .lg-kpi--chart .lg-chart-canvas { height: 120px; }
 
-/* ---------- 图表页（P5-M2：echarts 本地 vendor；容器显式高度，颜色读 :root 变量） ---------- */
+/* ---------- 图表页（P5-M2 echarts 本地 vendor；P10-R3 起为 GridStack dashboard） ---------- */
 .lg-chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 14px; }
 .lg-chart-grid .lg-panel { margin-bottom: 0; min-width: 0; }
 .lg-chart-grid--in { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
@@ -155,6 +155,47 @@ table.lg-table--wide input[type="number"] { width: 96px; }
 .lg-gran { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
 .lg-chart-foot { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.6; }
 @media (max-width: 1040px) { .lg-chart-grid { grid-template-columns: 1fr; } }
+
+/* ---------- P10-R3 图表 dashboard：页顶工具条 + 卡片骨架 + GridStack 项 ---------- */
+/* 页顶工具条：市筛选 + 添加图表弹层 + 模式提示 */
+.lg-chart-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+.lg-ct-county { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.lg-ct-county select {
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  background: var(--bg); color: var(--text); font-size: 13px;
+}
+.lg-ct-addwrap { position: relative; display: inline-flex; }
+.lg-add-layer {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+  display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 4px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.18); min-width: 320px; max-width: 70vw;
+}
+.lg-add-layer .lg-btn { text-align: left; }
+.lg-ct-hint { color: var(--muted); font-size: 12px; }
+/* 卡片骨架（网格/静态两模式共用） */
+.lg-chart-card { display: flex; flex-direction: column; min-width: 0; }
+.lg-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.lg-card-head .lg-card-title { flex: 1; min-width: 0; margin: 0; font-size: 13px; color: var(--text); font-weight: 600; }
+.lg-card-head .lg-card-del { flex: none; padding: 2px 8px; }
+.lg-card-ctrls { margin-bottom: 6px; }
+.lg-card-ctrls .lg-bardates { margin-bottom: 2px; }
+.lg-card-body { flex: 1 1 auto; min-height: 120px; overflow: auto; display: flex; flex-direction: column; }
+.lg-card-body .lg-chart-canvas { flex: 1 1 auto; min-height: 120px; }
+.lg-chart-sub { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.lg-chart-error { color: var(--danger); font-size: 12px; border: 1px dashed var(--danger); border-radius: 8px; padding: 14px 10px; text-align: center; }
+/* GridStack 模式：item-content 即卡皮（自带面板底色，内层 .lg-panel 去边框避免双线） */
+.lg-grid { min-height: 200px; }
+.lg-grid > .grid-stack-item { overflow: hidden; }
+.lg-grid .grid-stack-item-content {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px; overflow: hidden; display: flex; flex-direction: column; min-width: 0;
+}
+.lg-grid .grid-stack-item-content .lg-panel { background: transparent; border: none; padding: 0; margin: 0; overflow: visible; }
+.lg-grid .ui-draggable-hand { cursor: grab; }
+/* 静态降级：卡片自然高度（图表容器用显式像素高度），复用 lg-chart-grid 响应式 */
+.lg-grid-static .lg-card-body { flex: none; overflow: visible; }
+.lg-grid-static .lg-card-body .lg-chart-canvas { flex: none; }
 
 /* ---------- 表格 Excel 化（P5-M3）：列宽拖拽/记忆 + sticky 首列表头 + 编辑输入随列宽 ---------- */
 /* sticky：横向滚动容器是 .lg-panel（overflow-x:auto），滚动时首列（含表头首格）保持可见以定位行；

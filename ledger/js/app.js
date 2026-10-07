@@ -945,6 +945,16 @@
   });
   $main.addEventListener('change', e => {
     const el = e.target;
+    if (el.dataset.cardDate) {
+      // P10-R3 图表卡日期：老/新日期任一改动即重算该卡区间（清空=该边不设限，允许触发）
+      if (window.LedgerCharts) window.LedgerCharts.handleCardDate(Number(el.dataset.card), el.dataset.cardDate, el.value);
+      return;
+    }
+    if (el.id === 'chartCounty') {
+      // P10-R3 图表页市筛选（P10-R1 county 参数贯通图表端点；默认全部）
+      if (window.LedgerCharts) window.LedgerCharts.handleCounty(el.value);
+      return;
+    }
     if (el.id === 'barFrom' || el.id === 'barTo') {
       // P10-R2 数据条：老/新日期任一改动即按交集口径重算（清空=该边不设限，允许触发；
       // 两日期都填后快捷按钮由 renderKpiBar 置灰——Core.barUiOf.locked 单一口径）
@@ -1201,9 +1211,13 @@
         persistBar();
         render().catch(err => toast(err.message, true));
         break;
-      case 'gran-set':
+      case 'card-gran':
+      case 'card-quick':
+      case 'card-del':
+      case 'card-add':
+      case 'card-add-type':
       case 'ov-jump-month':
-        // 图表页（P4-M2）：粒度切换与柱/点跳总表当月，处理在 ledger/js/charts.js
+        // 图表 dashboard（P10-R3）：卡桶粒度/日期快捷/删除/添加弹层与月跳转，处理在 ledger/js/charts.js
         if (window.LedgerCharts) window.LedgerCharts.handleAct(btn, T);
         break;
       case 'sp-save': {

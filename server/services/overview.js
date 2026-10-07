@@ -43,12 +43,22 @@ const GROUP_SQL = `
 
 const LIMIT_MAX = 2000;
 
-function buildWhere({ from, to, status } = {}) {
+function buildWhere({ from, to, status, county } = {}) {
   const cond = [];
   const args = [];
   if (from) { cond.push('j.job_date >= ?'); args.push(String(from)); }
   if (to) { cond.push('j.job_date <= ?'); args.push(String(to)); }
   if (status) { cond.push('j.status = ?'); args.push(String(status)); }
+  // P10-R3 可选市县过滤（图表页 C10 用；总表页缺省不传=零行为变化）：
+  // 锚点与 reports.countyJobCond 同源——结算分项 party_id 命中该市县客户，
+  // 未挂客户/未结算的作业不归属任何市县，一并排除不猜归属。
+  if (county) {
+    cond.push(`EXISTS (SELECT 1 FROM settlements csi1
+      JOIN settlement_items csi2 ON csi2.settlement_id = csi1.id
+      WHERE csi1.job_id = j.id AND csi1.status != 'void'
+        AND csi2.party_id IN (SELECT id FROM parties WHERE county = ?))`);
+    args.push(String(county));
+  }
   return { sql: cond.length ? ' AND ' + cond.join(' AND ') : '', args };
 }
 
@@ -59,11 +69,11 @@ function parseOperators(r) {
 }
 
 /**
- * GET /api/overview?from=&to=&status=&limit=
+ * GET /api/overview?from=&to=&status=&limit=&county=
  * 返回 { rows, totals }；totals 与 rows 同一 SQL 骨架（外层 SUM），供前端 tfoot 对账。
  */
-function listOverview(db, { from, to, status, limit } = {}) {
-  const { sql: whereSql, args } = buildWhere({ from, to, status });
+function listOverview(db, { from, to, status, limit, county } = {}) {
+  const { sql: whereSql, args } = buildWhere({ from, to, status, county });
   const lim = Math.min(Math.max(Number(limit) || LIMIT_MAX, 1), LIMIT_MAX);
   const rows = db.prepare(
     `${GROUP_SQL}${whereSql} GROUP BY j.id ORDER BY j.job_date DESC, j.id DESC LIMIT ${lim}`

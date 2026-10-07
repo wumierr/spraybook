@@ -392,6 +392,86 @@
     return { quick: o.quick, from: normDate(o.from) || '', to: normDate(o.to) || '' };
   }
 
+  /* ---------- 图表 dashboard 卡模型与布局存档（P10-R3；纯函数，node:test 可测） ---------- */
+
+  /** 卡内 by-period 桶粒度（时间轴卡用；与数据条快捷档是两回事，BAR_QUICKS 另有 total/day） */
+  const CARD_GRANS = ['week', 'month', 'quarter', 'year'];
+  /** GridStack 列宽边界（列数固定 3；w 以格计，h 行高由前端 cellHeight 决定） */
+  const GRID_COLUMNS = 3, GRID_H_MIN = 1, GRID_H_MAX = 60;
+
+  /**
+   * 单卡状态规范化（charts.js 渲染与存档读取共用）：gran/quick 越界回默认档、
+   * 日期非法视同未填——单卡坏值降级为默认状态照常渲染，不整包丢弃（与
+   * parseBarState 的差异：数据条只有一份全局状态，卡有多张，单张坏不拖累整页）。
+   */
+  function parseCardState(raw) {
+    const s = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+    return {
+      gran: CARD_GRANS.includes(s.gran) ? s.gran : 'month',
+      quick: BAR_QUICKS.includes(s.quick) ? s.quick : 'total',
+      from: normDate(s.from) || '',
+      to: normDate(s.to) || ''
+    };
+  }
+
+  /**
+   * 布局条目清洗：{id,x,y,w,h} 只收整数；id 必须命中现存卡，w 夹 1..GRID_COLUMNS、
+   * h 夹 GRID_H_MIN..GRID_H_MAX；x/y 缺失或负数=自动布局（置 null，GridStack 自填充）。
+   * 非数组 → null（调用方按整档无布局处理=全部自动）。
+   */
+  function gridLayoutOf(rawLayout, cardIds) {
+    if (!Array.isArray(rawLayout)) return null;
+    const ids = new Set(cardIds);
+    const out = [];
+    const intOr = (v, def) => (Number.isInteger(v) ? v : def);
+    for (const it of rawLayout) {
+      if (!it || typeof it !== 'object' || Array.isArray(it)) continue;
+      const id = Number(it.id);
+      if (!Number.isInteger(id) || !ids.has(id)) continue;
+      const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+      const w = clamp(intOr(Number(it.w), 1), 1, GRID_COLUMNS);
+      const h = clamp(intOr(Number(it.h), 1), GRID_H_MIN, GRID_H_MAX);
+      const x = intOr(Number(it.x), -1) >= 0 ? Number(it.x) : null;
+      const y = intOr(Number(it.y), -1) >= 0 ? Number(it.y) : null;
+      out.push({ id, x, y, w, h });
+    }
+    return out;
+  }
+
+  /**
+   * dashboard 存档解析（localStorage 'lg-grid-v1'，charts.js 落盘格式
+   * { v:1, cards:[{id,type,title,state}], layout:[{id,x,y,w,h}] }）：
+   *   - JSON 坏 / 非对象 / cards 非数组 → null（调用方回退默认布局）；
+   *   - 逐卡清洗：id 唯一正整数、type 在 validTypes 白名单、state 走 parseCardState，
+   *     坏卡丢弃；有卡但全部被丢 → null（坏档回退默认，防"神秘清空"）；
+   *     cards 为空数组 = 用户主动删空，合法保留（添加图表按钮仍可重建）；
+   *   - layout 走 gridLayoutOf（非数组→null=全部自动布局；条目坏的单条丢弃）。
+   */
+  function parseGridSave(json, validTypes) {
+    let o;
+    try { o = JSON.parse(json); } catch (e) { return null; }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    if (!Array.isArray(o.cards)) return null;
+    const types = new Set(validTypes || []);
+    const seen = new Set();
+    const cards = [];
+    for (const c of o.cards) {
+      if (!c || typeof c !== 'object' || Array.isArray(c)) continue;
+      const id = Number(c.id);
+      const type = String(c.type || '');
+      if (!Number.isInteger(id) || id < 1 || seen.has(id) || !types.has(type)) continue;
+      seen.add(id);
+      cards.push({ id, type, title: String(c.title == null ? '' : c.title), state: parseCardState(c.state) });
+    }
+    if (o.cards.length > 0 && cards.length === 0) return null;
+    return { cards, layout: gridLayoutOf(o.layout, cards.map(c => c.id)) };
+  }
+
+  /** 下一张卡 id（=现存最大 id+1；空表从 1 起，纯函数便于单测） */
+  function nextCardId(cards) {
+    return (cards || []).reduce((a, c) => Math.max(a, Number(c && c.id) || 0), 0) + 1;
+  }
+
   const Core = {
     monthKeys, csvCell, csvRow, calculatorJobPayload,
     pickPipeline, pickPipelineForText, estimateLlmChunks,
@@ -399,7 +479,8 @@
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
     colwKey, clampColw, parseColw,
     normDate, dateRangeOf, quickRangeOf, weekRangeOf, barUiOf, parseBarState,
-    BAR_QUICKS,
+    parseCardState, parseGridSave, gridLayoutOf, nextCardId,
+    BAR_QUICKS, CARD_GRANS, GRID_COLUMNS,
     MAPS: { JOB_STATUS, SETTLEMENT_STATUS, BILL_STATUS, PAYMENT_CATEGORY, ADVANCE_DIRECTION, METHOD, PARTY_TYPE }
   };
 

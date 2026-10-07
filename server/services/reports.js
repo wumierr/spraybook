@@ -75,10 +75,15 @@ function byMonth(db, { from, to } = {}) {
 }
 
 /** 按客户盈利（收入科目挂 party_id）+ 欠款/预收余额
-    include_all=1（P4-M2）：parties 左连收入聚合，补齐「期内无收入但有欠款/预收」的客户 */
-function byCustomer(db, { from, to, include_all } = {}) {
+    include_all=1（P4-M2）：parties 左连收入聚合，补齐「期内无收入但有欠款/预收」的客户。
+    P10-R3 可选 county 过滤：include_all 分支锚点=p.county（客户本体），常规分支锚点=l.party_id
+    （与收入分录同源）；欠款/预收为时点值按 party_id 归户，客户属该县即全计入。 */
+function byCustomer(db, { from, to, include_all, county } = {}) {
   const { cond, args } = rangeCond(from, to, 'e.occurred_at');
   const rangeOn = cond.length ? 'AND ' + cond.join(' AND ') : '';
+  const cc = countyCond(county, 'l.party_id');
+  const countyAllOn = county ? ' AND p.county = ?' : '';
+  const countyAllArgs = county ? [county] : [];
   const income = include_all
     ? db.prepare(
       `SELECT p.id AS party_id, p.name,
@@ -87,9 +92,9 @@ function byCustomer(db, { from, to, include_all } = {}) {
        LEFT JOIN journal_lines l ON l.party_id = p.id
        LEFT JOIN journal_entries e ON e.id = l.entry_id ${rangeOn}
        LEFT JOIN accounts a ON a.id = l.account_id AND a.type='income'
-       WHERE p.deleted_at IS NULL
+       WHERE p.deleted_at IS NULL${countyAllOn}
        GROUP BY p.id ORDER BY income_cents DESC, p.id`
-    ).all(...args)
+    ).all(...args, ...countyAllArgs)
     : db.prepare(
       `SELECT l.party_id, p.name,
          COALESCE(SUM(CASE l.direction WHEN 'credit' THEN l.amount_cents ELSE -l.amount_cents END),0) AS income_cents
@@ -97,9 +102,9 @@ function byCustomer(db, { from, to, include_all } = {}) {
        JOIN journal_entries e ON e.id = l.entry_id
        JOIN accounts a ON a.id = l.account_id
        LEFT JOIN parties p ON p.id = l.party_id
-       WHERE a.type='income' AND l.party_id IS NOT NULL ${rangeOn}
+       WHERE a.type='income' AND l.party_id IS NOT NULL ${rangeOn}${cc.cond}
        GROUP BY l.party_id ORDER BY income_cents DESC`
-    ).all(...args);
+    ).all(...args, ...cc.args);
   const receivable = db.prepare(
     `SELECT party_id, COALESCE(SUM(amount_cents + adjust_cents - paid_cents),0) AS cents
      FROM bills WHERE status IN ('unpaid','partial') AND party_id IS NOT NULL GROUP BY party_id`).all();
@@ -264,18 +269,20 @@ function byPeriod(db, { granularity, from, to, county } = {}) {
 }
 
 /**
- * GET /api/reports/adjustments?granularity=&from=&to=
+ * GET /api/reports/adjustments?granularity=&from=&to=&county=
  * 账单口径回款专项：按 bills.issued_at 分桶、非 void 且 issued_at 非空。
  * 抹零 = Σ|adjust|（导入正数抹零与手工负数抹零统一按优惠计，双语义归一）；
  * 超收 = ΣMAX(0, paid − (amount − |adjust|))（createReceipt 手工超收校验保持不变，此处只统计）；
  * due 仅 unpaid/partial 计（与 overview 端点同式）；回收率 = collected/billed（分母 0 记 null，超收月份可 >100%）。
+ * P10-R3 可选 county 过滤（锚点=b.party_id，与 by-region 同源；未挂客户账单不归属任何市县，一并排除）。
  */
-function adjustments(db, { granularity, from, to } = {}) {
+function adjustments(db, { granularity, from, to, county } = {}) {
   const gran = granularity || 'month';
   if (!GRANULARITIES.includes(gran)) {
     throw new ApiError('VALIDATION', `granularity 必须是 ${GRANULARITIES.join('/')}`);
   }
   const range = rangeCond(from, to, 'b.issued_at');
+  const cc = countyCond(county, 'b.party_id');
   const rows = db.prepare(
     `SELECT ${bucketExpr(gran, 'b.issued_at')} AS period,
        MIN(SUBSTR(b.issued_at, 1, 10)) AS period_start,
@@ -287,9 +294,9 @@ function adjustments(db, { granularity, from, to } = {}) {
        COALESCE(SUM(CASE WHEN b.status IN ('unpaid','partial')
          THEN b.amount_cents - ABS(b.adjust_cents) - b.paid_cents ELSE 0 END), 0) AS due_cents
      FROM bills b
-     WHERE b.status != 'void' AND b.issued_at IS NOT NULL ${range.cond.length ? 'AND ' + range.cond.join(' AND ') : ''}
+     WHERE b.status != 'void' AND b.issued_at IS NOT NULL ${range.cond.length ? 'AND ' + range.cond.join(' AND ') : ''}${cc.cond}
      GROUP BY period ORDER BY period`
-  ).all(...range.args)
+  ).all(...range.args, ...cc.args)
     .map(r => ({
       ...r,
       label: periodLabel(r.period, gran, r.period_start),
@@ -304,34 +311,38 @@ function adjustments(db, { granularity, from, to } = {}) {
   }), { billed_cents: 0, collected_cents: 0, discount_cents: 0, overpaid_cents: 0, due_cents: 0 });
   t.collection_rate = t.billed_cents > 0 ? Math.round(t.collected_cents / t.billed_cents * 10000) / 100 : null;
   return {
-    granularity: gran, rows, totals: t,
+    granularity: gran, rows, totals: t, county: county || null,
     note: '回收率=实收/应收（账单 billed 口径）；抹零=Σ|adjust|（正负均按优惠金额计）；存在超收时回收率可>100%；红冲/作废账单不计。'
   };
 }
 
 /**
- * GET /api/reports/cost-breakdown?source=job|journal&from=&to=
+ * GET /api/reports/cost-breakdown?source=job|journal&from=&to=&county=
  * 两口径不可相加：job=作业归属成本快照（007 六列；导入单全 0），journal=支出付款凭证现金（5001-5007）。
+ * P10-R3 可选 county 过滤（与 R1 锚点同源）：journal 看分录行 party_id（=支出收款方挂客户，
+ * 未挂客户的付款凭证不归属任何市县，一并排除不猜归属）；job 走 countyJobCond（结算分项 party）。
  */
-function costBreakdown(db, { source, from, to } = {}) {
+function costBreakdown(db, { source, from, to, county } = {}) {
   if (source === 'journal') {
     const { cond, args } = rangeCond(from, to, 'e.occurred_at');
+    const cc = countyCond(county, 'l.party_id');
     const items = db.prepare(
       `SELECT a.code, a.name, COALESCE(SUM(CASE l.direction WHEN 'debit' THEN l.amount_cents ELSE -l.amount_cents END),0) AS cents
        FROM journal_lines l
        JOIN journal_entries e ON e.id = l.entry_id
        JOIN accounts a ON a.id = l.account_id
-       WHERE a.type='expense' AND a.code LIKE '500%' ${cond.length ? 'AND ' + cond.join(' AND ') : ''}
+       WHERE a.type='expense' AND a.code LIKE '500%' ${cond.length ? 'AND ' + cond.join(' AND ') : ''}${cc.cond}
        GROUP BY a.code ORDER BY a.code`
-    ).all(...args);
+    ).all(...args, ...cc.args);
     return {
-      source, items,
+      source, items, county: county || null,
       total_cents: items.reduce((a, c) => a + c.cents, 0),
       note: '账簿口径=支出付款凭证（现金时点）。与 source=job 的作业归属口径统计对象不同，两口径不可相加。'
     };
   }
   if (source === 'job') {
     const { cond, args } = rangeCond(from, to, 'j.job_date');
+    const jc = countyJobCond(county);
     // B3（P7-R1）：battery_depreciation_cents 存的是"元/次充电"费率（jobs.js 写侧语义），
     // 周期总额 = 费率 × charge_count（充电次数）；导入单费率为 NULL 不参与。
     const SUMS = `COALESCE(SUM(j.fuel_expense_cents),0) AS fuel_cents,
@@ -342,13 +353,13 @@ function costBreakdown(db, { source, from, to } = {}) {
        COALESCE(SUM(j.misc_cost_cents),0) AS misc_cents`;
     const r = db.prepare(
       `SELECT ${SUMS} FROM jobs j
-       WHERE j.deleted_at IS NULL AND j.status != 'void' ${cond.length ? 'AND ' + cond.join(' AND ') : ''}`
-    ).get(...args);
+       WHERE j.deleted_at IS NULL AND j.status != 'void' ${cond.length ? 'AND ' + cond.join(' AND ') : ''}${jc.cond}`
+    ).get(...args, ...jc.args);
     const rc = db.prepare(
       `SELECT ${SUMS} FROM jobs j
        WHERE j.deleted_at IS NULL AND j.status != 'void' AND j.source = 'calculator'
-         ${cond.length ? 'AND ' + cond.join(' AND ') : ''}`
-    ).get(...args);
+         ${cond.length ? 'AND ' + cond.join(' AND ') : ''}${jc.cond}`
+    ).get(...args, ...jc.args);
     const items = [
       { key: 'fuel', name: '油费', cents: r.fuel_cents },
       { key: 'battery', name: '电池折旧(元/次×次数)', cents: r.battery_cents },
@@ -361,7 +372,7 @@ function costBreakdown(db, { source, from, to } = {}) {
       rc.fuel_cents, rc.battery_cents, rc.labor_cents, rc.pesticide_cents, rc.equipment_cents, rc.misc_cents
     ];
     return {
-      source, items,
+      source, items, county: county || null,
       total_cents: items.reduce((a, c) => a + c.cents, 0),
       calculator_only_cents: calculatorOnly.reduce((a, c) => a + c, 0),
       import_zero_note: '导入单成本=0（导入历史无成本凭据），仅计算器单有值——合计虚低属预期。',
