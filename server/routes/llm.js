@@ -1,7 +1,9 @@
 /* ============================================================
    routes/llm.js — P8 LLM 导入端点
    GET  /api/llm/status → 前端按钮置灰依据（Ollama 连通性/模型/版本）
-   POST /api/llm/parse  {text, filename?} → 校验→staging「待入库」→ 复核视图
+   POST /api/llm/parse  {text, filename?, default_date?} → 校验→staging「待入库」→ 复核视图
+        （P9-R3：default_date 可选 YYYY-MM-DD，无日期条目按它记且进需复核；
+         长文本服务端自动分块，>500 行拒绝）
    ============================================================ */
 'use strict';
 
@@ -29,8 +31,8 @@ function createLlmRouter(db) {
 
   router.post('/llm/parse', async (req, res, next) => {
     try {
-      const { text, filename } = req.body || {};
-      const data = await parseTextToBatch(db, { text, filename });
+      const { text, filename, default_date } = req.body || {};
+      const data = await parseTextToBatch(db, { text, filename, defaultDate: default_date });
       res.json({ ok: true, data });
     } catch (err) { next(err); }
   });

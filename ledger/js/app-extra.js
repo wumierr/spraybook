@@ -12,6 +12,13 @@
   let mdMergeGroup = null;        // 弹窗当前展示的重复组（suspect_dupes 元素）
   let mdMergeReturnTab = 'master'; // 打开弹窗时的页签（确认/取消后回到哪页）
 
+  // P9-R3：默认日期=本地墙钟今天（不用 toISOString——UTC 会在凌晨误退一天，E1 教训）
+  function localToday() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+
   function renderImport() {
     return `<div class="lg-panel">
       <h2>粘贴计算器作业包（离线单；在计算器「导出 → ⬇ 下载作业包」后粘贴 JSON）</h2>
@@ -35,10 +42,11 @@
       <h2>🤖 粘贴文本（本地 LLM 整理；Ollama 全程本机运行）</h2>
       <textarea id="llmText" rows="5" placeholder="把杂乱记账记录粘进来，一行一条，例如：&#10;3月12日 李洪富 金桂村 打药 12亩 25元/亩 应收300 收300&#10;3.12 油钱200 加油站&#10;4月 收入540 不知道谁的" style="width:100%;font-size:13px"></textarea>
       <div class="lg-form" style="margin-top:8px">
+        <label>默认日期（无日期条目按此记，仍进需复核可改）<input type="date" id="llmDate" value="${localToday()}"></label>
         <button class="lg-btn primary" data-act="llm-parse" id="llmParseBtn">解析并预览</button>
         <span class="hint" id="llmStatus" style="color:var(--muted);font-size:12px">检查本机 LLM…</span>
       </div>
-      <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">硬约束：金额必须能在原文定位（防幻觉）、派生金额由代码算、拿不准自动进需复核；解析后进「待入库」，逐行确认后才落账</div>
+      <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">硬约束：金额必须能在原文定位（防幻觉）、派生金额由代码算、拿不准自动进需复核；解析后进「待入库」，逐行确认后才落账；长文本自动分块（>500 行请分天导入）</div>
     </div>
     <div class="lg-panel">
       <h2>批次</h2>
@@ -625,8 +633,11 @@
       case 'llm-parse': {
         const text = (document.getElementById('llmText') || {}).value || '';
         if (text.trim().length < 5) return toast('先把记账记录粘进文本框', true);
+        // P9-R3：默认日期随解析请求透传（无日期条目按它记，服务端标 date_default 进复核）
+        const dateEl = document.getElementById('llmDate');
+        const default_date = dateEl && dateEl.value ? dateEl.value : undefined;
         run(async () => {
-          const d = await Api.llmParse({ text, filename: '粘贴文本.txt' });
+          const d = await Api.llmParse({ text, filename: '粘贴文本.txt', default_date });
           document.getElementById('llmText').value = '';
           await loadImportBatches();
           await loadImportRows(d.batch_id);
@@ -634,7 +645,7 @@
         }, '解析完成，请逐行复核后落库').then(d => {
           if (d) {
             document.getElementById('impStats') && (document.getElementById('impStats').innerHTML =
-              `<div class="lg-detail">LLM 批次 #${d.batch_id}（模型 ${d.model}）：共 ${d.stats.rows} 行，无疑问 ${d.stats.ok}，<b>需复核 ${d.review_count}</b>。有疑虑的行逐条改字段或驳回；确认后点「确认并落库」。</div>`);
+              `<div class="lg-detail">LLM 批次 #${d.batch_id}（模型 ${d.model}${d.chunks > 1 ? `，分 ${d.chunks} 块` : ''}）：共 ${d.stats.rows} 行，无疑问 ${d.stats.ok}，<b>需复核 ${d.review_count}</b>。有疑虑的行逐条改字段或驳回；确认后点「确认并落库」。</div>`);
           }
         });
         break;

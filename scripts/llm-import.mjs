@@ -6,6 +6,7 @@
    用法：
      node scripts/llm-import.mjs <记录.txt>                 # 解析+预览（不落库）
      node scripts/llm-import.mjs <记录.txt> --apply        # 无疑自行确认并落库
+     node scripts/llm-import.mjs <记录.txt> --date 2026-04-01  # 无日期条目按此记（仍进复核）
      node scripts/llm-import.mjs <记录.txt> --db <app.db>  # 指定库（默认 SPRAYBOOK_DATA_DIR 或 data/app.db）
      node scripts/llm-import.mjs --status                  # 查 Ollama/模型状态
 
@@ -27,6 +28,8 @@ const { initDb, openDb } = require(path.join(ROOT, 'server', 'db', 'client.js'))
 const ollama = require(path.join(ROOT, 'server', 'services', 'ollamaClient.js'));
 const { parseTextToBatch } = require(path.join(ROOT, 'server', 'services', 'llmImport.js'));
 const { applyBatch } = require(path.join(ROOT, 'server', 'services', 'importApply.js'));
+const { appliedBatchMessage, duplicateReuseMessage }
+  = require(path.join(ROOT, 'scripts', 'llm-import-helpers.cjs'));
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -37,6 +40,9 @@ const dbFlag = flag('--db');
 const dataDir = process.env.SPRAYBOOK_DATA_DIR || path.join(ROOT, 'data');
 const dbPath = typeof dbFlag === 'string' ? dbFlag : path.join(dataDir, 'app.db');
 const apply = Boolean(flag('--apply'));
+// P9-R3：--date 透传 default_date（服务端校验 YYYY-MM-DD，非法报 VALIDATION）
+const dateFlag = flag('--date');
+const defaultDate = typeof dateFlag === 'string' ? dateFlag : undefined;
 
 function fmtYuan(c) { return (c / 100).toFixed(2); }
 
@@ -51,7 +57,7 @@ async function main() {
 
   const file = args.find(a => !a.startsWith('--'));
   if (!file) {
-    console.error('用法：node scripts/llm-import.mjs <记录.txt> [--apply] [--db <路径>] | --status');
+    console.error('用法：node scripts/llm-import.mjs <记录.txt> [--apply] [--date YYYY-MM-DD] [--db <路径>] | --status');
     process.exitCode = 1;
     return;
   }
@@ -65,17 +71,24 @@ async function main() {
     const crypto = await import('node:crypto');
     const hash = crypto.createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 32);
     try {
-      r = await parseTextToBatch(db, { text, filename: path.basename(file) });
+      r = await parseTextToBatch(db, { text, filename: path.basename(file), defaultDate });
       batchId = r.batch_id;
-      console.log(`[llm-import] 批次 #${batchId} 建立（模型 ${r.model}）：共 ${r.stats.rows} 行，无疑问 ${r.stats.ok}，需复核 ${r.stats.review}`);
+      console.log(`[llm-import] 批次 #${batchId} 建立（模型 ${r.model}${r.chunks > 1 ? `，分 ${r.chunks} 块` : ''}）：共 ${r.stats.rows} 行，无疑问 ${r.stats.ok}，需复核 ${r.stats.review}`);
     } catch (e) {
       if (e && e.code === 'DUPLICATE') {
         // 同文本已预览过 → 复用既有批次继续（先预览后 apply 的自然工作流）
         const dup = db.prepare('SELECT id FROM import_batches WHERE note LIKE ? ORDER BY id DESC').get(`%"hash":"${hash}"%`);
         if (!dup) { console.error('[llm-import] DUPLICATE 但找不到既有批次'); process.exitCode = 1; return; }
         batchId = dup.id;
-        console.log(`[llm-import] 同文本已导入过，复用批次 #${batchId} 继续`);
+        console.log(`[llm-import] ${duplicateReuseMessage(batchId)}`);
       } else { throw e; }
+    }
+
+    // P9-R3：--apply 遇已落库批次 → 友好提示并 exit 0（不再撞 INVALID_STATE 崩退）
+    if (apply) {
+      const b = db.prepare('SELECT id, status, imported_at FROM import_batches WHERE id = ?').get(batchId);
+      const appliedMsg = appliedBatchMessage(b);
+      if (appliedMsg) { console.log(`[llm-import] ${appliedMsg}`); return; }
     }
 
     const rows = db.prepare('SELECT * FROM raw_import_rows WHERE batch_id = ? ORDER BY id').all(batchId);

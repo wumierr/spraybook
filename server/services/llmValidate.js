@@ -50,12 +50,17 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * 校验 LLM 抽取的一行。row 形状见 ollamaClient.buildPrompt 的输出协议。
  * fullText 为用户原始粘贴文本（证据回源基准）。
+ * defaultDate（P9-R3，可选 YYYY-MM-DD）：job/income_pair 缺（有效）日期时
+ *   parsed.date=defaultDate 且 needs_review 标 date_default（仍进复核，宁多勿少）；
+ *   已有合法日期或未传 defaultDate 时行为与旧版完全一致。expense/note 不适用。
  * 返回 { kind, parsed, needs_review, confidence, ok } —— ok = needs_review 为空。
  */
-function validateRow(row, fullText) {
+function validateRow(row, fullText, defaultDate) {
   const needs = [];
   const reasons = [];
   const push = (code, detail) => needs.push({ code, detail });
+  // defaultDate 只认合法 YYYY-MM-DD（非法值按没传处理，绝不吃掉用户数据）
+  const def = typeof defaultDate === 'string' && DATE_RE.test(defaultDate) ? defaultDate : null;
 
   const normText = normalizeForMatch(fullText);
   const kind = row && row.kind;
@@ -100,8 +105,11 @@ function validateRow(row, fullText) {
   if (kind === 'job') {
     const name = String(src.name || '').trim();
     if (!name) push('name', '作业行缺姓名');
-    const date = DATE_RE.test(String(src.date || '')) ? src.date : null;
-    if (!date) push('date', src.date ? `日期非法: ${src.date}` : '缺日期');
+    let date = DATE_RE.test(String(src.date || '')) ? src.date : null;
+    if (!date) {
+      if (def) { date = def; push('date_default', `按默认日期 ${def} 记，可在预览修改`); }
+      else push('date', src.date ? `日期非法: ${src.date}` : '缺日期');
+    }
     const receivable = money(src, 'receivable_yuan', 'receivable_yuan');
     const paid = money(src, 'paid_yuan', 'paid_yuan');
     const discount = money(src, 'discount_yuan', 'discount_yuan');
@@ -157,8 +165,11 @@ function validateRow(row, fullText) {
   }
 
   if (kind === 'income_pair') {
-    const date = DATE_RE.test(String(src.date || '')) ? src.date : null;
-    if (!date) push('date', '无姓名收入对缺日期（落账将按当天记，建议补）');
+    let date = DATE_RE.test(String(src.date || '')) ? src.date : null;
+    if (!date) {
+      if (def) { date = def; push('date_default', `按默认日期 ${def} 记，可在预览修改`); }
+      else push('date', '无姓名收入对缺日期（落账将按当天记，建议补）');
+    }
     const amount = money(src, 'amount_yuan', 'amount_yuan');
     if (amount == null) push('amount', '收入对金额缺证据或非法');
     const parsed = {
@@ -176,9 +187,10 @@ function validateRow(row, fullText) {
     confidence: conf, ok: false };
 }
 
-/** 批量校验：rows = LLM 输出的 rows 数组，fullText = 原文。返回逐行结果数组。 */
-function validateRows(rows, fullText) {
-  return (Array.isArray(rows) ? rows : []).map(r => validateRow(r, fullText));
+/** 批量校验：rows = LLM 输出的 rows 数组，fullText = 原文（evidence 回源基准，分块时不改）。
+ *  defaultDate 透传 validateRow 第三参（可选）。 */
+function validateRows(rows, fullText, defaultDate) {
+  return (Array.isArray(rows) ? rows : []).map(r => validateRow(r, fullText, defaultDate));
 }
 
 module.exports = { validateRow, validateRows, amountInQuote, normalizeForMatch, LLM_KINDS, EXPENSE_CATEGORIES };

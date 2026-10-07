@@ -72,7 +72,8 @@
     importApply: (id) => Api.post('/api/import/batches/' + id + '/apply', {}),
     importRecon: (id) => Api.get('/api/import/batches/' + id + '/reconciliation'),
     importOpening: (b) => Api.post('/api/import/opening', b),
-    // P8：本地 LLM 文本导入
+    // P8 本地 LLM 文本导入；P9-R3 起 body 可含 default_date（YYYY-MM-DD，
+    // 无日期条目按它记）——llmParse 整包透传，调用方在 b 里带上即可
     llmParse: (b) => Api.post('/api/llm/parse', b),
     llmStatus: () => Api.get('/api/llm/status'),
     llmCancelBatch: (id) => Api.post('/api/llm/batches/' + id + '/cancel', {}),
