@@ -282,12 +282,124 @@
     return Math.max(Math.ceil(lines / 30), Math.ceil(s.length / 2500));
   }
 
+  /* ---------- 日期范围与总表数据条状态（P10-R2；纯函数，node:test 可测） ---------- */
+
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const BAR_QUICKS = ['total', 'day', 'week', 'month', 'quarter', 'year'];
+
+  /** 严格 YYYY-MM-DD 且为真实日历日（2026-2-3 / 2026-02-30 / 乱串 → null；调用方视同「未填」） */
+  function normDate(s) {
+    const v = String(s == null ? '' : s).trim();
+    if (!DATE_RE.test(v)) return null;
+    const [y, m, d] = v.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+    return v;
+  }
+
+  function pad2n(n) { return (n < 10 ? '0' : '') + n; }
+  /** Date(UTC) → 'YYYY-MM-DD'（weekRangeOf 内部换算专用，仅接受本文件 Date.UTC 产物） */
+  function dstrOf(d) { return `${d.getUTCFullYear()}-${pad2n(d.getUTCMonth() + 1)}-${pad2n(d.getUTCDate())}`; }
+
+  /**
+   * 周快捷区间（周一起始，与后端 %W 归桶口径对齐——reports.js bucketExpr week：
+   * printf('%d-W%02d', 年, strftime('%W'))，周一始自然周、年内首个周一前的日子记 W00）。
+   * 锚点落 W00 窗口时区间=当年 01-01..首个周一前一日（简单"取本周一"会落进上一年 12 月，
+   * 与图表周桶错位——app.js 旧 weekRange 同款口径，此处固化进纯函数层）。
+   */
+  function weekRangeOf(today) {
+    const d = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10))));
+    const dow = (d.getUTCDay() + 6) % 7; // 0=周一
+    const monday = new Date(d); monday.setUTCDate(monday.getUTCDate() - dow);
+    const y = d.getUTCFullYear();
+    const jan1 = new Date(Date.UTC(y, 0, 1));
+    const firstMonday = new Date(jan1);
+    firstMonday.setUTCDate(firstMonday.getUTCDate() + (7 - (jan1.getUTCDay() + 6) % 7) % 7);
+    if (monday < firstMonday) {
+      const w00end = new Date(firstMonday); w00end.setUTCDate(w00end.getUTCDate() - 1);
+      return { from: `${y}-01-01`, to: dstrOf(w00end) };
+    }
+    const sunday = new Date(monday); sunday.setUTCDate(sunday.getUTCDate() + 6);
+    return { from: dstrOf(monday), to: dstrOf(sunday) };
+  }
+
+  /** 快捷档原始区间（未交集）：total=全期→null；today 非法视同 total（退化为无快捷界） */
+  function quickRangeOf(quick, today) {
+    const t = normDate(today);
+    if (quick === 'total' || !t) return null;
+    const y = Number(t.slice(0, 4)), m = Number(t.slice(5, 7));
+    if (quick === 'day') return { from: t, to: t };
+    if (quick === 'week') return weekRangeOf(t);
+    if (quick === 'month') {
+      const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      return { from: `${y}-${pad2n(m)}-01`, to: `${y}-${pad2n(m)}-${pad2n(last)}` };
+    }
+    if (quick === 'quarter') {
+      const qs = Math.floor((m - 1) / 3) * 3 + 1, qe = qs + 2;
+      const last = new Date(Date.UTC(y, qe, 0)).getUTCDate();
+      return { from: `${y}-${pad2n(qs)}-01`, to: `${y}-${pad2n(qe)}-${pad2n(last)}` };
+    }
+    if (quick === 'year') return { from: `${y}-01-01`, to: `${y}-12-31` };
+    return null; // 未知档位按全期处理（调用方只会传六档，防御性兜底）
+  }
+
+  /**
+   * 数据条/图表卡生效区间（P10-R2 核心口径）：
+   *   dateRangeOf(quick, from, to, today) → null（全期）或 {from,to}（边可为 null=不设限）。
+   * from/to：用户手填边界（YYYY-MM-DD），非空时与快捷区间取交集（空边不设限）；
+   * 非法日期字符串视同空；交集为空（两界倒挂）时如实返回倒挂区间——服务端按零行统计，
+   * 不猜用户意图。两日期都填时快捷按钮的置灰由调用方负责（barUiOf.locked），
+   * 本函数不做特殊分支，任何 quick 都仍按交集返回。
+   */
+  function dateRangeOf(quick, from, to, today) {
+    const q = quickRangeOf(quick, today);
+    const f = normDate(from), t = normDate(to);
+    const lo = [q && q.from, f].filter(Boolean).sort().pop() || null; // 交集左界=取晚
+    const hi = [q && q.to, t].filter(Boolean).sort()[0] || null;     // 交集右界=取早
+    if (!lo && !hi) return null;
+    return { from: lo, to: hi };
+  }
+
+  /**
+   * 数据条 UI 派生（renderKpiBar 与单测共用一条口径）：
+   *   locked = 两日期都填（合法）→ 快捷按钮全部置灰，生效区间纯按 [from,to]；
+   *   quick  = locked 时强制 'total'（全期 ∩ [from,to] = [from,to]），否则沿用所选档
+   *            （存档越界/未知档回退 'total'）；range = dateRangeOf 最终生效区间。
+   */
+  function barUiOf(bar, today) {
+    const b = bar || {};
+    const from = normDate(b.from) || '', to = normDate(b.to) || '';
+    const locked = !!(from && to);
+    const quick = locked ? 'total' : (BAR_QUICKS.includes(b.quick) ? b.quick : 'total');
+    return { from, to, locked, quick, range: dateRangeOf(quick, from, to, today) };
+  }
+
+  /**
+   * 数据条状态存档解析（localStorage 'lg-bar-v1'）：坏 JSON / 非对象 / quick 越界 /
+   * 日期非法 → 整包 null（调用方回退默认档，parseColw 同款「坏档整包丢弃」口径）；
+   * from/to 用 '' 表示未填（与 date input 的 value 语义一致）。
+   */
+  function parseBarState(json) {
+    let o;
+    try { o = JSON.parse(json); } catch (e) { return null; }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    if (!BAR_QUICKS.includes(o.quick)) return null;
+    for (const k of ['from', 'to']) {
+      const v = o[k];
+      if (v == null || v === '') continue; // 未填（''/缺键）合法
+      if (!normDate(v)) return null;       // 其余值必须是合法日期，坏值整包丢弃
+    }
+    return { quick: o.quick, from: normDate(o.from) || '', to: normDate(o.to) || '' };
+  }
+
   const Core = {
     monthKeys, csvCell, csvRow, calculatorJobPayload,
     pickPipeline, pickPipelineForText, estimateLlmChunks,
     fmtYuan, yuanInputToCents, statusLabel,
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
     colwKey, clampColw, parseColw,
+    normDate, dateRangeOf, quickRangeOf, weekRangeOf, barUiOf, parseBarState,
+    BAR_QUICKS,
     MAPS: { JOB_STATUS, SETTLEMENT_STATUS, BILL_STATUS, PAYMENT_CATEGORY, ADVANCE_DIRECTION, METHOD, PARTY_TYPE }
   };
 

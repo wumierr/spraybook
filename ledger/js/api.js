@@ -27,6 +27,15 @@
     return j.data;
   }
 
+  /** 查询串拼装（P10-R2）：空/undefined/null 参数整体省略（全期=无 from/to；
+      服务端 validateRange 对空串报 VALIDATION，故绝不能拼 `from=&to=`） */
+  function qs(params) {
+    const parts = Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`);
+    return parts.length ? '?' + parts.join('&') : '';
+  }
+
   const Api = {
     get: (p) => request('GET', p),
     post: (p, b) => request('POST', p, b || {}),
@@ -59,11 +68,10 @@
     // P4-M1 总表（作业粒度聚合只读视图）
     overview: (params) => Api.get('/api/overview' + (params || '')),
     parties: () => Api.get('/api/parties'),
-    // P5-M2 总表数据条 / 图表页 C11/C12（区间聚合，金额 _cents）
-    barRange: (from, to) => Api.get(`/api/reports/by-range?from=${from}&to=${to}`),
-    byRegion: (level, from, to) =>
-      Api.get(`/api/reports/by-region?level=${level || 'region'}&from=${from}&to=${to}`),
-    byOperator: (from, to) => Api.get(`/api/reports/by-operator?from=${from}&to=${to}`),
+    // P5-M2 总表数据条 / 图表页 C11/C12（区间聚合，金额 _cents）；P10-R2 起空区间=全期（参数省略）
+    barRange: (from, to) => Api.get('/api/reports/by-range' + qs({ from, to })),
+    byRegion: (level, from, to) => Api.get('/api/reports/by-region' + qs({ level: level || 'region', from, to })),
+    byOperator: (from, to) => Api.get('/api/reports/by-operator' + qs({ from, to })),
     // M8 导入
     importParse: (filename, base64) => Api.post('/api/import/parse', { filename, base64 }),
     importBatches: () => Api.get('/api/import/batches'),

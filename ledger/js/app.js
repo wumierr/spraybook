@@ -538,7 +538,7 @@
         )}</td>
       </tr><tr hidden><td colspan="${OV_COLS}" class="lg-detail-slot" data-slot="${r.id}"></td></tr>`;
     }).join('');
-    return `${barData ? renderKpiBar(barData.range, barData.kpi, barData.region, barData.operator) : ''}
+    return `${barData ? renderKpiBar(barData.barUi, barData.kpi, barData.region, barData.operator) : ''}
     <div class="lg-panel">
       <h2>总表（原 Excel 全数据通看；行=作业单，账单字段按作业聚合）</h2>
       ${toolbarHtml('overview', { searchPh: '单号/客户/村队/来源/备注' })}
@@ -586,73 +586,50 @@
     </div>`;
   }
 
-  /* ---------- 总表顶部数据条（P5-M2 §3）：区间计算 ---------- */
+  /* ---------- 总表顶部数据条（P5-M2 §3；P10-R2 改两日期+快捷档，区间口径在 core.dateRangeOf） ---------- */
   function todayStr() {
     const d = new Date();
     const p = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
-  function pad2(n) { return String(n).padStart(2, '0'); }
-  function dstr(d) { return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; }
-  function parseD(s) { const [y, m, d] = String(s).split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); }
 
-  /** 周区间：复刻服务端 %W 归桶口径（reports.js bucketExpr week：周一始自然周，
-      年内首个周一前的日子记 W00）——锚点落 W00 窗口时区间=当年 1 月 1 日..首个周一前一日，
-      与图表周桶对齐（R1 建议 10）；简单"取本周一"会落到上一年 12 月而错位 */
-  function weekRange(anchor) {
-    const d = parseD(anchor);
-    const dow = (d.getUTCDay() + 6) % 7; // 0=周一
-    const monday = new Date(d); monday.setUTCDate(monday.getUTCDate() - dow);
-    const y = Number(String(anchor).slice(0, 4));
-    const jan1 = new Date(Date.UTC(y, 0, 1));
-    const firstMonday = new Date(jan1);
-    firstMonday.setUTCDate(firstMonday.getUTCDate() + (7 - (jan1.getUTCDay() + 6) % 7) % 7);
-    if (monday < firstMonday) {
-      const w00end = new Date(firstMonday); w00end.setUTCDate(w00end.getUTCDate() - 1);
-      return { from: `${y}-01-01`, to: dstr(w00end), w00: true };
-    }
-    const sunday = new Date(monday); sunday.setUTCDate(sunday.getUTCDate() + 6);
-    return { from: dstr(monday), to: dstr(sunday), w00: false };
+  /** 数据条状态持久化（P10-R2）：localStorage 'lg-bar-v1'，坏档整包回退默认（total=全期）——
+      与列宽（Core.parseColw）/市筛选（app-extra lg-md-county）同款存取模式 */
+  const BAR_KEY = 'lg-bar-v1';
+  function loadBarState() {
+    return Core.parseBarState(lsGet(BAR_KEY)) || { quick: 'total', from: '', to: '' };
+  }
+  function persistBar() { lsSet(BAR_KEY, JSON.stringify(state.bar)); }
+
+  /** 生效区间展示文案：null=全期；单边空=该边不设限 */
+  function barRangeLabel(range) {
+    if (!range || (!range.from && !range.to)) return '全期';
+    return `${range.from || '起'}..${range.to || '今'}`;
   }
 
-  /** 数据条 [from,to]：日/周/月/季/年（锚点=具体某日，改日期即切某日/周边/某月/某季/某年） */
-  function barRangeOf(bar) {
-    const a = /^\d{4}-\d{2}-\d{2}$/.test(bar.anchor || '') ? bar.anchor : todayStr();
-    if (bar.gran === 'day') return { from: a, to: a, note: `${a}（当日）` };
-    if (bar.gran === 'week') {
-      const r = weekRange(a);
-      return { from: r.from, to: r.to, note: `${r.from}..${r.to}（周${r.w00 ? '，W00 窗口' : ''}）` };
-    }
-    const y = Number(a.slice(0, 4)), m = Number(a.slice(5, 7));
-    if (bar.gran === 'month') {
-      const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-      return { from: `${y}-${pad2(m)}-01`, to: `${y}-${pad2(m)}-${pad2(last)}`, note: `${y}-${pad2(m)}（月）` };
-    }
-    if (bar.gran === 'quarter') {
-      const qs = Math.floor((m - 1) / 3) * 3 + 1, qe = qs + 2, qi = Math.floor((m - 1) / 3) + 1;
-      const last = new Date(Date.UTC(y, qe, 0)).getUTCDate();
-      return { from: `${y}-${pad2(qs)}-01`, to: `${y}-${pad2(qe)}-${pad2(last)}`, note: `${y} Q${qi}（季）` };
-    }
-    return { from: `${y}-01-01`, to: `${y}-12-31`, note: `${y}（年）` };
-  }
-
-  /** KPI 数据条 DOM（收支三卡 + 单数/亩数/客户数 + 粒度/锚点 + 两张小图） */
-  function renderKpiBar(range, kpi, region, operator) {
-    const granDef = [['day', '日'], ['week', '周'], ['month', '月'], ['quarter', '季'], ['year', '年']];
-    const btns = granDef.map(([v, t]) =>
-      `<button class="lg-btn ${state.bar.gran === v ? 'primary' : ''}" data-act="bar-gran" data-gran="${v}">${t}</button>`).join('');
+  /** KPI 数据条 DOM（收支三卡 + 单数/亩数/客户数 + 老日期——新日期 + 总/日/周/月/季/年快捷 + 两张小图）。
+      区间口径全部来自 Core.barUiOf 纯函数（置灰/生效区间共用一条测试口径） */
+  function renderKpiBar(barUi, kpi, region, operator) {
+    const QUICK_TEXT = { total: '总', day: '日', week: '周', month: '月', quarter: '季', year: '年' };
+    const btns = Core.BAR_QUICKS.map(k =>
+      `<button class="lg-btn ${barUi.quick === k ? 'primary' : ''}" data-act="bar-quick" data-quick="${k}"${barUi.locked ? ' disabled title="两个日期都填时按所选区间统计；清空任一侧恢复快捷"' : ''}>${QUICK_TEXT[k]}</button>`).join('');
     const fmt = c => Core.fmtYuan(c);
     const pCount = (parties || []).length;
     const un = operator && operator.unrecorded;
+    const rangeNote = barRangeLabel(barUi.range);
     return `<div class="lg-kpis" id="lgKpiBar">
-      <div class="lg-kpi"><span class="lg-kpi-label">收入(元)</span><b class="lg-kpi-num">${fmt(kpi.income_cents)}</b><span class="lg-kpi-sub">${esc(range.note)}</span></div>
-      <div class="lg-kpi"><span class="lg-kpi-label">支出(元)</span><b class="lg-kpi-num">${fmt(kpi.expense_cents)}</b><span class="lg-kpi-sub">${esc(range.from)}..${esc(range.to)}</span></div>
+      <div class="lg-kpi"><span class="lg-kpi-label">收入(元)</span><b class="lg-kpi-num">${fmt(kpi.income_cents)}</b><span class="lg-kpi-sub">${esc(rangeNote)}</span></div>
+      <div class="lg-kpi"><span class="lg-kpi-label">支出(元)</span><b class="lg-kpi-num">${fmt(kpi.expense_cents)}</b><span class="lg-kpi-sub">${esc(rangeNote)}</span></div>
       <div class="lg-kpi"><span class="lg-kpi-label">利润(元)</span><b class="lg-kpi-num ${kpi.profit_cents < 0 ? 'bad' : ''}">${fmt(kpi.profit_cents)}</b><span class="lg-kpi-sub">收入/支出=账簿确认口径</span></div>
       <div class="lg-kpi"><span class="lg-kpi-label">作业单数</span><b class="lg-kpi-num">${kpi.jobs_count}</b><span class="lg-kpi-sub">亩数 ${kpi.area_mu ?? '—'}（作业口径）</span></div>
       <div class="lg-kpi"><span class="lg-kpi-label">客户数</span><b class="lg-kpi-num">${kpi.customer_count}</b><span class="lg-kpi-sub">本期作业客户 · 总数 ${pCount}（启用）</span></div>
-      <div class="lg-kpi lg-kpi--ctrl"><span class="lg-kpi-label">区间（改日期即切某日/周边/某月…）</span>
+      <div class="lg-kpi lg-kpi--ctrl"><span class="lg-kpi-label">区间（老日期 —— 新日期；快捷按今天算）</span>
         <div class="lg-gran">${btns}</div>
-        <input type="date" id="barAnchor" value="${esc(state.bar.anchor)}" title="锚点日期：当日/该周边/该月/该季/该年">
+        <span class="lg-bardates">
+          <input type="date" id="barFrom" value="${esc(barUi.from)}" title="老日期（起始；可空=不设限）">
+          <span>——</span>
+          <input type="date" id="barTo" value="${esc(barUi.to)}" title="新日期（截止；可空=不设限）">
+        </span>
       </div>
       <div class="lg-kpi lg-kpi--chart"><span class="lg-kpi-label">地区收入占比${(region && region.rows || []).some(r => r.label === '(未填)') ? '（含未填）' : ''}</span><div class="lg-chart-canvas" data-chart="bar-region"></div></div>
       <div class="lg-kpi lg-kpi--chart"><span class="lg-kpi-label">飞手收入占比${un && un.income_cents > 0 ? `（未记录 ${un.jobs_count} 单）` : ''}</span><div class="lg-chart-canvas" data-chart="bar-operator"></div></div>
@@ -660,7 +637,7 @@
   }
 
   /* ---------- 渲染调度 ---------- */
-  const state = { tab: 'overview', _advances: [], month: {}, editMode: {}, filter: {}, custFilter: null, bar: { gran: 'day', anchor: todayStr() } };
+  const state = { tab: 'overview', _advances: [], month: {}, editMode: {}, filter: {}, custFilter: null, bar: loadBarState() };
 
   function editMode(tab) { return !!state.editMode[tab]; }
 
@@ -735,14 +712,18 @@
     if (tab === 'overview') {
       // 预收下拉依赖 state._advances（同 payments 分支）；支出面板块复用 payments 列表
       state._advances = await Api.advances();
-      const range = barRangeOf(state.bar);
+      // P10-R2 数据条：生效区间走 core.barUiOf/dateRangeOf 纯函数——
+      // 两日期都填=纯按 [from,to]（快捷置灰）；空/只填一边=快捷区间交集（空边不设限）；
+      // null=全期（API 侧空参数省略，服务端不过滤）
+      const barUi = Core.barUiOf(state.bar, todayStr());
+      const rf = (barUi.range && barUi.range.from) || '', rt = (barUi.range && barUi.range.to) || '';
       const [data, pays, kpi, region, operator] = await Promise.all([
         Api.overview(), Api.payments(),
-        Api.barRange(range.from, range.to),
-        Api.byRegion('region', range.from, range.to),
-        Api.byOperator(range.from, range.to)
+        Api.barRange(rf, rt),
+        Api.byRegion('region', rf, rt),
+        Api.byOperator(rf, rt)
       ]);
-      $main.innerHTML = renderOverview(data, pays, { range, kpi, region, operator });
+      $main.innerHTML = renderOverview(data, pays, { barUi, kpi, region, operator });
       // 数据条两张小图（地区环图 + 飞手饼图；复用 charts.js 实例注册表；vendor 缺失时内部降级提示）
       if (window.LedgerCharts && window.LedgerCharts.mountMini) {
         window.LedgerCharts.mountMini(document.getElementById('lgKpiBar'), { region, operator });
@@ -964,9 +945,12 @@
   });
   $main.addEventListener('change', e => {
     const el = e.target;
-    if (el.id === 'barAnchor') {
-      // P5-M2 数据条：改锚点日期即按当前档位重算区间（清空不触发，避免空区间请求）
-      if (el.value) { state.bar.anchor = el.value; render().catch(err => toast(err.message, true)); }
+    if (el.id === 'barFrom' || el.id === 'barTo') {
+      // P10-R2 数据条：老/新日期任一改动即按交集口径重算（清空=该边不设限，允许触发；
+      // 两日期都填后快捷按钮由 renderKpiBar 置灰——Core.barUiOf.locked 单一口径）
+      state.bar[el.id === 'barFrom' ? 'from' : 'to'] = el.value || '';
+      persistBar();
+      render().catch(err => toast(err.message, true));
       return;
     }
     if (el.id !== 'ftStatus' && el.id !== 'ftCategory') return;
@@ -1209,9 +1193,12 @@
         state.month[btn.dataset.tab] = btn.dataset.month;
         render().catch(err => toast(err.message, true));
         break;
-      case 'bar-gran':
-        // P5-M2 数据条：切 日/周/月/季/年（区间按锚点重算后重渲染）
-        state.bar.gran = btn.dataset.gran;
+      case 'bar-quick':
+        // P10-R2 数据条快捷档：总/日/周/月/季/年（基于今天的本日/本周/本月/本季/本年，总=全期；
+        // 生效区间=快捷区间与已填日期取交集）。两日期都填时按钮置灰不会触发，防御性再拦一道
+        if (Core.barUiOf(state.bar, todayStr()).locked) break;
+        state.bar.quick = btn.dataset.quick;
+        persistBar();
         render().catch(err => toast(err.message, true));
         break;
       case 'gran-set':
