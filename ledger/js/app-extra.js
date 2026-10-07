@@ -26,7 +26,7 @@
     // 旧三面板收进「手动选择管线」折叠区，全部 id/data-act 原样保留（老习惯零回归）。
     return `<div class="lg-panel" id="impInbox">
       <h2>📥 导入收件箱（拖文件 / 点选文件 / 粘贴文本，按类型自动分派）</h2>
-      <label id="impDrop" for="impInboxFile" title="点击选择文件，或把文件拖进虚线框">
+      <label id="impDrop" class="imp-drop" for="impInboxFile" title="点击选择文件，或把文件拖进虚线框">
         <input type="file" id="impInboxFile" multiple accept=".xlsx,.json,.txt,.md" hidden>
         <b>把文件拖到这里，或点击选择文件</b><br>
         <span>.xlsx 月度记账表 → Excel 复核管线 · .json 作业包 → 计算器导入 · .txt / .md → 本机 LLM 文本管线</span>
@@ -261,7 +261,11 @@
     return true;
   }
 
-  /** 单文件分派：扩展名 → 管线；未识别给可读提示（不猜内容，D1 裁决） */
+  /** 单文件分派：扩展名 → 管线；未识别给可读提示（不猜内容，D1 裁决）。
+      p9-r4 评审#2：fileToText 等管线调用之前的失败（FileReader onerror）也曾把
+      「⏳ 处理中」busy 行永久滞留并中断多文件循环——整段包 try/catch/finally：
+      任何异常都 toast+收件箱持久提示、busy 行必清（finally 与管线内部的
+      busy.remove 幂等叠加，remove 在已分离节点上是 no-op）。 */
   async function inboxOneFile(f) {
     const pipe = Core.pickPipeline(f.name);
     if (!pipe) {
@@ -270,17 +274,28 @@
       return;
     }
     const busy = inboxBusyLine(`<b>${esc(f.name)}</b> → ${pipe === 'excel' ? 'Excel 复核管线' : pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
-    if (pipe === 'excel') return inboxExcel(f, busy);
-    const text = await fileToText(f);
-    if (pipe === 'calcjson') return inboxCalcJson(text, f.name, busy);
-    return inboxLlm(text, f.name, busy);
+    try {
+      if (pipe === 'excel') return await inboxExcel(f, busy);
+      const text = await fileToText(f);
+      if (pipe === 'calcjson') return await inboxCalcJson(text, f.name, busy);
+      return await inboxLlm(text, f.name, busy);
+    } catch (e) {
+      toast(e.message, true);
+      inboxAppend(`✗ <b>${esc(f.name)}</b>：${esc(e.message)}`);
+    } finally {
+      busy.remove();
+    }
   }
 
-  /** 多文件按序处理（拖拽可多选；结果逐行追加进收件箱反馈区） */
+  /** 多文件按序处理（拖拽可多选；结果逐行追加进收件箱反馈区）。
+      p9-r4 评审#2：逐文件 try 兜底——单文件意外异常不再中断循环，后续文件继续。 */
   async function inboxHandleFiles(fileList) {
     const list = [...(fileList || [])];
     if (!list.length) return;
-    for (const f of list) await inboxOneFile(f);
+    for (const f of list) {
+      try { await inboxOneFile(f); }
+      catch (e) { toast(e.message, true); inboxAppend(`✗ <b>${esc(f.name)}</b>：${esc(e.message)}`); }
+    }
   }
 
   /** 粘贴框内容分派（Ctrl+V 自动触发 + 「送入管线」按钮共用；失败时内容保留可改） */
