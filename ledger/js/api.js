@@ -86,8 +86,8 @@
     masterList: (t) => Api.get('/api/master/' + t),
     masterCreate: (t, b) => Api.post('/api/' + t, b),
     masterPatch: (t, id, b) => Api.patch('/api/' + t + '/' + id, b),
-    // P9-R2 数据体检 + 客户合并
-    dataHealth: () => Api.get('/api/data-health'),
+    // P9-R2 数据体检 + 客户合并；P10-R1 起体检可选市县过滤（?county=，缺省=全部）
+    dataHealth: (county) => Api.get('/api/data-health' + (county ? '?county=' + encodeURIComponent(county) : '')),
     dismissHealth: (key) => Api.post('/api/data-health/dismiss', { key }),
     mergeParties: (b) => Api.post('/api/master/parties/merge', b),
     settings: () => Api.get('/api/settings'),

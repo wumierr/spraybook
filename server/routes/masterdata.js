@@ -11,7 +11,7 @@ const { logEdit } = require('../services/audit');
 const { mergeParties } = require('../services/merge');
 
 const TABLES = {
-  parties: ['name', 'phone', 'address', 'region', 'village', 'team', 'default_price_cents', 'default_area_mu', 'notes', 'enabled', 'type'],
+  parties: ['name', 'phone', 'address', 'region', 'village', 'team', 'county', 'default_price_cents', 'default_area_mu', 'notes', 'enabled', 'type'],
   plots: ['party_id', 'name', 'area_mu', 'notes'],
   chemicals: ['key', 'name', 'icon', 'water_per_mu', 'pesticide_water_per_set', 'drone_saving_coeff', 'price_cents_per_set', 'description', 'notes', 'flight_height', 'line_spacing', 'flight_speed'],
   equipment: ['name', 'kind', 'cycles_count', 'notes', 'status'],
@@ -131,11 +131,16 @@ function createMasterdataRouter(db) {
   const filterDismissed = (items, dismissed) => items.filter(it => !dismissed.includes(it.key));
 
   router.get('/data-health', (req, res) => {
-    const live = `type='customer' AND deleted_at IS NULL`;
+    // P10-R1：可选市县过滤（?county=，空/缺省=全部不过滤）。四个主数据桶
+    // （同名/村异写/region 未填/空电话）按 parties.county 过滤；金额离群是
+    // payments 口径（油费/餐费等支出不归属市县，payee 多为空），保持全库不动。
+    const county = req.query.county ? String(req.query.county) : null;
+    const live = `type='customer' AND deleted_at IS NULL${county ? ' AND county = ?' : ''}`;
+    const liveArgs = county ? [county] : [];
 
     /* 疑似重复：同名组（成员带 id/村/电话/单数/金额/最近作业，供合并预览并排对照） */
     const dupeNames = db.prepare(
-      `SELECT name, COUNT(*) AS n FROM parties WHERE ${live} GROUP BY name HAVING n > 1 ORDER BY n DESC, name`).all();
+      `SELECT name, COUNT(*) AS n FROM parties WHERE ${live} GROUP BY name HAVING n > 1 ORDER BY n DESC, name`).all(...liveArgs);
     // 最近作业只按 farmer_ref=party.id 精确关联（导入路径写入的 String(id)）。
     // 不做 farmer_name 近似：同名组成员恰好按 name 成组，name 匹配会把另一成员的
     // 作业日期算到自己头上，合并预览的决策信号会误导（评审 #3）。
@@ -153,14 +158,14 @@ function createMasterdataRouter(db) {
     const suspect_dupes = dupeNames.map(g => ({
       key: `dupe:${g.name}`,
       name: g.name,
-      members: db.prepare(`SELECT id FROM parties WHERE ${live} AND name = ? ORDER BY id`).all(g.name)
+      members: db.prepare(`SELECT id FROM parties WHERE ${live} AND name = ? ORDER BY id`).all(...liveArgs, g.name)
         .map(r => memberStmt.get(r.id))
     }));
 
     /* 村名多写：互为前缀的两个在用村名（金桂/金桂村、大发/大发梁子形态） */
     const villages = db.prepare(
       `SELECT village, COUNT(*) AS n FROM parties WHERE ${live} AND village IS NOT NULL AND village != ''
-       GROUP BY village ORDER BY n DESC, village`).all();
+       GROUP BY village ORDER BY n DESC, village`).all(...liveArgs);
     const village_variants = [];
     for (let i = 0; i < villages.length; i++) {
       for (let j = i + 1; j < villages.length; j++) {
@@ -182,10 +187,10 @@ function createMasterdataRouter(db) {
 
     const region_missing = db.prepare(
       `SELECT id, name, village, team FROM parties WHERE ${live} AND (region IS NULL OR region = '')
-       ORDER BY village, id`).all().map(r => ({ ...r, key: `region_missing:${r.id}` }));
+       ORDER BY village, id`).all(...liveArgs).map(r => ({ ...r, key: `region_missing:${r.id}` }));
     const no_phone = db.prepare(
       `SELECT id, name, village, team FROM parties WHERE ${live} AND (phone IS NULL OR phone = '')
-       ORDER BY village, id`).all().map(r => ({ ...r, key: `no_phone:${r.id}` }));
+       ORDER BY village, id`).all(...liveArgs).map(r => ({ ...r, key: `no_phone:${r.id}` }));
     const amount_outliers = db.prepare(
       `SELECT id, payment_no, category, amount_cents, occurred_at, note
          FROM payments WHERE status = 'active' AND amount_cents > ?
@@ -197,6 +202,7 @@ function createMasterdataRouter(db) {
       ok: true,
       data: {
         generated_at: new Date().toISOString(),
+        county, // P10-R1：本次体检的市县过滤口径（null=全部）
         dismissed_count: dismissed.length,
         suspect_dupes: filterDismissed(suspect_dupes, dismissed),
         village_variants: filterDismissed(village_variants, dismissed),
@@ -253,7 +259,7 @@ function createMasterdataRouter(db) {
   /* ---- 计算器读反哺 ---- */
   router.get('/bootstrap', (req, res) => {
     const parties = db.prepare(
-      `SELECT id, type, name, phone, village, team, default_price_cents, default_area_mu, notes
+      `SELECT id, type, name, phone, county, village, team, default_price_cents, default_area_mu, notes
        FROM parties WHERE deleted_at IS NULL AND enabled = 1 ORDER BY type, name`).all();
     const chemicals = db.prepare(
       `SELECT * FROM chemicals WHERE deleted_at IS NULL ORDER BY id`).all();

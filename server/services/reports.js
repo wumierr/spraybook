@@ -188,16 +188,19 @@ function periodLabel(period, granularity, periodStart) {
 }
 
 /**
- * GET /api/reports/by-period?granularity=month|week|quarter|year&from=&to=
+ * GET /api/reports/by-period?granularity=month|week|quarter|year&from=&to=&county=
  * 双轴分桶，避免账簿（确认时点 occurred_at）/作业（job_date）混轴：
  *   pl[]   = 盈亏轴（journal income/expense 科目，按凭证 occurred_at 分桶）
  *   work[] = 作业轴（jobs 快照，按 job_date 分桶；customer_count=结算分项挂 party 去重数）
+ * 可选 county 过滤两轴各自生效（pl 看分录行 party_id、work 看结算分项 party_id），
+ * 两轴口径不可相加的原则不动。
  */
-function byPeriod(db, { granularity, from, to } = {}) {
+function byPeriod(db, { granularity, from, to, county } = {}) {
   if (!GRANULARITIES.includes(granularity)) {
     throw new ApiError('VALIDATION', `granularity 必须是 ${GRANULARITIES.join('/')}`);
   }
   const plRange = rangeCond(from, to, 'e.occurred_at');
+  const plCc = countyCond(county, 'l.party_id');
   const pl = db.prepare(
     `SELECT ${bucketExpr(granularity, 'e.occurred_at')} AS period,
        MIN(SUBSTR(e.occurred_at, 1, 10)) AS period_start,
@@ -207,9 +210,9 @@ function byPeriod(db, { granularity, from, to } = {}) {
      FROM journal_lines l
      JOIN journal_entries e ON e.id = l.entry_id
      JOIN accounts a ON a.id = l.account_id
-     WHERE a.type IN ('income','expense') ${plRange.cond.length ? 'AND ' + plRange.cond.join(' AND ') : ''}
+     WHERE a.type IN ('income','expense') ${plRange.cond.length ? 'AND ' + plRange.cond.join(' AND ') : ''}${plCc.cond}
      GROUP BY period ORDER BY period`
-  ).all(...plRange.args)
+  ).all(...plRange.args, ...plCc.args)
     .map((r, i, arr) => {
       const prev = i > 0 ? arr[i - 1] : null;
       return {
@@ -221,9 +224,9 @@ function byPeriod(db, { granularity, from, to } = {}) {
       };
     });
   const workRange = rangeCond(from, to, 'j.job_date');
-  const workWhere = `j.deleted_at IS NULL AND j.status != 'void' ${workRange.cond.length ? 'AND ' + workRange.cond.join(' AND ') : ''}`;
-  const workArgs = workRange.args;
-  // 作业数/亩数按 jobs 单表聚合（JOIN 结算分项会把面积乘以分项行数）
+  const workRangeSql = workRange.cond.length ? 'AND ' + workRange.cond.join(' AND ') : '';
+  // 作业数/亩数按 jobs 单表聚合（JOIN 结算分项会把面积乘以分项行数）；county 过滤走 EXISTS
+  const workCc = countyJobCond(county);
   const workBase = db.prepare(
     `SELECT ${bucketExpr(granularity, 'j.job_date')} AS period,
        MIN(j.job_date) AS period_start,
@@ -231,19 +234,20 @@ function byPeriod(db, { granularity, from, to } = {}) {
        COUNT(*) AS jobs_count,
        ROUND(COALESCE(SUM(j.total_area_mu), 0), 2) AS area_mu
      FROM jobs j
-     WHERE ${workWhere}
+     WHERE j.deleted_at IS NULL AND j.status != 'void' ${workRangeSql}${workCc.cond}
      GROUP BY period ORDER BY period`
-  ).all(...workArgs);
+  ).all(...workRange.args, ...workCc.args);
   // 客户数 = 结算分项挂 party 去重（创建时挂 party_id；确认分录行同样挂），单独聚合并按桶合并
+  const custCc = countyCond(county, 'si.party_id');
   const custRows = db.prepare(
     `SELECT ${bucketExpr(granularity, 'j.job_date')} AS period,
        COUNT(DISTINCT si.party_id) AS customer_count
      FROM jobs j
      JOIN settlements s ON s.job_id = j.id AND s.status != 'void'
      JOIN settlement_items si ON si.settlement_id = s.id
-     WHERE ${workWhere}
+     WHERE j.deleted_at IS NULL AND j.status != 'void' ${workRangeSql}${custCc.cond}
      GROUP BY period`
-  ).all(...workArgs);
+  ).all(...workRange.args, ...custCc.args);
   const custMap = new Map(custRows.map(r => [r.period, r.customer_count]));
   const work = workBase
     .map(r => ({ ...r, customer_count: custMap.get(r.period) || 0 }))
@@ -256,7 +260,7 @@ function byPeriod(db, { granularity, from, to } = {}) {
         area_pct: pct(r.area_mu, prev && prev.area_mu)
       };
     });
-  return { granularity, pl, work };
+  return { granularity, county: county || null, pl, work };
 }
 
 /**
@@ -408,15 +412,44 @@ function jobBillJoin(from, to) {
   return { where, args: range.args };
 }
 
+/* ============================================================
+   P10-R1 可选市县过滤（?county=，空/缺省=全部不过滤）
+   口径：金额/行归属看 party_id——锚点列的 party_id 必须命中该市县客户
+   （bills/结算分项/收入分录三处同源：confirmSettlement 把分项 party_id
+   抄进 bills 与 6001/6002 分录行）。未挂客户（party_id 空）不属于任何
+   市县 → 过滤时一并排除（不猜归属，B5 同款原则）；缺省时零行为变化。
+   ============================================================ */
+
+/** 已带 party 列的查询：`AND {col} IN (该市县客户)` */
+function countyCond(county, col) {
+  if (!county) return { cond: '', args: [] };
+  return { cond: ` AND ${col} IN (SELECT id FROM parties WHERE county = ?)`, args: [county] };
+}
+
+/** jobs 单表聚合（单数/亩数）：经结算分项 EXISTS 定位作业涉及的市县客户，
+ *  EXISTS 不放大行数（分项多行只算一单）。 */
+function countyJobCond(county) {
+  if (!county) return { cond: '', args: [] };
+  return {
+    cond: ` AND EXISTS (
+      SELECT 1 FROM settlements s2
+      JOIN settlement_items si2 ON si2.settlement_id = s2.id
+      WHERE s2.job_id = j.id AND s2.status != 'void'
+        AND si2.party_id IN (SELECT id FROM parties WHERE county = ?))`,
+    args: [county]
+  };
+}
+
 /**
- * GET /api/reports/by-range?from=&to=
+ * GET /api/reports/by-range?from=&to=&county=
  * 总表数据条 KPI：损益走账簿轴（occurred_at 区间，与 summary 同表达式），
  * 计数/亩数/客户数走作业轴（job_date 区间；客户数=结算分项挂 party 去重）。
  * 不扩 GRANULARITIES 白名单（'day' 不加桶语义，区间参数更通用）。
  */
-function byRange(db, { from, to } = {}) {
+function byRange(db, { from, to, county } = {}) {
   validateRange({ from, to });
   const { cond, args } = rangeCond(from, to, 'e.occurred_at');
+  const cc = countyCond(county, 'l.party_id');
   const pl = db.prepare(
     `SELECT
        COALESCE(SUM(CASE WHEN a.type='income' THEN (CASE l.direction WHEN 'credit' THEN l.amount_cents ELSE -l.amount_cents END) END),0) AS income_cents,
@@ -424,11 +457,11 @@ function byRange(db, { from, to } = {}) {
      FROM journal_lines l
      JOIN journal_entries e ON e.id = l.entry_id
      JOIN accounts a ON a.id = l.account_id
-     WHERE a.type IN ('income','expense') ${cond.length ? 'AND ' + cond.join(' AND ') : ''}`
-  ).get(...args);
-  const work = jobBillJoinlessCounts(db, from, to);
+     WHERE a.type IN ('income','expense') ${cond.length ? 'AND ' + cond.join(' AND ') : ''}${cc.cond}`
+  ).get(...args, ...cc.args);
+  const work = jobBillJoinlessCounts(db, from, to, county);
   return {
-    from: from || null, to: to || null,
+    from: from || null, to: to || null, county: county || null,
     income_cents: pl.income_cents,
     expense_cents: pl.expense_cents,
     profit_cents: pl.income_cents - pl.expense_cents,
@@ -439,35 +472,38 @@ function byRange(db, { from, to } = {}) {
 }
 
 /** 作业轴计数包：单数/亩数（jobs 单表聚合）+ 客户数（结算分项挂 party 去重，同 byPeriod 口径） */
-function jobBillJoinlessCounts(db, from, to) {
+function jobBillJoinlessCounts(db, from, to, county) {
   const { cond, args } = rangeCond(from, to, 'j.job_date');
-  const workWhere = `j.deleted_at IS NULL AND j.status != 'void' ${cond.length ? 'AND ' + cond.join(' AND ') : ''}`;
+  const range = cond.length ? 'AND ' + cond.join(' AND ') : '';
+  const jc = countyJobCond(county);
   const base = db.prepare(
     `SELECT COUNT(*) AS jobs_count, ROUND(COALESCE(SUM(j.total_area_mu), 0), 2) AS area_mu
-     FROM jobs j WHERE ${workWhere}`
-  ).get(...args);
+     FROM jobs j WHERE j.deleted_at IS NULL AND j.status != 'void' ${range}${jc.cond}`
+  ).get(...args, ...jc.args);
+  const sc = countyCond(county, 'si.party_id');
   const cust = db.prepare(
     `SELECT COUNT(DISTINCT si.party_id) AS customer_count
      FROM jobs j
      JOIN settlements s ON s.job_id = j.id AND s.status != 'void'
      JOIN settlement_items si ON si.settlement_id = s.id
-     WHERE ${workWhere}`
-  ).get(...args);
+     WHERE j.deleted_at IS NULL AND j.status != 'void' ${range}${sc.cond}`
+  ).get(...args, ...sc.args);
   return { jobs_count: base.jobs_count, area_mu: base.area_mu, customer_count: cust.customer_count };
 }
 
 /**
- * GET /api/reports/by-region?level=region|village&from=&to=
+ * GET /api/reports/by-region?level=region|village&from=&to=&county=
  * 地区收入占比：Σ账单金额按客户主数据 region（village 级=region·village）分桶。
  * 守恒：rows[].income_cents 合计 = 区间内非 void 账单合计；(未填) 桶必须返回。
  */
-function byRegion(db, { level, from, to } = {}) {
+function byRegion(db, { level, from, to, county } = {}) {
   validateRange({ from, to });
   const lv = level || 'region';
   if (!['region', 'village'].includes(lv)) {
     throw new ApiError('VALIDATION', 'level 必须是 region / village');
   }
-  const { where, args } = jobBillJoin(from, to);
+  const jb = jobBillJoin(from, to);
+  const cc = countyCond(county, 'b.party_id');
   const regionExpr = lv === 'region'
     ? `COALESCE(NULLIF(TRIM(p.region), ''), '未填写')`
     : `COALESCE(NULLIF(TRIM(p.region), ''), '未填写') || '·' || COALESCE(NULLIF(TRIM(p.village), ''), '未填写')`;
@@ -479,15 +515,15 @@ function byRegion(db, { level, from, to } = {}) {
      JOIN settlements s ON s.job_id = j.id AND s.status != 'void'
      JOIN bills b ON b.settlement_id = s.id AND b.status != 'void'
      LEFT JOIN parties p ON p.id = b.party_id
-     WHERE ${where}
+     WHERE ${jb.where}${cc.cond}
      GROUP BY label ORDER BY income_cents DESC, label`
-  ).all(...args);
+  ).all(...jb.args, ...cc.args);
   const total = rows.reduce((a, r) => a + r.income_cents, 0);
   for (const r of rows) {
     r.share_pct = total > 0 ? Math.round(r.income_cents / total * 10000) / 100 : null;
   }
   return {
-    level: lv, from: from || null, to: to || null,
+    level: lv, from: from || null, to: to || null, county: county || null,
     rows, totals: { income_cents: total },
     note: '收入=Σ账单金额（非void账单×非void结算，job_date 区间）；jobs_count 按地区去重作业数（跨区作业会每区各计 1）；未填写=客户主数据未填区域，补录后自动并入。'
   };
@@ -503,23 +539,24 @@ function parseOperatorsList(raw) {
 }
 
 /**
- * GET /api/reports/by-operator?from=&to=
+ * GET /api/reports/by-operator?from=&to=&county=
  * 飞手收入占比：jobs.operator_names JSON 展开逐人聚合，收入按单内人数均摊
  * （纯展示口径不落库；整数分均摊余数给首位，合计严格守恒）。
  * 守恒：Σrows.jobs_count + unrecorded.jobs_count = 区间作业数；
  *       Σrows.income_cents + unrecorded.income_cents = Σ账单金额。
  */
-function byOperator(db, { from, to } = {}) {
+function byOperator(db, { from, to, county } = {}) {
   validateRange({ from, to });
-  const { where, args } = jobBillJoin(from, to);
+  const jb = jobBillJoin(from, to);
+  const cc = countyCond(county, 'b.party_id');
   const jobRows = db.prepare(
     `SELECT j.id, j.operator_names, COALESCE(SUM(b.amount_cents), 0) AS income_cents
      FROM jobs j
      JOIN settlements s ON s.job_id = j.id AND s.status != 'void'
      JOIN bills b ON b.settlement_id = s.id AND b.status != 'void'
-     WHERE ${where}
+     WHERE ${jb.where}${cc.cond}
      GROUP BY j.id ORDER BY j.id`
-  ).all(...args);
+  ).all(...jb.args, ...cc.args);
   const map = new Map();
   let unJobs = 0, unCents = 0;
   for (const j of jobRows) {
@@ -547,7 +584,7 @@ function byOperator(db, { from, to } = {}) {
     share_pct: total > 0 ? Math.round(unCents / total * 10000) / 100 : null
   };
   return {
-    from: from || null, to: to || null,
+    from: from || null, to: to || null, county: county || null,
     rows, unrecorded, totals: { income_cents: total, jobs_count: jobRows.length },
     note: '收入=Σ账单金额按单内人数均摊（纯展示口径，不落库）；未填写=operator_names 为空的作业；单内同名去重，多人单每人计 1 单。'
   };

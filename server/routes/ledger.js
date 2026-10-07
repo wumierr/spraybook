@@ -89,7 +89,7 @@ function createLedgerRouter(db) {
   /* ---------- 主数据只读（下拉用） ---------- */
   router.get('/parties', (req, res) => {
     const data = db.prepare(
-      `SELECT id, type, name, phone, region, village, team, default_price_cents FROM parties
+      `SELECT id, type, name, phone, county, region, village, team, default_price_cents FROM parties
        WHERE deleted_at IS NULL AND enabled = 1 ORDER BY type, name`).all();
     res.json({ ok: true, data });
   });
@@ -124,7 +124,8 @@ function createLedgerRouter(db) {
   /* ---------- 报表时间分组（P4-M2：月/周/季/年四粒度） ---------- */
   router.get('/reports/by-period', (req, res) => {
     res.json({ ok: true, data: reports.byPeriod(db, {
-      granularity: req.query.granularity, from: req.query.from, to: req.query.to
+      granularity: req.query.granularity, from: req.query.from, to: req.query.to,
+      county: req.query.county
     }) });
   });
   router.get('/reports/adjustments', (req, res) => {
@@ -140,15 +141,16 @@ function createLedgerRouter(db) {
 
   /* ---------- 报表区间聚合（P5-M2：总表数据条 + C11/C12） ---------- */
   router.get('/reports/by-range', (req, res) => {
-    res.json({ ok: true, data: reports.byRange(db, { from: req.query.from, to: req.query.to }) });
+    res.json({ ok: true, data: reports.byRange(db, { from: req.query.from, to: req.query.to, county: req.query.county }) });
   });
   router.get('/reports/by-region', (req, res) => {
     res.json({ ok: true, data: reports.byRegion(db, {
-      level: req.query.level, from: req.query.from, to: req.query.to
+      level: req.query.level, from: req.query.from, to: req.query.to,
+      county: req.query.county
     }) });
   });
   router.get('/reports/by-operator', (req, res) => {
-    res.json({ ok: true, data: reports.byOperator(db, { from: req.query.from, to: req.query.to }) });
+    res.json({ ok: true, data: reports.byOperator(db, { from: req.query.from, to: req.query.to, county: req.query.county }) });
   });
   router.get('/parties/:id/balance', (req, res) => {
     res.json({ ok: true, data: reports.partyBalance(db, Number(req.params.id)) });

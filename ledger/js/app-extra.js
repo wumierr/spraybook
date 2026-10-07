@@ -12,6 +12,12 @@
   let mdMergeGroup = null;        // 弹窗当前展示的重复组（suspect_dupes 元素）
   let mdMergeReturnTab = 'master'; // 打开弹窗时的页签（确认/取消后回到哪页）
 
+  // P10-R1：主数据页市/县筛选（localStorage 记忆；审核页/图表页的市筛选 R3/R4 重建时接入）
+  const MD_COUNTY_KEY = 'lg-md-county';
+  function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* 忽略 */ } }
+  let mdCountyFilter = String(lsGet(MD_COUNTY_KEY) || '');
+
   // P9-R3：默认日期=本地墙钟今天（不用 toISOString——UTC 会在凌晨误退一天，E1 教训）
   function localToday() {
     const d = new Date();
@@ -315,7 +321,15 @@
     if (!$m || typeof $m.addEventListener !== 'function') return;
     const hasFiles = dt => !!(dt && dt.types && [...dt.types].includes('Files'));
     $m.addEventListener('change', e => {
-      if (!e.target || e.target.id !== 'impInboxFile') return;
+      if (!e.target) return;
+      // P10-R1：主数据市/县筛选——记忆 localStorage 后重绘主数据页（列表+疑似重复区随之刷新）
+      if (e.target.id === 'mdCountyFilter') {
+        mdCountyFilter = e.target.value || '';
+        lsSet(MD_COUNTY_KEY, mdCountyFilter);
+        window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
+        return;
+      }
+      if (e.target.id !== 'impInboxFile') return;
       inboxHandleFiles(e.target.files).catch(err => toast(err.message, true));
       e.target.value = ''; // 允许下次再选同一文件
     });
@@ -373,25 +387,35 @@
     const bootstrap = await Api.get('/api/bootstrap').catch(() => null);
     const balMap = new Map((bootstrap ? bootstrap.parties : []).map(p => [p.id, p]));
     // P9-R2：疑似重复组（拉不到就不显示该区，不影响主数据页其余功能）
-    mdHealth = await Api.dataHealth().catch(() => null);
+    // P10-R1：市/县筛选选中时随 ?county= 传给体检端点（四桶服务端过滤）
+    mdHealth = await Api.dataHealth(mdCountyFilter || undefined).catch(() => null);
     // E8：已停用（软删）客户——默认隐藏，勾选后置灰展示并提供「恢复」
     let deletedRows = '';
     if (mdShowDeleted) {
       let all = [];
       try { all = await Api.masterList('parties'); } catch (e) { all = []; }
-      deletedRows = all.filter(p => p.deleted_at && p.type === 'customer').map(p0 => `<tr class="lg-detail">
+      deletedRows = all.filter(p => p.deleted_at && p.type === 'customer'
+        && (!mdCountyFilter || p.county === mdCountyFilter)).map(p0 => `<tr class="lg-detail">
         <td>${esc(p0.name)}（已停用）</td>
+        <td>${esc(p0.county || '—')}</td>
         <td>${esc(p0.region || '—')}</td>
         <td>${esc(p0.village || '—')}${p0.team ? '/' + esc(p0.team) + '队' : ''}</td>
         <td>${esc(p0.phone || '—')}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td>—</td>
         <td><button class="lg-btn primary" data-act="md-restore" data-id="${p0.id}" data-name="${esc(p0.name)}">恢复</button></td>
       </tr>`).join('');
     }
-    const custRows = parties.filter(p => p.type === 'customer').map(p0 => {
+    // P10-R1：市/县筛选（选项=在用客户的 DISTINCT county；仅前端过滤客户表，
+    // 疑似重复区走服务端 ?county=）
+    const custAll = parties.filter(p => p.type === 'customer');
+    const counties = [...new Set(custAll.map(p => p.county).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    const custList = mdCountyFilter ? custAll.filter(p => p.county === mdCountyFilter) : custAll;
+    const custRows = custList.map(p0 => {
       if (mdEditId === p0.id) return mdCustomerEditRow(p0);
       const b = balMap.get(p0.id) || {};
       return `<tr>
         <td>${esc(p0.name)}</td>
+        <td>${esc(p0.county || '—')}</td>
         <td>${esc(p0.region || '—')}</td>
         <td>${esc(p0.village || '—')}${p0.team ? '/' + esc(p0.team) + '队' : ''}</td>
         <td>${esc(p0.phone || '—')}</td>
@@ -443,6 +467,9 @@
       </tr>`).join('')}</tbody></table>
     </div>`
       : '';
+    // P10-R1：市/县筛选下拉（默认「全部」；值记忆 localStorage，键 lg-md-county）
+    const countyOpts = counties.map(c =>
+      `<option value="${esc(c)}" ${c === mdCountyFilter ? 'selected' : ''}>${esc(c)}</option>`).join('');
     return `${dupePanel}<div class="lg-panel">
       <h2>设置</h2>
       <div class="lg-form">
@@ -464,6 +491,7 @@
       <h2>新增客户（导入/计算器同步的客户也会进这里；业务键=姓名+村+队）</h2>
       <div class="lg-form">
         <label>姓名*<input id="ncName" placeholder="必填"></label>
+        <label>市/县<input id="ncCounty" placeholder="留空默认 会理市"></label>
         <label>区域(镇)<input id="ncRegion" placeholder="如 通安/彰冠"></label>
         <label>村<input id="ncVillage" placeholder="如 金桂"></label>
         <label>队<input id="ncTeam" placeholder="数字"></label>
@@ -474,11 +502,16 @@
     </div>
     <div class="lg-panel">
       <h2>客户（点「编辑」行内直填，回车或点保存生效）
+        <label style="font-size:13px;font-weight:normal;margin-left:12px">市/县
+          <select id="mdCountyFilter" title="按客户档案的市/县筛选客户列表与疑似重复区（选项来自在用客户的 DISTINCT county）">
+            <option value="">全部</option>${countyOpts}
+          </select>
+        </label>
         <label style="font-size:13px;font-weight:normal;margin-left:12px"><input type="checkbox" data-act="md-show-deleted" ${mdShowDeleted ? 'checked' : ''}> 显示已停用客户</label>
       </h2>
       <table class="lg-table" data-colw="master-parties"><thead><tr>
-        <th>姓名</th><th>区域</th><th>村/队</th><th>电话</th><th>默认单价</th><th>欠款(元)</th><th>预收(元)</th><th>最近作业</th><th>操作</th>
-      </tr></thead><tbody>${custRows}${deletedRows}</tbody></table>
+        <th>姓名</th><th>市</th><th>区域</th><th>村/队</th><th>电话</th><th>默认单价</th><th>欠款(元)</th><th>预收(元)</th><th>最近作业</th><th>操作</th>
+      </tr></thead><tbody>${(custRows + deletedRows) || '<tr><td colspan="10">该市/县暂无客户</td></tr>'}</tbody></table>
     </div>
     <div class="lg-panel">
       <h2>地块档案（按客户维护地块；计算器同步的作业按地块名自动关联）</h2>
@@ -609,12 +642,13 @@
     </div>${mdMergeModalHtml()}`;
   }
 
-  /** 客户行内编辑行（region/village/team/phone/price 直填） */
+  /** 客户行内编辑行（county/region/village/team/phone/price 直填） */
   function mdCustomerEditRow(p0) {
     const inp = (f, val, ph, type) =>
       `<input data-md="${f}" value="${esc(val ?? '')}" placeholder="${ph}" ${type ? `type="${type}" step="0.01"` : ''}>`;
     return `<tr class="lg-detail">
       <td><b>${esc(p0.name)}</b></td>
+      <td>${inp('county', p0.county, '市/县')}</td>
       <td>${inp('region', p0.region, '镇')}</td>
       <td>${inp('village', p0.village, '村')} ${inp('team', p0.team, '队', '')}</td>
       <td>${inp('phone', p0.phone, '电话')}</td>
@@ -727,7 +761,8 @@
         const get = f => { const el = tr.querySelector(`[data-md="${f}"]`); return el ? el.value : undefined; };
         const body = {};
         const region = get('region'), village = get('village'), team = get('team'),
-          phone = get('phone'), price = get('price_yuan');
+          phone = get('phone'), price = get('price_yuan'), county = get('county');
+        if (county != null) body.county = county.trim(); // P10-R1：市/县直填（清空=存空串，归未填写）
         if (region != null) body.region = region.trim();
         if (village != null) body.village = village.trim();
         if (team != null) body.team = team.trim();
@@ -752,6 +787,9 @@
           team: document.getElementById('ncTeam').value.trim(),
           phone: document.getElementById('ncPhone').value.trim()
         };
+        // P10-R1：市/县留空不发键 → 走 DB 默认 '会理市'（不发空串覆盖默认）
+        const ncCounty = document.getElementById('ncCounty').value.trim();
+        if (ncCounty) body.county = ncCounty;
         if (price !== '') {
           const cents = Core.yuanInputToCents(price);
           if (cents == null || isNaN(cents) || cents < 0) return toast('单价非法', true);
