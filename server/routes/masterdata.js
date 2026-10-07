@@ -165,6 +165,11 @@ function createMasterdataRouter(db) {
     for (let i = 0; i < villages.length; i++) {
       for (let j = i + 1; j < villages.length; j++) {
         const a = villages[i].village, b = villages[j].village;
+        // 用户裁决（2026-10-07）："梁子"结尾是组级小村名——X 与 X梁子 是大小层级
+        // 关系不是异写（如 彰冠镇大发村 下辖的 梁子），不得当异写对提示。
+        const big = a.length >= b.length ? a : b;
+        const small = a.length >= b.length ? b : a;
+        if (big.endsWith('梁子') && small && big.slice(0, -2) === small) continue;
         if (a.startsWith(b) || b.startsWith(a)) {
           village_variants.push({
             key: `village:${[a, b].sort().join('|')}`,

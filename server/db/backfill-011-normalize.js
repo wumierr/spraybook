@@ -7,9 +7,12 @@
    ══════════════════════════════════════════════════════════
    数据源：data/normalize-mappings.json（不随仓库分发，本地按裁决结果手写）：
      {
-       "village": { "金桂": "金桂村", "大发": "大发梁子" },
-       "region":  { "通安金桂": "通安" },
-       "team":    {}
+       "village": { "金桂": "金桂村" },
+       "region":  {},
+       "team":    {},
+       "party_edits": [
+         { "id": 6, "region": "彰冠", "village": "大发", "team": "梁子", "note": "大发梁子=大发村的梁子（组级），用户裁决 2026-10-07" }
+       ]
      }
    行为：
      1) 读映射文件——缺失 / 非法 JSON / 不是对象 → 打印说明 exit 1，绝不空跑；
@@ -17,6 +20,9 @@
      3) 单事务逐条 UPDATE parties：SET <kind列> = canonical WHERE <kind列> = alias；
         每条断言只动 region/village/team 其中一列（逐行全列 diff，出现任何
         预期外列变更即 throw 回滚）；金额列分文不动；
+     3a) party_edits 按户多列订正（P9 用户裁决 2026-10-07：村/队/region 层级
+        校正，如 大发梁子→村=大发+队=梁子；空串=清空留待填写）——同样全列
+        diff 断言只动指定列，edit_logs 按 record_id=该户 留痕；
      3b) 同批把映射 upsert 进 place_aliases（评审 #2：只改存量不落别名表，
         写侧归一会空转、新导入继续写回异写——D4 闭环断裂）；同 (kind,alias)
         已存在且 canonical 不同 → 按映射文件（最新裁决）覆盖；
@@ -78,6 +84,19 @@ function loadMappings(dataDir) {
     }
     out[kind] = seg;
   }
+  const edits = parsed.party_edits == null ? [] : parsed.party_edits;
+  if (!Array.isArray(edits)) throw new Error(`${file} 的 "party_edits" 段必须是数组`);
+  for (const e of edits) {
+    if (!e || typeof e !== 'object' || !Number.isInteger(e.id)) {
+      throw new Error(`${file} party_edits 每项必须是 {id:整数, region?/village?/team?:字符串, note?}`);
+    }
+    const keys = Object.keys(e).filter(k => KINDS.includes(k));
+    if (!keys.length) throw new Error(`${file} party_edits #${e.id} 没有任何可订正字段（region/village/team）`);
+    for (const k of keys) {
+      if (typeof e[k] !== 'string') throw new Error(`${file} party_edits #${e.id}.${k} 必须是字符串（空串=清空留待填写）`);
+    }
+  }
+  out.party_edits = edits;
   return out;
 }
 
@@ -118,7 +137,7 @@ function updateOneColumn(db, kind, alias, canonical, now) {
 
 /** 应用映射（单事务；任何异常整体回滚）。返回报告。 */
 function applyMappings(db, mappings) {
-  const report = { updated: {}, alias_rows: {}, warnings: [], before: null, after: null };
+  const report = { updated: {}, alias_rows: {}, party_edits: [], warnings: [], before: null, after: null };
   for (const kind of KINDS) {
     report.updated[kind] = 0;
     report.alias_rows[kind] = 0;
@@ -160,6 +179,28 @@ function applyMappings(db, mappings) {
         }
       }
     }
+    // 按户多列订正（party_edits）：全列 diff 断言只动指定列 + updated_at
+    for (const edit of mappings.party_edits || []) {
+      const before = db.prepare('SELECT * FROM parties WHERE id = ?').get(edit.id);
+      if (!before) throw new Error(`party_edits #${edit.id} 不存在，中止`);
+      const cols = Object.keys(edit).filter(k => KINDS.includes(k));
+      const info = db.prepare(
+        `UPDATE parties SET ${cols.map(c => `${c} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+        .run(...cols.map(c => edit[c]), now, edit.id);
+      if (info.changes !== 1) throw new Error(`party_edits #${edit.id} 影响行数 ${info.changes} ≠ 1，中止`);
+      const after = db.prepare('SELECT * FROM parties WHERE id = ?').get(edit.id);
+      const changed = Object.keys(before).filter(k => before[k] !== after[k]);
+      const unexpected = changed.filter(k => !cols.includes(k) && k !== 'updated_at');
+      if (unexpected.length) {
+        throw new Error(`parties#${edit.id} 出现预期外列变更: ${unexpected.join(', ')}，中止回滚`);
+      }
+      report.party_edits.push({ id: edit.id, name: before.name,
+        changes: Object.fromEntries(cols.map(c => [c, [before[c], after[c]]])) });
+      logEdit(db, { table: 'parties', recordId: edit.id, action: 'update',
+        after: { backfill: '011-normalize',
+          edits: cols.map(c => ({ col: c, from: before[c], to: after[c] })),
+          note: edit.note || '按户订正（P9 用户裁决）' } });
+    }
     // 金额分文不动断言（事务内）
     report.after = snapshotSums(db);
     for (const key of Object.keys(report.before)) {
@@ -184,9 +225,9 @@ if (require.main === module) {
       console.error('[backfill-011] ' + e.message);
       process.exit(1);
     }
-    const total = Object.values(mappings).reduce((a, s) => a + Object.keys(s).length, 0);
+    const total = Object.values(mappings).reduce((a, s) => a + (typeof s === 'object' ? Object.keys(s).length : 0), 0);
     if (!total) {
-      console.error('[backfill-011] 映射文件存在但为空（village/region/team 均无条目）——没有可执行的订正，exit 1。');
+      console.error('[backfill-011] 映射文件存在但为空（village/region/team/party_edits 均无条目）——没有可执行的订正，exit 1。');
       process.exit(1);
     }
 

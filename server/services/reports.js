@@ -469,8 +469,8 @@ function byRegion(db, { level, from, to } = {}) {
   }
   const { where, args } = jobBillJoin(from, to);
   const regionExpr = lv === 'region'
-    ? `COALESCE(NULLIF(TRIM(p.region), ''), '(未填)')`
-    : `COALESCE(NULLIF(TRIM(p.region), ''), '(未填)') || '·' || COALESCE(NULLIF(TRIM(p.village), ''), '(未填)')`;
+    ? `COALESCE(NULLIF(TRIM(p.region), ''), '未填写')`
+    : `COALESCE(NULLIF(TRIM(p.region), ''), '未填写') || '·' || COALESCE(NULLIF(TRIM(p.village), ''), '未填写')`;
   const rows = db.prepare(
     `SELECT ${regionExpr} AS label,
        COUNT(DISTINCT j.id) AS jobs_count,
@@ -489,7 +489,7 @@ function byRegion(db, { level, from, to } = {}) {
   return {
     level: lv, from: from || null, to: to || null,
     rows, totals: { income_cents: total },
-    note: '收入=Σ账单金额（非void账单×非void结算，job_date 区间）；jobs_count 按地区去重作业数（跨区作业会每区各计 1）；(未填)=客户主数据未填区域，补录后自动并入。'
+    note: '收入=Σ账单金额（非void账单×非void结算，job_date 区间）；jobs_count 按地区去重作业数（跨区作业会每区各计 1）；未填写=客户主数据未填区域，补录后自动并入。'
   };
 }
 
@@ -549,7 +549,7 @@ function byOperator(db, { from, to } = {}) {
   return {
     from: from || null, to: to || null,
     rows, unrecorded, totals: { income_cents: total, jobs_count: jobRows.length },
-    note: '收入=Σ账单金额按单内人数均摊（纯展示口径，不落库）；未记录=operator_names 为空的作业；单内同名去重，多人单每人计 1 单。'
+    note: '收入=Σ账单金额按单内人数均摊（纯展示口径，不落库）；未填写=operator_names 为空的作业；单内同名去重，多人单每人计 1 单。'
   };
 }
 

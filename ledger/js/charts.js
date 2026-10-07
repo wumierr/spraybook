@@ -322,14 +322,14 @@
   function regionItems(region, theme) {
     return ((region && region.rows) || []).map(r => ({
       label: r.label, v: r.income_cents,
-      color: r.label === '(未填)' ? theme.muted : null
+      color: r.label === '未填写' ? theme.muted : null
     }));
   }
   function operatorItems(operator, theme) {
     const items = ((operator && operator.rows) || []).map(r => ({ label: r.operator, v: r.income_cents }));
     if (operator && operator.unrecorded && operator.unrecorded.income_cents > 0) {
       items.push({
-        label: `未记录(${operator.unrecorded.jobs_count}单)`,
+        label: `未填写(${operator.unrecorded.jobs_count}单)`,
         v: operator.unrecorded.income_cents,
         color: theme.muted
       });
@@ -464,7 +464,7 @@
           regionRows.length ? regionRows.map(r => `<tr><td>${esc(r.label)}</td><td class="num">${r.jobs_count}</td><td class="num">${yuan(r.income_cents)}</td><td class="num">${r.share_pct == null ? '—' : r.share_pct + '%'}</td></tr>`).join('') : '<tr><td colspan="4">暂无数据</td></tr>'
         }</tbody></table>
       </div>`,
-      foot: '收入=Σ账单金额（非 void），(未填) 桶=客户主数据未填区域、占比照实呈现（先在主数据补客户区域即消失）；「金桂村/金桂」疑似同村异写，village 级占比会拆分，数据问题用主数据编辑解决。'
+      foot: '收入=Σ账单金额（非 void），未填写桶=客户主数据未填区域、占比照实呈现（先在主数据补客户区域即消失）；地名层级与同村异写问题在「体检」页集中处理（主数据页可合并）。'
     });
     const c12 = chartCard({
       title: '飞手收入占比·全期（账单金额按作业人数均摊，纯展示口径；不随月份/筛选变化）',
@@ -473,11 +473,11 @@
         <table class="lg-table" data-colw="charts-c12"><thead><tr><th>飞手</th><th>参与单数</th><th>均摊收入(元)</th><th>占比</th></tr></thead><tbody>${
           (opRowsAll.length || un.income_cents > 0)
             ? opRowsAll.map(r => `<tr><td>${esc(r.operator)}</td><td class="num">${r.jobs_count}</td><td class="num">${yuan(r.income_cents)}</td><td class="num">${r.share_pct == null ? '—' : r.share_pct + '%'}</td></tr>`).join('') +
-              (un.income_cents > 0 ? `<tr><td class="lg-cust-on">未记录</td><td class="num">${un.jobs_count}</td><td class="num">${yuan(un.income_cents)}</td><td class="num">${un.share_pct == null ? '—' : un.share_pct + '%'}</td></tr>` : '')
+              (un.income_cents > 0 ? `<tr><td class="lg-cust-on">未填写</td><td class="num">${un.jobs_count}</td><td class="num">${yuan(un.income_cents)}</td><td class="num">${un.share_pct == null ? '—' : un.share_pct + '%'}</td></tr>` : '')
             : '<tr><td colspan="4">暂无数据</td></tr>'
         }</tbody></table>
       </div>`,
-      foot: `未记录=operator_names 为空的作业（灰色桶，导入历史多属此类）；多人单收入按单内人数均摊、每人计 1 单，不落库。`
+      foot: `未填写=operator_names 为空的作业（灰色桶，导入历史多属此类）；多人单收入按单内人数均摊、每人计 1 单，不落库。`
     });
 
     /* 卡片 HTML（C1-C12） */

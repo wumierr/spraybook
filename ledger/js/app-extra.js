@@ -520,14 +520,19 @@
     const head = m.map(x => `<th>#${esc(x.id)}</th>`).join('');
     const body = rows.map(([label, cell]) =>
       `<tr><td><b>${label}</b></td>${m.map((x, i) => `<td>${cell(i)}</td>`).join('')}</tr>`).join('');
-    // 保留字段选择：每字段选一档的值覆盖存续档（默认=第一档）
+    // 保留字段（用户裁决 2026-10-07：合并时可修改任何一方数据并选择合并方向）——
+    // datalist 兼"选既有值"与"自由输入"（如把 7队 改成 12队 再并）；空串=清空（允许空数据）。
     const KEEP_UI = [['village', '村'], ['team', '队'], ['region', '区域'], ['phone', '电话']];
     const keepRows = KEEP_UI.map(([f, label]) => {
       const seen = new Set();
       const opts = m.map(x => ({ id: x.id, v: String(x[f] == null ? '' : x[f]) }))
         .filter(o => { const k = o.id + '\u0000' + o.v; if (seen.has(k)) return false; seen.add(k); return true; })
         .map(o => `<option value="${esc(o.v)}">#${o.id}：${o.v === '' ? '（空）' : esc(o.v)}</option>`).join('');
-      return `<tr><td><b>保留·${label}</b></td><td colspan="${m.length}"><select data-mkeep="${f}" title="该字段以所选档案的值覆盖存续档">${opts}</select></td></tr>`;
+      const dlId = `mdKeepDl-${f}`;
+      return `<tr><td><b>保留·${label}</b></td><td colspan="${m.length}">` +
+        `<input list="${dlId}" data-mkeep="${f}" value="${esc(String(m[0][f] == null ? '' : m[0][f]))}" ` +
+        `title="该字段写进存续档：下拉选某档现值，或直接改成任意新值（空串=清空）">` +
+        `<datalist id="${dlId}">${opts}</datalist></td></tr>`;
     }).join('');
     return `<div style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center" id="mdMergeBox">
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px;max-width:92vw;max-height:88vh;overflow:auto" class="lg-detail">
@@ -574,7 +579,7 @@
       </tr>`).join('');
     const cnt = a => (a || []).length;
     return `<div class="lg-panel">
-      <h2>数据体检（同名 / 村异写 / region 未填 / 空电话 / 金额离群；忽略=登记不显示）</h2>
+      <h2>数据体检（同名 / 村异写 / region 未填写 / 空电话 / 金额离群；忽略=登记不显示）</h2>
       <div class="hint" style="color:var(--muted);font-size:12px">体检生成于 ${(mdHealth.generated_at || '').slice(0, 19).replace('T', ' ')} · 已忽略 ${mdHealth.dismissed_count || 0} 项。region 回填与村名统一走主数据「编辑」，金额存疑先对照原始单据。</div>
     </div>
     <div class="lg-panel">
@@ -588,7 +593,7 @@
       <tbody>${variants || '<tr><td colspan="2">无多写 ✓</td></tr>'}</tbody></table>
     </div>
     <div class="lg-panel">
-      <h2>region 未填 · ${cnt(mdHealth.region_missing)} 户</h2>
+      <h2>region 未填写 · ${cnt(mdHealth.region_missing)} 户</h2>
       <table class="lg-table" data-colw="health-region"><thead><tr><th>id</th><th>姓名</th><th>村/队</th><th>操作</th></tr></thead>
       <tbody>${regionRows || '<tr><td colspan="4">全部已填 ✓</td></tr>'}</tbody></table>
     </div>
@@ -663,7 +668,7 @@
         const g = mdMergeGroup;
         const fromIds = g.members.filter(m => m.id !== intoId).map(m => m.id);
         const keep = {};
-        box.querySelectorAll('select[data-mkeep]').forEach(sel => { keep[sel.dataset.mkeep] = sel.value; });
+        box.querySelectorAll('[data-mkeep]').forEach(sel => { keep[sel.dataset.mkeep] = sel.value; });
         confirmThen(
           `确认把 ${g.name} 的 #${fromIds.join('、#')} 并入 #${intoId}？\n` +
           `引用将全部改挂到 #${intoId}，其余档案停用（可恢复）；金额分文不动。`,
