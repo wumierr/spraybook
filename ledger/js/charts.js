@@ -344,7 +344,7 @@
     }
   }
   /** doRender 开头 / renderTab 开头统一调用（单一入口防泄漏；dashboard 重建前同此） */
-  function disposeAll() { console.error("DBG disposeAll size=", _charts.size);
+  function disposeAll() {
     for (const chart of _charts.values()) { try { chart.dispose(); } catch (e) { /* 已释放 */ } }
     _charts.clear();
     for (const ro of _observers.values()) { try { if (ro) ro.disconnect(); } catch (e) { /* 忽略 */ } }

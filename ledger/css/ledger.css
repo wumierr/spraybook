@@ -101,7 +101,8 @@ table.lg-table tfoot td.num b { color: var(--text); font-size: 13px; }
 
 /* ---------- 浮动编辑按钮（右下角，跟随滚动） ---------- */
 #lgFab {
-  position: fixed; right: 22px; bottom: 22px; z-index: 60;
+  /* P10-R4：bottom 抬高让位常显的导入 FAB（#lgImportFab 在正下方，两者不重叠不混用） */
+  position: fixed; right: 22px; bottom: 84px; z-index: 60;
   display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
 }
 .lg-fab-btn {
@@ -110,6 +111,22 @@ table.lg-table tfoot td.num b { color: var(--text); font-size: 13px; }
 }
 .lg-fab-edit, .lg-fab-save { background: var(--accent); color: #fff; }
 .lg-fab-cancel { background: var(--panel); color: var(--danger); border: 1px solid var(--danger); }
+
+/* ---------- P10-R4：导入 FAB（所有页签常显；与编辑 FAB 各自独立）+ FAB 弹窗 ---------- */
+#lgImportFab { position: fixed; right: 22px; bottom: 22px; z-index: 59; }
+.lg-fab-import { background: var(--panel); color: var(--text); border: 1px solid var(--accent); }
+.lg-modal-mask {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+}
+.lg-modal-panel {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px; width: min(880px, 92vw); max-height: 88vh; overflow: auto;
+}
+.lg-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.lg-modal-head h2 { margin: 0; }
+.lg-fab-types { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.lg-modal-panel .imp-drop { margin: 0; }
 
 /* ---------- 总表（P4-M1）：17 列宽表横向滚动 + 密集数字输入 ----------
    P5-M3：min-width 1280→1520（≤1600 视口下可视宽实算 1542=1600−32 main 左右 padding

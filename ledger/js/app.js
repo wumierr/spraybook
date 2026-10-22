@@ -708,6 +708,8 @@
   async function doRender() {
     // P5-M2：innerHTML 重建前统一释放 echarts 实例（charts.js renderTab 开头另有一次，双保险）
     if (window.LedgerCharts && window.LedgerCharts.disposeAll) window.LedgerCharts.disposeAll();
+    // P10-R4：旧页签值映射——health/import 一律落「审核」页（体检整体并入；不白屏不丢页）
+    if (state.tab === 'health' || state.tab === 'import') state.tab = 'review';
     const tab = state.tab;
     if (tab === 'overview') {
       // 预收下拉依赖 state._advances（同 payments 分支）；支出面板块复用 payments 列表
@@ -752,8 +754,8 @@
       $main.innerHTML = renderSplits(await Api.splits());
     } else if (tab === 'journal') {
       $main.innerHTML = renderJournal(await Api.journal());
-    } else if (tab === 'import' || tab === 'master' || tab === 'health') {
-      // P9-R2：health（数据体检）也归 app-extra.js——与 master 共用疑似重复组与合并弹窗
+    } else if (tab === 'review' || tab === 'master') {
+      // P10-R4：审核页（批次复核+数据体检并入）与主数据页归 app-extra.js——共用疑似重复组与合并弹窗
       await window.LedgerExtra.renderTab(tab, $main);
     }
     applyColWidths(); // P5-M3：全量重绘后统一恢复列宽（含明细插槽外各表的手柄注入）
@@ -913,9 +915,22 @@
     const fb = e.target.closest('[data-fab]');
     if (!fb) return;
     const tab = state.tab;
+    // P10-R4：导入 FAB（独立 #lgImportFab，与编辑/保存/取消语义不混用）→ LedgerExtra 弹窗
+    if (fb.dataset.fab === 'import') {
+      if (window.LedgerExtra) window.LedgerExtra.handleAct({ dataset: { act: 'fab-open' } }, T);
+      return;
+    }
     if (fb.dataset.fab === 'edit') { state.editMode[tab] = true; render().catch(() => {}); }
     else if (fb.dataset.fab === 'cancel') { state.editMode[tab] = false; render().catch(() => {}); }
     else if (fb.dataset.fab === 'save') { saveEditMode(tab); }
+  });
+
+  // P10-R4：FAB 弹窗挂在 body（不在 #lgMain 内，重绘不丢）——文档级委托进同一 handleAct
+  // 通道（fab-/imp- 等前缀由委托正则放行）；作用域限定弹窗内，与 #lgMain 委托互不重复触发
+  document.addEventListener('click', e => {
+    if (!e.target || typeof e.target.closest !== 'function') return;
+    const mbtn = e.target.closest('#lgImportModal [data-act]');
+    if (mbtn) handleAct(mbtn);
   });
 
   $main.addEventListener('click', e => {
@@ -1006,9 +1021,9 @@
   function handleAct(btn) {
     const act = btn.dataset.act;
     const id = Number(btn.dataset.id);
-    // 导入/主数据/体检页签的处理在 app-extra.js（P2-4 拆分；P9-R2 增 dh- 体检动作前缀，
-    // md- 合并弹窗复用既有 md- 前缀——漏加前缀=按钮静默无效，P3 教训）
-    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-|dh-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
+    // 审核/主数据页签与导入 FAB 弹窗的处理在 app-extra.js（P2-4 拆分；P9-R2 增 dh- 体检动作前缀，
+    // P10-R4 增 fab- 弹窗动作前缀，md- 合并弹窗复用既有 md- 前缀——漏加前缀=按钮静默无效，P3 教训）
+    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-|dh-|fab-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
     switch (act) {
       case 'csv-export': {
         // 导出「按钮所在面板」的第一张表（月份+筛选口径；编辑态取输入值；展开明细与隐藏 slot 不导）。
@@ -1274,6 +1289,15 @@
 
   /** 右下角浮动总编辑按钮（position:fixed，跟随滚动） */
   function updateFab() {
+    // P10-R4：#lgImportFab 导入 FAB（D2 裁决）——所有页签常显，独立元素独立语义，
+    // 绝不与 #lgFab 编辑/保存/取消混用（位置在其正下方，CSS bottom 各自错开）
+    let ifab = document.getElementById('lgImportFab');
+    if (!ifab) {
+      ifab = document.createElement('div');
+      ifab.id = 'lgImportFab';
+      ifab.innerHTML = '<button class="lg-fab-btn lg-fab-import" data-fab="import" title="快捷导入：LLM 文本 / 计算器作业包 / Excel（拖文件自动识别）">📥 导入</button>';
+      document.body.appendChild(ifab);
+    }
     let fab = document.getElementById('lgFab');
     if (!fab) {
       fab = document.createElement('div');

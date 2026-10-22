@@ -1,12 +1,16 @@
 /* ============================================================
-   ledger/js/app-extra.js — 导入（M8）+ 主数据（M7）页签
+   ledger/js/app-extra.js — 审核（批次复核+数据体检）+ 主数据（M7）+ 导入 FAB 弹窗
    P2-4 从 app.js 拆出：共享工具经 init(tools) 注入，勿在此重复实现。
+   P10-R4：导入页升级「审核」页（体检整体并入，HANDOFF-P10-PLAN §4）；
+   导入入口 = 右下角 📥 FAB 弹窗（三类型 + 拖文件自动识别 + 解析后快捷处理）。
    ============================================================ */
 (function () {
   'use strict';
   let T = null;
   let run, toast, confirmThen, needAmount, collectInputs, esc, tag, actions, Core, Api, state, switchNav;
-  const importState = { batchId: null, rows: [] };
+  const importState = { batchId: null, rows: [], editId: null };
+  // P10-R4：导入 FAB 弹窗状态（open/选中类型/批次快捷处理/行编辑中 id/LLM 就绪态）
+  const fabState = { open: false, type: '', batchId: null, rows: [], editId: null, llmOk: null, summary: '', jobNo: null };
   // P9-R2：数据体检缓存（主数据「疑似重复」区与「体检」页共用）+ 合并预览弹窗状态
   let mdHealth = null;            // GET /api/data-health 的最近一次结果
   let mdMergeGroup = null;        // 弹窗当前展示的重复组（suspect_dupes 元素）
@@ -25,64 +29,18 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
-  function renderImport() {
-    // P9-R4（D1 裁决）：统一收件箱置顶——拖拽/点选文件/Ctrl+V 粘贴，按扩展名分派
-    // （分派口径在 core.pickPipeline 纯函数）；默认日期选择器也搬到收件箱（LLM 管线
-    // 两入口共用同一 #llmDate，旧 llm-parse 读同一 id 不改逻辑）。
-    // 旧三面板收进「手动选择管线」折叠区，全部 id/data-act 原样保留（老习惯零回归）。
-    return `<div class="lg-panel" id="impInbox">
-      <h2>📥 导入收件箱（拖文件 / 点选文件 / 粘贴文本，按类型自动分派）</h2>
-      <label id="impDrop" class="imp-drop" for="impInboxFile" title="点击选择文件，或把文件拖进虚线框">
-        <input type="file" id="impInboxFile" multiple accept=".xlsx,.json,.txt,.md" hidden>
-        <b>把文件拖到这里，或点击选择文件</b><br>
-        <span>.xlsx 月度记账表 → Excel 复核管线 · .json 作业包 → 计算器导入 · .txt / .md → 本机 LLM 文本管线</span>
-      </label>
-      <textarea id="inboxText" rows="3" placeholder="也可把记账文本或计算器作业包 JSON 粘到这里（Ctrl+V 自动分派；图片/语音识别即将支持）" style="width:100%;font-size:13px"></textarea>
-      <div class="lg-form" style="margin-top:8px">
-        <button class="lg-btn primary" data-act="imp-inbox-send">送入管线</button>
-        <button class="lg-btn" data-act="imp-photo" aria-disabled="true" title="多模态模型下轮上线">📷 拍照识别 · 即将支持</button>
-        <button class="lg-btn" data-act="imp-voice" aria-disabled="true" title="多模态模型下轮上线">🎙 语音记账 · 即将支持</button>
-        <label>默认日期（LLM 管线无日期条目按此记，仍进需复核可改）<input type="date" id="llmDate" value="${localToday()}"></label>
-      </div>
-      <div id="inboxResult"></div>
-    </div>
-    <details class="lg-details">
-      <summary>手动选择管线（旧入口：粘贴作业包 JSON / 上传 Excel / 粘贴文本给 LLM）</summary>
-      <div class="lg-panel">
-        <h2>粘贴计算器作业包（离线单；在计算器「导出 → ⬇ 下载作业包」后粘贴 JSON）</h2>
-        <textarea id="calcJobJson" rows="6" placeholder='粘贴 {"type":"drone-spray-config","schemaVersion":"2.1",...} 完整内容' style="width:100%;font-family:monospace;font-size:12px"></textarea>
-        <div class="lg-form" style="margin-top:8px">
-          <button class="lg-btn primary" data-act="imp-calc-json">解析并导入作业</button>
-          <span class="hint" style="color:var(--muted);font-size:12px">幂等：同一单重复导入自动去重；成功后可在「总表」看到并走结算收款</span>
-        </div>
-        <div id="calcJobResult"></div>
-      </div>
-      <div class="lg-panel">
-        <h2>上传历史 Excel（.xlsx，月度记账表格式）</h2>
-        <div class="lg-form">
-          <label>文件<input type="file" id="impFile" accept=".xlsx"></label>
-          <button class="lg-btn primary" data-act="imp-upload">解析并复核</button>
-          <span class="hint" style="color:var(--muted);font-size:12px">解析后先复核再落库；同文件重复上传会被拒绝</span>
-        </div>
-        <div id="impStats"></div>
-      </div>
-      <div class="lg-panel">
-        <h2>🤖 粘贴文本（本地 LLM 整理；Ollama 全程本机运行）</h2>
-        <textarea id="llmText" rows="5" placeholder="把杂乱记账记录粘进来，一行一条，例如：&#10;3月12日 李洪富 金桂村 打药 12亩 25元/亩 应收300 收300&#10;3.12 油钱200 加油站&#10;4月 收入540 不知道谁的" style="width:100%;font-size:13px"></textarea>
-        <div class="lg-form" style="margin-top:8px">
-          <button class="lg-btn primary" data-act="llm-parse" id="llmParseBtn">解析并预览</button>
-          <span class="hint" id="llmStatus" style="color:var(--muted);font-size:12px">检查本机 LLM…</span>
-        </div>
-        <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">硬约束：金额必须能在原文定位（防幻觉）、派生金额由代码算、拿不准自动进需复核；解析后进「待入库」，逐行确认后才落账；长文本自动分块（>500 行请分天导入）。默认日期在上方收件箱设置（两个入口共用）。</div>
-      </div>
-    </details>
-    <div class="lg-panel">
-      <h2>批次</h2>
+  /* ---------- P10-R4：审核页（批次 + 行级复核 + 数据体检；HANDOFF-P10-PLAN §4） ----------
+     导入页升级「审核」= 所有二次审核的唯一之家；导入入口 = 右下角 📥 FAB 弹窗（D2 裁决）。
+     旧 imp-* 状态机原样保留（打开复核/逐字段改/确认/驳回/确认全部/确认并落库/放入待入库/
+     取消批次/对账报告）；体检五桶并入 #reviewHealth（dh- 与 md-merge- 前缀原样，合并弹窗共用）。 */
+  function renderReviewShell() {
+    return `<div class="lg-panel">
+      <h2>审核 · 批次（导入入口：右下角 📥 FAB——LLM 文本 / 计算器作业包 / Excel；确认后落库）</h2>
       <table class="lg-table" data-colw="import-batches"><thead><tr><th>批次</th><th>文件</th><th>来源</th><th>状态</th><th>导入时间</th><th>操作</th></tr></thead>
       <tbody id="impBatches"><tr><td colspan="6">加载中…</td></tr></tbody></table>
     </div>
     <div class="lg-panel" id="impRowsPanel" style="display:none">
-      <h2>行级复核（确认后才能落库；建议对照纸表/原 Excel/原文消息）</h2>
+      <h2>行级复核（确认后才能落库；建议对照纸表/原 Excel/原文消息；「改」逐字段订正后复核提示视为已澄清）</h2>
       <div style="margin-bottom:8px">
         <button class="lg-btn" data-act="imp-filter" data-st="">全部</button>
         <button class="lg-btn" data-act="imp-filter" data-st="pending">待复核</button>
@@ -96,12 +54,24 @@
       <table class="lg-table" data-colw="import-rows"><thead><tr>
         <th>sheet/行</th><th>类型</th><th>姓名</th><th>村/队</th><th>日期</th><th>应收</th><th>实收</th><th>复核提示</th><th>操作</th>
       </tr></thead><tbody id="impRows"><tr><td colspan="9">—</td></tr></tbody></table>
-    </div>`;
+    </div>
+    <div id="reviewHealth"><div class="lg-panel">数据体检加载中…</div></div>`;
+  }
+
+  /** 审核页拼装：骨架先行 → 批次表 → 体检区异步注入（一个 Promise 链，innerHTML 不互踩） */
+  async function renderReview($main) {
+    $main.innerHTML = renderReviewShell();
+    await loadImportBatches();
+    // renderHealth 顺带写 mdHealth（合并弹窗 md-merge-open 依赖）；失败给可读占位不拖垮整页
+    const hh = await renderHealth().catch(() => null);
+    const el = document.getElementById('reviewHealth');
+    if (el) el.innerHTML = hh || '<div class="lg-panel"><h2>数据体检</h2><div class="lg-detail">体检数据拉取失败（服务端较旧？需重启服务生效）</div></div>';
   }
 
   async function loadImportBatches() {
-    const batches = await Api.importBatches();
     const tb = document.getElementById('impBatches');
+    if (!tb) return; // P10-R4：审核页未挂载（FAB 场景/他页）——元素不在就跳过
+    const batches = await Api.importBatches();
     const srcTag = (t) => t === 'llm' ? tag('LLM 文本') : t === 'excel' ? tag('Excel') : tag(t || '—');
     tb.innerHTML = batches.map(b => `<tr>
       <td>#${b.id}</td><td>${esc(b.filename)}</td><td>${srcTag(b.source_type)}</td>
@@ -115,59 +85,81 @@
     }
   }
 
-  async function loadLlmStatus() {
-    const el = document.getElementById('llmStatus');
-    if (!el) return;
-    try {
-      const st = await Api.llmStatus();
-      const btn = document.getElementById('llmParseBtn');
-      if (st.ollama_ok) {
-        el.textContent = `本机 LLM 就绪（${st.model}）`;
-      } else {
-        el.textContent = `本机 LLM 未就绪：${st.hint || st.error}`;
-        el.style.color = 'var(--err, #c62828)';
-        if (btn) btn.disabled = true;
-      }
-    } catch (err) {
-      el.textContent = 'LLM 状态检查失败（服务端较旧？）';
+  /** P10-R4：staging 行 → 表格行（审核页与 FAB 弹窗共用一个渲染器；editing=该行编辑中）。
+      data-ctx 标记按钮归属（page=审核页 / fab=FAB 弹窗），imp-row-* 动作按 ctx 读写，
+      两视图同一 staging 数据（D2：弹窗=快捷路径，完整复核在审核页）。 */
+  function impRowTrHtml(r, ctx, editing) {
+    const p = r.parsed || {};
+    const isJob = p.kind === 'job';
+    const isPair = p.kind === 'income_pair';
+    const kindText = isJob ? '作业' : p.kind === 'expense' ? '支出' : isPair ? '收入对' : p.kind === 'note' ? '备注' : (p.kind || '—');
+    const pp = p.parsed || {};
+    const op = r.status === 'applied' ? tag('已落库')
+      : r.status === 'confirmed' ? tag('已确认')
+      : r.status === 'rejected' ? tag('已拒绝', 'err')
+      : actions(
+        `<button class="lg-btn primary" data-act="imp-row-confirm" data-id="${r.id}" data-ctx="${ctx}">确认</button>`,
+        `<button class="lg-btn" data-act="imp-row-edit" data-id="${r.id}" data-ctx="${ctx}">改</button>`,
+        `<button class="lg-btn danger" data-act="imp-row-reject" data-id="${r.id}" data-ctx="${ctx}">拒绝</button>`
+      );
+    return `<tr>
+      <td>${esc(r.sheet_name)} / ${r.row_no}</td>
+      <td>${kindText}</td>
+      <td>${esc(pp.name || pp.category_raw || (isPair ? '（无姓名）' : '—'))}</td>
+      <td>${esc(pp.village || '')}${pp.team ? '/' + esc(pp.team) + '队' : ''}</td>
+      <td>${esc(pp.date || '—')}</td>
+      <td class="num">${isJob ? Core.fmtYuan(pp.receivable_cents) : '—'}</td>
+      <td class="num">${isJob ? Core.fmtYuan(pp.paid_cents) : isPair ? Core.fmtYuan(pp.income_cents) : Core.fmtYuan(pp.amount_cents)}</td>
+      <td>${(p.needs_review || []).length ? tag(p.needs_review.map(n => n.code).join(','), 'warn') : tag('OK')}</td>
+      <td>${op}</td>
+    </tr>` +
+    (editing ? impEditRowHtml(r, ctx) : '') +
+    ((p.needs_review || []).length && !editing ? `<tr><td colspan="9" class="lg-detail">${esc(r.raw_text)}</td></tr>` : '');
+  }
+
+  /** P10-R4：行内逐字段订正（审核页与 FAB 弹窗共用；PATCH parsed 合并 + 清 needs_review
+      =服务端既有语义「人工编辑过视为已澄清」）。金额输入元、保存时 yuanInputToCents；
+      输入 id 带 ctx 前缀防两视图同 rid 撞 id。 */
+  function impEditRowHtml(r, ctx) {
+    const p = (r.parsed && r.parsed.parsed) || {};
+    const kind = (r.parsed && r.parsed.kind) || '';
+    const eid = f => `${ctx}Ed-${r.id}-${f}`;
+    const inp = (f, val, ph, num) =>
+      `<input id="${eid(f)}" data-f="${f}" value="${esc(val == null ? '' : val)}" placeholder="${ph}"${num ? ' type="number" step="0.01"' : ''} style="max-width:110px">`;
+    const yuan = cents => (cents == null || cents === '' ? '' : cents / 100);
+    let fs = '';
+    if (kind === 'job') {
+      fs = inp('name', p.name, '姓名') + inp('village', p.village, '村') + inp('team', p.team, '队') +
+        inp('date', p.date, 'YYYY-MM-DD') + inp('receivable_cents', yuan(p.receivable_cents), '应收(元)', 1) + inp('paid_cents', yuan(p.paid_cents), '实收(元)', 1);
+    } else if (kind === 'expense') {
+      fs = inp('category_raw', p.category_raw != null ? p.category_raw : p.category, '类别') + inp('village', p.village, '村') +
+        inp('date', p.date, 'YYYY-MM-DD') + inp('amount_cents', yuan(p.amount_cents), '金额(元)', 1);
+    } else if (kind === 'income_pair') {
+      fs = inp('name', p.name, '姓名') + inp('date', p.date, 'YYYY-MM-DD') + inp('income_cents', yuan(p.income_cents), '收入(元)', 1);
+    } else {
+      fs = inp('name', p.name, '内容');
     }
+    return `<tr class="lg-detail"><td colspan="9">逐字段改：${fs}
+      <button class="lg-btn primary" data-act="imp-row-save" data-id="${r.id}" data-ctx="${ctx}">存</button>
+      <button class="lg-btn" data-act="imp-row-edit" data-id="${r.id}" data-ctx="${ctx}">收起</button></td></tr>`;
   }
 
   async function loadImportRows(batchId, status) {
     importState.batchId = batchId;
-    document.getElementById('impRowsPanel').style.display = '';
+    const panel = document.getElementById('impRowsPanel');
+    if (!panel) return; // P10-R4：审核页未挂载——弹窗场景走 fabRenderRows
+    panel.style.display = '';
     importState.rows = await Api.importRows(batchId, status);
-    const rows = importState.rows.map(r => {
-      const p = r.parsed || {};
-      const isJob = p.kind === 'job';
-      const isPair = p.kind === 'income_pair';
-      const kindText = isJob ? '作业' : p.kind === 'expense' ? '支出' : isPair ? '收入对' : p.kind === 'note' ? '备注' : (p.kind || '—');
-      const pp = p.parsed || {};
-      return `<tr>
-        <td>${esc(r.sheet_name)} / ${r.row_no}</td>
-        <td>${kindText}</td>
-        <td>${esc(pp.name || pp.category_raw || (isPair ? '（无姓名）' : '—'))}</td>
-        <td>${esc(pp.village || '')}${pp.team ? '/' + esc(pp.team) + '队' : ''}</td>
-        <td>${esc(pp.date || '—')}</td>
-        <td class="num">${isJob ? Core.fmtYuan(pp.receivable_cents) : '—'}</td>
-        <td class="num">${isJob ? Core.fmtYuan(pp.paid_cents) : isPair ? Core.fmtYuan(pp.income_cents) : Core.fmtYuan(pp.amount_cents)}</td>
-        <td>${(p.needs_review || []).length ? tag(p.needs_review.map(n => n.code).join(','), 'warn') : tag('OK')}</td>
-        <td>${r.status === 'confirmed' ? tag('已确认') : r.status === 'rejected' ? tag('已拒绝', 'err') : actions(
-          `<button class="lg-btn primary" data-act="imp-row-confirm" data-id="${r.id}">确认</button>`,
-          `<button class="lg-btn danger" data-act="imp-row-reject" data-id="${r.id}">拒绝</button>`
-        )}</td>
-      </tr>` +
-      ((p.needs_review || []).length ? `<tr><td colspan="9" class="lg-detail">${esc(r.raw_text)}</td></tr>` : '');
-    }).join('');
-    document.getElementById('impRows').innerHTML = rows || '<tr><td colspan="9">无行</td></tr>';
+    document.getElementById('impRows').innerHTML =
+      importState.rows.map(r => impRowTrHtml(r, 'page', importState.editId === r.id)).join('') ||
+      '<tr><td colspan="9">无行</td></tr>';
   }
 
-  /* ---------- P9-R4：导入收件箱（拖拽/点选/Ctrl+V → 按扩展名分派三条既有管线） ----------
-     分派口径是 core.pickPipeline / pickPipelineForText 纯函数；三条管线各自复用旧入口的
-     端点与复核流（excel→POST /api/import/parse+批次表/行级复核，calcjson→core.
-     calculatorJobPayload 校验+POST /api/jobs 幂等，llm→POST /api/llm/parse 带 #llmDate）。
-     反馈沿用 E2 持久提示方案：结果写在 inboxRun 的 T.render()（重绘）之后，才不会被抹掉；
-     失败时 toast + 收件箱反馈区持久留痕，粘贴/输入的内容保留可改。 */
+  /* ---------- P10-R4：三条导入管线（收件箱三管线收编重命名；FAB 弹窗与审核页共用端点） ----------
+     Excel→POST /api/import/parse（base64）+批次；计算器 JSON→core.calculatorJobPayload 校验
+     +POST /api/jobs（幂等，duplicated 分支文案沿用）；LLM 文本→POST /api/llm/parse
+     （default_date 取弹窗 #fabDate）。日志/反馈经 log() 回调写入弹窗 #fabLog；busy 行由
+     调用方管理（fabOneFile 的 try/catch/finally 兜底，P9-R4 评审#2 模式）。 */
   function fileToB64(f) {
     return new Promise((res, rej) => {
       const rd = new FileReader();
@@ -184,196 +176,303 @@
       rd.readAsText(f, 'utf-8');
     });
   }
-  function inboxAppend(html) {
-    const box = document.getElementById('inboxResult');
-    if (!box) return;
-    const div = document.createElement('div');
-    div.className = 'lg-detail';
-    div.innerHTML = html;
-    box.appendChild(div);
-    return div;
-  }
-  function inboxBusyLine(html) {
-    return inboxAppend('⏳ ' + html) || { remove() {} };
-  }
-
-  /** Excel 复核管线（与 imp-upload 同一端点 base64→/api/import/parse 与同一复核流；
-      差异仅在反馈写收件箱区，且在重绘后展开行级复核——render 会重置面板显隐） */
-  async function inboxExcel(f, busy) {
+  /** Excel 复核管线（与旧 imp-upload 同一端点与复核流） */
+  async function pipeExcel(f, log) {
     let d;
-    try {
-      const b64 = await fileToB64(f);
-      d = await Api.importParse(f.name, b64);
-    } catch (e) {
-      if (busy) busy.remove();
-      toast(e.message, true);
-      inboxAppend(`✗ <b>${esc(f.name)}</b> → Excel 复核管线：${esc(e.message)}`);
-      return false;
-    }
-    importState.batchId = d.batch_id;
-    toast('解析完成，请复核');
-    await T.render(); // 批次表随重绘刷新；行级复核须在重绘后加载才可见（E2）
-    await loadImportRows(d.batch_id);
-    if (busy) busy.remove();
-    inboxAppend(`✓ <b>${esc(f.name)}</b> → Excel 复核管线：批次 #${d.batch_id}——作业 ${d.stats.jobs} / 支出 ${d.stats.expenses} / 跳过 ${d.stats.skipped} / <b>需复核 ${d.review_count}</b>。原始列合计：应收 ${Core.fmtYuan(Math.round(d.raw_totals.receivable * 100))} · 实收 ${Core.fmtYuan(Math.round(d.raw_totals.paid * 100))} · 支出 ${Core.fmtYuan(Math.round(d.raw_totals.expense * 100))}——请在下方逐行复核后落库`);
-    return true;
+    try { d = await Api.importParse(f.name, await fileToB64(f)); }
+    catch (e) { toast(e.message, true); log(`✗ <b>${esc(f.name)}</b> → Excel 复核管线：${esc(e.message)}`); return null; }
+    return { kind: 'batch', d, label: f.name };
   }
-
-  /** 计算器作业导入（与 imp-calc-json 同一校验 core.calculatorJobPayload 与同一幂等端点
-      POST /api/jobs；duplicated 分支与旧入口同文案） */
-  async function inboxCalcJson(text, label, busy) {
+  /** 计算器作业导入（与旧 imp-calc-json 同一校验与幂等端点） */
+  async function pipeCalcJson(text, label, log) {
     const parsed = Core.calculatorJobPayload(text, new Date().toISOString().slice(0, 10));
-    if (!parsed.ok) {
-      if (busy) busy.remove();
-      toast(parsed.error, true);
-      inboxAppend(`✗ <b>${esc(label)}</b> → 计算器作业导入：${esc(parsed.error)}`);
-      return false;
-    }
+    if (!parsed.ok) { toast(parsed.error, true); log(`✗ <b>${esc(label)}</b> → 计算器作业导入：${esc(parsed.error)}`); return null; }
     let d;
     try { d = await Api.createJob(parsed.payload); }
-    catch (e) {
-      if (busy) busy.remove();
-      toast(e.message, true);
-      inboxAppend(`✗ <b>${esc(label)}</b> → 计算器作业导入：${esc(e.message)}`);
-      return false;
-    }
-    toast(d.duplicated ? '该单此前已导入（幂等），未重复建单' : '作业包已导入');
-    await T.render();
-    if (busy) busy.remove();
-    inboxAppend(d.duplicated
-      ? `ℹ <b>${esc(label)}</b> → 计算器作业导入：该单此前已导入（单号 ${esc(d.job_no)}），幂等返回原单，未重复建单。`
-      : `✓ <b>${esc(label)}</b> → 计算器作业导入：单号 ${esc(d.job_no)}——可在「总表」查看并走结算收款。`);
-    return true;
+    catch (e) { toast(e.message, true); log(`✗ <b>${esc(label)}</b> → 计算器作业导入：${esc(e.message)}`); return null; }
+    return { kind: 'job', d, label };
   }
-
-  /** LLM 文本管线（与 llm-parse 同一端点 POST /api/llm/parse，default_date 取收件箱
-      #llmDate；成功后同样展开行级复核） */
-  async function inboxLlm(text, label, busy) {
-    const dateEl = document.getElementById('llmDate');
+  /** LLM 文本管线（与旧 llm-parse 同一端点；default_date 取弹窗 #fabDate） */
+  async function pipeLlm(text, label, log) {
+    const dateEl = document.getElementById('fabDate');
     const default_date = dateEl && dateEl.value ? dateEl.value : undefined;
     let d;
     try { d = await Api.llmParse({ text, filename: label, default_date }); }
-    catch (e) {
-      if (busy) busy.remove();
-      toast(e.message, true);
-      inboxAppend(`✗ <b>${esc(label)}</b> → LLM 管线：${esc(e.message)}`);
-      return false;
-    }
-    toast('解析完成，请逐行复核后落库');
-    await T.render();
-    await loadImportRows(d.batch_id);
-    if (busy) busy.remove();
-    inboxAppend(`✓ <b>${esc(label)}</b> → LLM 管线：批次 #${d.batch_id}（模型 ${esc(d.model)}${d.chunks > 1 ? `，分 ${d.chunks} 块` : ''}）共 ${d.stats.rows} 行，无疑问 ${d.stats.ok}，<b>需复核 ${d.review_count}</b>——有疑虑的行逐条改字段或驳回；确认后点「确认并落库」。`);
-    return true;
+    catch (e) { toast(e.message, true); log(`✗ <b>${esc(label)}</b> → LLM 管线：${esc(e.message)}`); return null; }
+    return { kind: 'batch', d, label };
   }
 
-  /** 单文件分派：扩展名 → 管线；未识别给可读提示（不猜内容，D1 裁决）。
-      p9-r4 评审#2：fileToText 等管线调用之前的失败（FileReader onerror）也曾把
-      「⏳ 处理中」busy 行永久滞留并中断多文件循环——整段包 try/catch/finally：
-      任何异常都 toast+收件箱持久提示、busy 行必清（finally 与管线内部的
-      busy.remove 幂等叠加，remove 在已分离节点上是 no-op）。 */
-  async function inboxOneFile(f) {
-    const pipe = Core.pickPipeline(f.name);
-    if (!pipe) {
-      toast('未识别的文件类型：' + f.name, true);
-      inboxAppend(`✗ <b>${esc(f.name)}</b>：未识别的文件类型——收件箱支持 <b>.xlsx</b>（月度记账表）/ <b>.json</b>（计算器作业包）/ <b>.txt .md</b>（记账文本）；图片/语音识别即将支持，可先转成文本粘贴`);
-      return;
-    }
-    const busy = inboxBusyLine(`<b>${esc(f.name)}</b> → ${pipe === 'excel' ? 'Excel 复核管线' : pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
-    try {
-      if (pipe === 'excel') return await inboxExcel(f, busy);
-      const text = await fileToText(f);
-      if (pipe === 'calcjson') return await inboxCalcJson(text, f.name, busy);
-      return await inboxLlm(text, f.name, busy);
-    } catch (e) {
-      toast(e.message, true);
-      inboxAppend(`✗ <b>${esc(f.name)}</b>：${esc(e.message)}`);
-    } finally {
-      busy.remove();
-    }
+  /* ---------- P10-R4：导入 FAB 弹窗（D2：FAB 全替代导入入口；快捷处理不另立复核体系） ---------- */
+  function fabHost() {
+    if (typeof document === 'undefined') return null;
+    return document.body || document.documentElement || null;
   }
-
-  /** 多文件按序处理（拖拽可多选；结果逐行追加进收件箱反馈区）。
-      p9-r4 评审#2：逐文件 try 兜底——单文件意外异常不再中断循环，后续文件继续。 */
-  async function inboxHandleFiles(fileList) {
-    const list = [...(fileList || [])];
-    if (!list.length) return;
-    for (const f of list) {
-      try { await inboxOneFile(f); }
-      catch (e) { toast(e.message, true); inboxAppend(`✗ <b>${esc(f.name)}</b>：${esc(e.message)}`); }
+  /** 追加一行日志到 #fabLog，返回该行元素（busy 行 remove 用；桩环境降级拼 innerHTML） */
+  function fabLog(html) {
+    const box = document.getElementById('fabLog');
+    if (!box) return { remove() {} };
+    if (typeof document.createElement === 'function') {
+      const div = document.createElement('div');
+      div.className = 'lg-detail';
+      div.innerHTML = html;
+      box.appendChild(div);
+      return div;
     }
+    box.innerHTML += html;
+    return { remove() {} };
   }
-
-  /** 粘贴框内容分派（Ctrl+V 自动触发 + 「送入管线」按钮共用；失败时内容保留可改） */
-  function inboxDispatchText(text, label) {
-    const pipe = Core.pickPipelineForText(text);
-    if (!pipe) return toast('先粘贴内容：记账文本，或计算器导出的作业包 JSON', true);
-    const busy = inboxBusyLine(`<b>${esc(label)}</b> → ${pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
-    if (pipe === 'calcjson') return inboxCalcJson(text, label, busy);
-    return inboxLlm(text, label, busy);
+  function fabModalHtml() {
+    return `<div class="lg-modal-panel lg-modal-import" role="dialog" aria-label="快捷导入">
+      <div class="lg-modal-head"><h2>📥 快捷导入</h2>
+        <button class="lg-btn" data-act="fab-close" title="关闭（已解析的批次不丢，随时到「审核」页继续）">✕ 关闭</button></div>
+      <div id="fabBody"></div>
+    </div>`;
   }
-
-  /* 收件箱事件绑定：委托在 #lgMain 上（重绘不丢）；测试桩无 addEventListener 时跳过。
-     dragover/drop 只对带 Files 的拖拽接管（防浏览器直接打开文件/误拖整页跳走），
-     文本拖拽不接、交给浏览器默认行为。 */
-  (function bindInbox() {
-    const $m = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('lgMain') : null;
-    if (!$m || typeof $m.addEventListener !== 'function') return;
-    const hasFiles = dt => !!(dt && dt.types && [...dt.types].includes('Files'));
-    $m.addEventListener('change', e => {
-      if (!e.target) return;
-      // P10-R1：主数据市/县筛选——记忆 localStorage 后重绘主数据页（列表+疑似重复区随之刷新）
-      if (e.target.id === 'mdCountyFilter') {
-        mdCountyFilter = e.target.value || '';
-        lsSet(MD_COUNTY_KEY, mdCountyFilter);
-        window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
-        return;
+  function fabStage1Html() {
+    const ph = fabState.type === 'calc'
+      ? '把计算器「导出 → ⬇ 下载作业包」的 JSON 粘到这里（{ 开头）'
+      : fabState.type === 'excel'
+        ? 'Excel 请用上方虚线框（点击选择或拖入 .xlsx）；这里也可粘记账文本'
+        : '把杂乱记账记录粘进来（一行一条），例如：\n3月12日 李洪富 金桂村 打药 12亩 25元/亩 应收300 收300\n3.12 油钱200 加油站\n4月 收入540 不知道谁的';
+    const typeBtn = (t, icon, label, id) =>
+      `<button class="lg-btn${fabState.type === t ? ' primary' : ''}" id="${id}" data-act="fab-type" data-type="${t}"${t === 'llm' && fabState.llmOk === false ? ' disabled title="本机 LLM 未就绪（Excel/作业包不受影响）"' : ''}>${icon} ${label}</button>`;
+    return `<div class="lg-fab-types">
+      ${typeBtn('llm', '🤖', 'LLM 文本', 'fabTypeLlm')}
+      ${typeBtn('calc', '📱', '计算器作业包', 'fabTypeCalc')}
+      ${typeBtn('excel', '📊', 'Excel', 'fabTypeExcel')}
+    </div>
+    <label class="imp-drop" id="fabDrop" for="fabFile" title="拖文件到这里，或点击选择（按扩展名自动识别）">
+      <input type="file" id="fabFile" multiple accept=".xlsx,.json,.txt,.md" hidden>
+      <b>拖文件到这里，或点击选择</b><br>
+      <span>.xlsx 月度记账表 → Excel 复核管线 · .json 作业包 → 计算器导入 · .txt / .md → 本机 LLM 文本管线</span>
+    </label>
+    <textarea id="fabText" rows="4" placeholder="${esc(ph)}" style="width:100%;font-size:13px;margin-top:8px"></textarea>
+    <div class="lg-form" style="margin-top:8px">
+      <label>默认日期（LLM 管线无日期条目按此记，仍进需复核可改）<input type="date" id="fabDate" value="${localToday()}"></label>
+      <button class="lg-btn primary" data-act="fab-send" id="fabSendBtn">解析</button>
+    </div>
+    <div id="fabLlmHint" class="hint" style="color:var(--muted);font-size:12px">检查本机 LLM…</div>
+    <div id="fabLog"></div>`;
+  }
+  function fabStage2Html() {
+    return `<div id="fabSummary">${fabState.summary}</div>
+    <div class="lg-form" style="margin:8px 0">
+      <button class="lg-btn primary" data-act="fab-apply">✔ 确认并落库（仅已确认行）</button>
+      <button class="lg-btn" data-act="fab-keep">放入待入库</button>
+      <button class="lg-btn" data-act="fab-goto-review">去审核页细看</button>
+      <button class="lg-btn" data-act="fab-llm-review" disabled title="P10-R5 上线：LLM 只挑错、带原文证据，绝不改数据">🤖 LLM 审查这批（即将上线）</button>
+      <button class="lg-btn" data-act="fab-again">↺ 再导一批</button>
+    </div>
+    <table class="lg-table"><thead><tr>
+      <th>sheet/行</th><th>类型</th><th>姓名</th><th>村/队</th><th>日期</th><th>应收</th><th>实收</th><th>复核提示</th><th>操作</th>
+    </tr></thead><tbody id="fabRows"><tr><td colspan="9">加载中…</td></tr></tbody></table>
+    <div id="fabLog"></div>`;
+  }
+  function fabJobResultHtml() {
+    const j = fabState.jobNo || {};
+    return `<div class="lg-detail">${j.duplicated
+      ? `ℹ 该单此前已导入（单号 ${esc(j.no)}），幂等返回原单，未重复建单。`
+      : `✓ 已导入：单号 ${esc(j.no)}——可在「总表」查看并走结算收款。`}</div>
+    <div class="lg-form" style="margin-top:8px">
+      <button class="lg-btn primary" data-act="fab-goto-overview">去总表看</button>
+      <button class="lg-btn" data-act="fab-again">↺ 再导一批</button>
+      <button class="lg-btn" data-act="fab-close">关闭</button>
+    </div>`;
+  }
+  function fabRender() {
+    const body = document.getElementById('fabBody');
+    if (!body) return;
+    if (fabState.batchId != null) body.innerHTML = fabStage2Html();
+    else if (fabState.jobNo != null) body.innerHTML = fabJobResultHtml();
+    else body.innerHTML = fabStage1Html();
+  }
+  function fabReset() {
+    fabState.type = ''; fabState.batchId = null; fabState.rows = [];
+    fabState.editId = null; fabState.jobNo = null; fabState.summary = '';
+  }
+  function fabOpen() {
+    if (fabState.open) { fabRender(); return; }
+    const host = fabHost();
+    if (!host || typeof document.createElement !== 'function') return;
+    const wrap = document.createElement('div');
+    wrap.id = 'lgImportModal';
+    wrap.className = 'lg-modal-mask';
+    wrap.innerHTML = fabModalHtml();
+    host.appendChild(wrap);
+    fabState.open = true;
+    fabReset();
+    bindFabEvents(wrap);
+    fabRender();
+    // LLM 就绪探测：只更新提示与 LLM 类型按钮置灰，不重绘（保留用户已粘内容）
+    Api.llmStatus().then(st => {
+      fabState.llmOk = !!(st && st.ollama_ok);
+      const h = document.getElementById('fabLlmHint');
+      if (h) {
+        h.textContent = fabState.llmOk
+          ? `本机 LLM 就绪（${st.model}）——杂乱记账文本粘进来即可`
+          : `本机 LLM 未就绪：${st.hint || st.error || '请启动 Ollama'}——Excel/作业包不受影响`;
+        if (!fabState.llmOk) h.style.color = 'var(--err, #c62828)';
       }
-      if (e.target.id !== 'impInboxFile') return;
-      inboxHandleFiles(e.target.files).catch(err => toast(err.message, true));
+      const b = document.getElementById('fabTypeLlm');
+      if (b) { b.disabled = !fabState.llmOk; b.title = fabState.llmOk ? '' : '本机 LLM 未就绪（Excel/作业包不受影响）'; }
+    }).catch(() => { fabState.llmOk = false; });
+  }
+  function fabClose(refreshPage) {
+    const m = document.getElementById('lgImportModal');
+    if (m) {
+      if (typeof m.remove === 'function') m.remove();
+      else if (m.parentNode && typeof m.parentNode.removeChild === 'function') m.parentNode.removeChild(m);
+    }
+    fabState.open = false;
+    fabReset();
+    // 当前就在审核页时重绘刷新批次表；他页保持原样（导航过去时自然重绘）
+    if (refreshPage && T && T.render) T.render().catch(() => {});
+  }
+  /** 弹窗内直接绑定（弹窗元素独立于 #lgMain 重绘存活，无需委托） */
+  function bindFabEvents(wrap) {
+    if (!wrap || typeof wrap.addEventListener !== 'function') return;
+    const hasFiles = dt => !!(dt && dt.types && [...dt.types].includes('Files'));
+    wrap.addEventListener('change', e => {
+      if (!e.target || e.target.id !== 'fabFile') return;
+      fabHandleFiles(e.target.files).catch(err => toast(err.message, true));
       e.target.value = ''; // 允许下次再选同一文件
     });
-    $m.addEventListener('paste', e => {
-      if (!e.target || e.target.id !== 'inboxText') return;
+    wrap.addEventListener('paste', e => {
+      if (!e.target || e.target.id !== 'fabText') return;
       const cd = e.clipboardData;
       if (!cd) return;
       if (hasFiles(cd)) {
         e.preventDefault();
         const files = [...cd.files];
         const img = files.find(f => /^image\//.test(f.type));
-        if (img) {
-          toast('📷 拍照识别即将支持（多模态模型下轮上线），请先用文本粘贴记账');
-          inboxAppend(`ℹ 收到粘贴的图片「${esc(img.name || '截图')}」——拍照识别即将支持，请先把内容转成文本粘贴`);
-        }
+        if (img) toast('📷 拍照识别即将支持（多模态模型下轮上线），请先用文本粘贴记账');
         const rest = files.filter(f => !/^image\//.test(f.type));
-        if (rest.length) inboxHandleFiles(rest).catch(err => toast(err.message, true));
+        if (rest.length) fabHandleFiles(rest).catch(err => toast(err.message, true));
         return;
       }
       const text = cd.getData ? cd.getData('text/plain') : '';
-      // 不 preventDefault：文本照常落框，分派失败时内容保留可改（成功后重绘自然清空）
-      if (text && text.trim()) inboxDispatchText(text, '粘贴文本.txt');
+      // 不 preventDefault：文本照常落框，分派失败内容保留可改
+      if (text && text.trim()) fabDispatchText(text, '粘贴文本.txt');
     });
-    $m.addEventListener('dragover', e => {
-      if (!hasFiles(e.dataTransfer)) return;
-      e.preventDefault(); // 允许 drop；同时防浏览器默认打开文件
-      const z = e.target && e.target.closest ? e.target.closest('#impDrop') : null;
-      if (z) { e.dataTransfer.dropEffect = 'copy'; z.classList.add('dragover'); }
-      else e.dataTransfer.dropEffect = 'none';
-    });
-    $m.addEventListener('drop', e => {
+    wrap.addEventListener('dragover', e => {
       if (!hasFiles(e.dataTransfer)) return;
       e.preventDefault();
-      const z = e.target && e.target.closest ? e.target.closest('#impDrop') : null;
-      if (z) z.classList.remove('dragover');
-      if (!z) return toast('请把文件拖到「导入收件箱」的虚线框里', true);
-      inboxHandleFiles(e.dataTransfer.files).catch(err => toast(err.message, true));
+      e.dataTransfer.dropEffect = 'copy';
+      const z = e.target && e.target.closest ? e.target.closest('#fabDrop') : null;
+      if (z) z.classList.add('dragover');
     });
-    $m.addEventListener('dragleave', e => {
-      const z = e.target && e.target.closest ? e.target.closest('#impDrop') : null;
+    wrap.addEventListener('drop', e => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      const z = e.target && e.target.closest ? e.target.closest('#fabDrop') : null;
       if (z) z.classList.remove('dragover');
+      if (!z) return toast('请把文件拖到虚线框里', true);
+      fabHandleFiles(e.dataTransfer.files).catch(err => toast(err.message, true));
+    });
+    wrap.addEventListener('dragleave', e => {
+      const z = e.target && e.target.closest ? e.target.closest('#fabDrop') : null;
+      if (z) z.classList.remove('dragover');
+    });
+  }
+  /** 管线结果消费：job → 结果视图；batch → 快捷处理视图（stage2） */
+  async function fabConsume(r) {
+    if (r.kind === 'job') {
+      fabState.jobNo = { no: r.d.job_no, duplicated: !!r.d.duplicated };
+      fabRender();
+      toast(r.d.duplicated ? '该单此前已导入（幂等），未重复建单' : '作业包已导入');
+      return;
+    }
+    const d = r.d;
+    const st = d.stats || {};
+    const sum = (st.rows != null)
+      ? `共 ${st.rows} 行，无疑问 ${st.ok}，<b>需复核 ${d.review_count}</b>`
+      : `作业 ${st.jobs} / 支出 ${st.expenses} / 跳过 ${st.skipped} / <b>需复核 ${d.review_count}</b>`;
+    const llmMeta = d.model ? `（模型 ${esc(d.model)}${d.chunks > 1 ? `，分 ${d.chunks} 块` : ''}）` : '';
+    const totals = d.raw_totals
+      ? ` 原始列合计：应收 ${Core.fmtYuan(Math.round(d.raw_totals.receivable * 100))} · 实收 ${Core.fmtYuan(Math.round(d.raw_totals.paid * 100))} · 支出 ${Core.fmtYuan(Math.round(d.raw_totals.expense * 100))}。`
+      : '';
+    fabState.batchId = d.batch_id;
+    fabState.summary = `<div class="lg-detail">批次 #${d.batch_id}（${esc(r.label)}）${llmMeta}：${sum}。${totals}</div><div class="hint" style="color:var(--muted);font-size:12px">「改」逐字段订正 → 确认/拒绝 → 确认并落库（仅消费已确认行）；放入待入库随时到审核页继续。</div>`;
+    fabRender();
+    toast('解析完成，请复核');
+    await fabRenderRows();
+    if (document.getElementById('impBatches')) loadImportBatches().catch(() => {}); // 审核页在挂载则批次表同步
+  }
+  async function fabRenderRows() {
+    if (fabState.batchId == null) return;
+    fabState.rows = await Api.importRows(fabState.batchId);
+    const tb = document.getElementById('fabRows');
+    if (tb) tb.innerHTML = fabState.rows.map(r => impRowTrHtml(r, 'fab', fabState.editId === r.id)).join('') ||
+      '<tr><td colspan="9">无行</td></tr>';
+  }
+  /** 行动作后按上下文刷新（page=审核页行表；fab=弹窗行表） */
+  async function impRefreshRows(ctx) {
+    if (ctx === 'fab') {
+      if (fabState.open && fabState.batchId != null) await fabRenderRows();
+    } else if (importState.batchId != null && document.getElementById('impRowsPanel')) {
+      await loadImportRows(importState.batchId);
+    }
+  }
+  /** 单文件分派：扩展名 → 管线；未识别给可读提示（不猜内容，D1 裁决）。
+      P9-R4 评审#2 模式：整段 try/catch/finally，busy 行必清、异常不中断多文件循环。 */
+  async function fabOneFile(f) {
+    const pipe = Core.pickPipeline(f.name);
+    if (!pipe) {
+      toast('未识别的文件类型：' + f.name, true);
+      fabLog(`✗ <b>${esc(f.name)}</b>：未识别的文件类型——支持 <b>.xlsx</b>（月度记账表）/ <b>.json</b>（计算器作业包）/ <b>.txt .md</b>（记账文本）`);
+      return;
+    }
+    const busy = fabLog(`⏳ <b>${esc(f.name)}</b> → ${pipe === 'excel' ? 'Excel 复核管线' : pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
+    try {
+      let r = null;
+      if (pipe === 'excel') r = await pipeExcel(f, fabLog);
+      else {
+        const text = await fileToText(f);
+        if (pipe === 'calcjson') r = await pipeCalcJson(text, f.name, fabLog);
+        else r = await pipeLlm(text, f.name, fabLog);
+      }
+      if (r) await fabConsume(r);
+    } catch (e) {
+      toast(e.message, true);
+      fabLog(`✗ <b>${esc(f.name)}</b>：${esc(e.message)}`);
+    } finally {
+      if (busy && typeof busy.remove === 'function') busy.remove();
+    }
+  }
+  /** 多文件按序处理（拖拽可多选；单文件意外异常不中断循环——P9-R4 评审#2） */
+  async function fabHandleFiles(fileList) {
+    const list = [...(fileList || [])];
+    if (!list.length) return;
+    for (const f of list) {
+      try { await fabOneFile(f); }
+      catch (e) { toast(e.message, true); fabLog(`✗ <b>${esc(f.name)}</b>：${esc(e.message)}`); }
+    }
+  }
+  /** 粘贴框内容分派（Ctrl+V 自动触发 + 「解析」按钮共用；失败时内容保留可改） */
+  function fabDispatchText(text, label) {
+    const pipe = Core.pickPipelineForText(text);
+    if (!pipe) { toast('先粘贴内容：记账文本，或计算器导出的作业包 JSON', true); return Promise.resolve(); }
+    const busy = fabLog(`⏳ <b>${esc(label)}</b> → ${pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
+    return (pipe === 'calcjson' ? pipeCalcJson(text, label, fabLog) : pipeLlm(text, label, fabLog))
+      .then(r => { if (r) return fabConsume(r); })
+      .finally(() => { if (busy && typeof busy.remove === 'function') busy.remove(); });
+  }
+
+  /* P10-R1：主数据市/县筛选 change 绑定（委托在 #lgMain 上，重绘不丢；测试桩无 addEventListener 跳过）。
+     P10-R4：收件箱事件绑定随收件箱 UI 一并移除（导入入口=FAB 弹窗，弹窗内直接绑定）。 */
+  (function bindExtraChange() {
+    const $m = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('lgMain') : null;
+    if (!$m || typeof $m.addEventListener !== 'function') return;
+    $m.addEventListener('change', e => {
+      if (!e.target) return;
+      if (e.target.id === 'mdCountyFilter') {
+        mdCountyFilter = e.target.value || '';
+        lsSet(MD_COUNTY_KEY, mdCountyFilter);
+        window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
+        return;
+      }
     });
   })();
-
 
   /* ---------- 主数据（客户行内直填 + 新增客户 + 地块档案） ---------- */
   let mdEditId = null;      // 行内编辑中的客户 id
@@ -683,7 +782,7 @@
     switch (act) {
       /* ---- P9-R2：合并预览弹窗（md- 前缀复用既有委托通道） ---- */
       case 'md-merge-open': {
-        mdMergeReturnTab = state.tab; // 主数据页或体检页打开都回原页
+        mdMergeReturnTab = state.tab; // 主数据页或审核页（体检区）打开都回原页
         const g = ((mdHealth && mdHealth.suspect_dupes) || []).find(x => x.key === btn.dataset.key);
         if (!g || !g.members || g.members.length < 2) return toast('找不到该重复组（先刷新页面）', true);
         mdMergeGroup = g;
@@ -857,93 +956,81 @@
           .then(r => { if (r) { toast('已恢复'); window.LedgerExtra.renderTab('master', document.getElementById('lgMain')); } });
         break;
       /* ---- P9-R4：收件箱「送入管线」+ 多模态占位（D1：只留占位，多模态模型下轮再上） ---- */
-      case 'imp-inbox-send': {
-        const text = (document.getElementById('inboxText') || {}).value || '';
-        inboxDispatchText(text, '粘贴文本.txt');
+      /* ---- P10-R4：导入 FAB 弹窗（fab- 前缀；FAB 触发经 app.js [data-fab]=import → fab-open，
+           弹窗内按钮经 app.js 文档级委托进同一 handleAct 通道） ---- */
+      case 'fab-open':
+        fabOpen();
         break;
-      }
-      case 'imp-photo':
-        toast('📷 拍照识别即将支持（多模态模型下轮上线）——现在请把内容用文本粘贴进收件箱');
+      case 'fab-close':
+        fabClose(state.tab === 'review');
         break;
-      case 'imp-voice':
-        toast('🎙 语音记账即将支持（多模态模型下轮上线）——现在请把内容用文本粘贴进收件箱');
-        break;
-      case 'imp-calc-json': {
-        // P6-M1：计算器导出 JSON → /api/jobs（幂等；成功后切总表）
-        const text = document.getElementById('calcJobJson').value;
-        if (!text.trim()) return toast('先粘贴作业包 JSON', true);
-        const parsed = Core.calculatorJobPayload(text, new Date().toISOString().slice(0, 10));
-        if (!parsed.ok) {
-          document.getElementById('calcJobResult').innerHTML = `<div class="lg-detail">✗ ${esc(parsed.error)}</div>`;
-          return toast(parsed.error, true);
+      case 'fab-type': {
+        const t2 = btn.dataset.type;
+        if (!['llm', 'calc', 'excel'].includes(t2)) break;
+        // 切类型不丢已粘内容/日期（stage1 局部重绘后回填）
+        const prevText = (document.getElementById('fabText') || {}).value || '';
+        const prevDate = (document.getElementById('fabDate') || {}).value || '';
+        fabState.type = t2;
+        if (fabState.batchId == null && fabState.jobNo == null) {
+          fabRender();
+          const tx = document.getElementById('fabText'); if (tx) tx.value = prevText;
+          const de = document.getElementById('fabDate'); if (de) de.value = prevDate || localToday();
         }
-        // E2（P7-R4）：结果写在 run()（含尾部 render）完成之后——否则内联提示
-        // 会被重绘抹掉；幂等返回给"该单此前已导入"的独立文案，与首导可区分。
-        run(async () => Api.createJob(parsed.payload)).then(d => {
-          if (!d) return; // 失败：run 已 toast
-          document.getElementById('calcJobJson').value = '';
-          const box = document.getElementById('calcJobResult');
-          if (d.duplicated) {
-            if (box) box.innerHTML = `<div class="lg-detail">ℹ 该单此前已导入（单号 ${esc(d.job_no)}），幂等返回原单，未重复建单。</div>`;
-            toast('该单此前已导入（幂等），未重复建单');
-          } else {
-            if (box) box.innerHTML = `<div class="lg-detail">✓ 已导入：单号 ${esc(d.job_no)}——可在「总表」查看并走结算收款。</div>`;
-          }
-        });
         break;
       }
-      case 'imp-upload': {
-        const f = document.getElementById('impFile').files[0];
-        if (!f) return toast('先选 .xlsx 文件', true);
-        const rd = new FileReader();
-        rd.onload = () => {
-          const b64 = rd.result.split(',')[1];
-          run(async () => {
-            const d = await Api.importParse(f.name, b64);
-            importState.batchId = d.batch_id;
-            document.getElementById('impStats').innerHTML =
-              `<div class="lg-detail">批次 #${d.batch_id}：作业 ${d.stats.jobs} / 支出 ${d.stats.expenses} / 跳过 ${d.stats.skipped} / <b>需复核 ${d.review_count}</b>。原始列合计：应收 ${Core.fmtYuan(Math.round(d.raw_totals.receivable * 100))} · 实收 ${Core.fmtYuan(Math.round(d.raw_totals.paid * 100))} · 支出 ${Core.fmtYuan(Math.round(d.raw_totals.expense * 100))}</div>`;
-            await loadImportBatches();
-            await loadImportRows(d.batch_id);
-            return d;
-          }, '解析完成，请复核');
-        };
-        rd.readAsDataURL(f);
+      case 'fab-send': {
+        const text = (document.getElementById('fabText') || {}).value || '';
+        if (!text.trim()) return toast('先粘贴内容：记账文本 / 作业包 JSON，或拖入/选择文件', true);
+        const pipe = Core.pickPipelineForText(text);
+        if (!pipe) return toast('先粘贴内容：记账文本，或计算器导出的作业包 JSON', true);
+        const busy = fabLog(`⏳ <b>粘贴文本.txt</b> → ${pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
+        (pipe === 'calcjson' ? pipeCalcJson(text, '粘贴文本.txt', fabLog) : pipeLlm(text, '粘贴文本.txt', fabLog))
+          .then(r => {
+            if (!r) return;
+            const tx = document.getElementById('fabText');
+            if (tx) tx.value = '';
+            return fabConsume(r);
+          })
+          .finally(() => { if (busy && typeof busy.remove === 'function') busy.remove(); });
         break;
       }
-      case 'llm-parse': {
-        const text = (document.getElementById('llmText') || {}).value || '';
-        if (text.trim().length < 5) return toast('先把记账记录粘进文本框', true);
-        // P9-R4：按钮 loading + 分批预估文案（Core.estimateLlmChunks 与服务端 llmChunk
-        // 同口径近似；逐批进度条=异步任务化，进 backlog）。成功路径按钮随重绘重建，
-        // 失败路径（无重绘）在 settle 里恢复并重查 LLM 状态。
-        const est = Core.estimateLlmChunks(text);
-        const btn = document.getElementById('llmParseBtn');
-        const st = document.getElementById('llmStatus');
-        if (btn) btn.disabled = true;
-        if (st) st.textContent = '解析中…' + (est > 1 ? `文本较长将分批处理（约 ${est} 批），请勿关闭页面` : '请稍候');
-        // P9-R3：默认日期随解析请求透传（无日期条目按它记，服务端标 date_default 进复核；
-        // P9-R4 起 #llmDate 搬进收件箱，旧入口读同一 id）
-        const dateEl = document.getElementById('llmDate');
-        const default_date = dateEl && dateEl.value ? dateEl.value : undefined;
-        run(async () => {
-          const d = await Api.llmParse({ text, filename: '粘贴文本.txt', default_date });
-          document.getElementById('llmText').value = '';
-          await loadImportBatches();
-          await loadImportRows(d.batch_id);
-          return d;
-        }, '解析完成，请逐行复核后落库').then(d => {
-          if (d) {
-            document.getElementById('impStats') && (document.getElementById('impStats').innerHTML =
-              `<div class="lg-detail">LLM 批次 #${d.batch_id}（模型 ${d.model}${d.chunks > 1 ? `，分 ${d.chunks} 块` : ''}）：共 ${d.stats.rows} 行，无疑问 ${d.stats.ok}，<b>需复核 ${d.review_count}</b>。有疑虑的行逐条改字段或驳回；确认后点「确认并落库」。</div>`);
-          }
-        }).then(() => {
-          const b = document.getElementById('llmParseBtn');
-          if (b && b.isConnected) { b.disabled = false; loadLlmStatus(); }
-        });
+      case 'fab-apply':
+        confirmThen('落库已确认行到正式账本？（不可自动撤销，作废需逐笔处理）', () => Api.importApply(fabState.batchId))
+          .then(rst => {
+            if (!rst) return;
+            // B6：未知类型行不再静默丢弃——随 apply 结果显式提示（与 imp-apply 同口径）
+            const skipped = rst.skipped_unsupported ? `；⚠ ${rst.skipped_unsupported} 行类型不支持未入账` : '';
+            const pairs = rst.income_pairs ? `，收入对 ${rst.income_pairs}` : '';
+            toast(`落库完成：作业 ${rst.jobs}，支出 ${rst.expenses}${pairs}${skipped}`);
+            fabRenderRows();
+            if (document.getElementById('impBatches')) loadImportBatches().catch(() => {});
+          });
         break;
-      }
-      case 'imp-keep':
+      case 'fab-keep':
+        toast('批次已放入「待入库」——到「审核」页随时继续处理');
+        fabClose(state.tab === 'review');
+        break;
+      case 'fab-goto-review':
+        fabClose(false);
+        state.tab = 'review';
+        if (switchNav) switchNav('review');
+        if (T && T.render) T.render().catch(() => {});
+        break;
+      case 'fab-goto-overview':
+        fabClose(false);
+        state.tab = 'overview';
+        if (switchNav) switchNav('overview');
+        if (T && T.render) T.render().catch(() => {});
+        break;
+      case 'fab-again':
+        fabReset();
+        fabRender();
+        break;
+      case 'fab-llm-review':
+        // R5 占位（按钮 disabled）：实现见 P10-R5——只挑错、带原文证据，绝不改数据
+        toast('🤖 LLM 数据审查即将上线（只挑错、带原文证据，不改数据）');
+        break;
+      case 'imp-keep':      case 'imp-keep':
         toast('批次保持在「待入库」，随时回来继续处理');
         break;
       case 'imp-cancel-batch':
@@ -959,11 +1046,54 @@
         loadImportRows(importState.batchId, btn.dataset.st || undefined);
         break;
       case 'imp-row-confirm':
-        run(() => Api.importRowPatch(Number(btn.dataset.id), { action: 'confirm' })).then(() => loadImportRows(importState.batchId));
+        run(() => Api.importRowPatch(Number(btn.dataset.id), { action: 'confirm' })).then(() => impRefreshRows(btn.dataset.ctx));
         break;
       case 'imp-row-reject':
-        run(() => Api.importRowPatch(Number(btn.dataset.id), { action: 'reject' })).then(() => loadImportRows(importState.batchId));
+        run(() => Api.importRowPatch(Number(btn.dataset.id), { action: 'reject' })).then(() => impRefreshRows(btn.dataset.ctx));
         break;
+      case 'imp-row-edit': {
+        // P10-R4：逐字段订正（审核页与 FAB 弹窗共用渲染器；ctx 区分两视图）
+        const rid = Number(btn.dataset.id);
+        if (btn.dataset.ctx === 'fab') {
+          fabState.editId = fabState.editId === rid ? null : rid;
+          fabRenderRows();
+        } else {
+          importState.editId = importState.editId === rid ? null : rid;
+          if (importState.batchId != null) loadImportRows(importState.batchId);
+        }
+        break;
+      }
+      case 'imp-row-save': {
+        const rid = Number(btn.dataset.id);
+        const ctx = btn.dataset.ctx === 'fab' ? 'fab' : 'page';
+        const rows = ctx === 'fab' ? fabState.rows : importState.rows;
+        const row = rows.find(x => x.id === rid);
+        if (!row) return toast('行不存在（先刷新）', true);
+        const kind = (row.parsed && row.parsed.kind) || '';
+        const fields = kind === 'job' ? ['name', 'village', 'team', 'date', 'receivable_cents', 'paid_cents']
+          : kind === 'expense' ? ['category_raw', 'village', 'date', 'amount_cents']
+          : kind === 'income_pair' ? ['name', 'date', 'income_cents']
+          : ['name'];
+        const patch = {};
+        for (const f of fields) {
+          const el = document.getElementById(`${ctx}Ed-${rid}-${f}`);
+          if (!el) continue;
+          if (f.endsWith('_cents')) {
+            if (el.value === '') continue; // 金额留空=不改原值
+            const cents = Core.yuanInputToCents(el.value);
+            if (isNaN(cents)) return toast('金额非法：' + el.value, true);
+            patch[f] = cents;
+          } else {
+            patch[f] = el.value; // 文本字段：空串=清空（允许空数据）
+          }
+        }
+        run(() => Api.importRowPatch(rid, { parsed: patch })).then(() => {
+          toast('已订正（复核提示视为已澄清）');
+          if (ctx === 'fab') fabState.editId = null; else importState.editId = null;
+          impRefreshRows(ctx);
+        });
+        break;
+      }
       case 'imp-confirm-all':
         confirmThen('确认全部待复核行？（对照清单后再点）', async () => {
           const rows = await Api.importRows(importState.batchId, 'pending');
@@ -1009,11 +1139,12 @@
       // plot-edit-cancel）不经 doRender 尾部挂钩，挂在本函数返回链上统一恢复列宽；
       // master 分支是 renderMasterData().then(html=>innerHTML)、import 分支同步 innerHTML 后
       // 异步 loadImportBatches——都须等 innerHTML 落位后再 apply（同步调会早于 DOM 更新）
-      const done = tab === 'import'
-        ? ($main.innerHTML = renderImport(), loadImportBatches(), loadLlmStatus())
-        : tab === 'health'
-          ? renderHealth().then(html => { $main.innerHTML = html; }) // P9-R2 数据体检
-          : renderMasterData().then(html => { $main.innerHTML = html; });
+      // P10-R4：导入页升级「审核」页（批次复核+数据体检并入，D2 裁决）；旧值 health/import
+      // 映射到 review（防御旧书签/外部跳转，不白屏不丢页）；主数据页不变
+      const t = (tab === 'import' || tab === 'health') ? 'review' : tab;
+      const done = t === 'review'
+        ? renderReview($main)
+        : renderMasterData().then(html => { $main.innerHTML = html; });
       return Promise.resolve(done).then(() => { if (T && T.applyColWidths) T.applyColWidths(); });
     },
     handleAct(btn, tools) {
