@@ -8,10 +8,10 @@
     "start": "node index.js",
     "db:reset": "node db/reset.js",
     "db:backup": "node db/backup.js",
-    "test": "node --test ../tests/server/"
+    "test": "node --test \"../tests/server/*.test.js\""
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^13.0.3",
     "exceljs": "^4.4.0",
     "express": "^4.21.2"
   }
