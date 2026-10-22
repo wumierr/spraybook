@@ -176,19 +176,34 @@ function confirmSettlement(db, id) {
   return settlementWithDetails(db, id);
 }
 
+/** A0-B-C2：撤回/作废结算前置守卫——该结算下账单仍有 active 收款则拒绝，
+ *  否则账单被 void 而收款分录仍挂 1122 贷方，账实断裂（reconcile C2/C5 双破） */
+function assertNoActiveReceipts(db, settlementId, settlementNo) {
+  const n = db.prepare(
+    `SELECT COUNT(*) AS c, COALESCE(SUM(r.amount_cents),0) AS amt
+     FROM receipts r JOIN bills b ON b.id = r.bill_id
+     WHERE b.settlement_id = ? AND r.status = 'active'`).get(settlementId);
+  if (n.c > 0) {
+    throw new ApiError('INVALID_STATE',
+      `结算单 ${settlementNo} 已有 ${n.c} 笔收款（共 ${(n.amt / 100).toFixed(2)} 元），请先作废对应收款再操作`);
+  }
+}
+
 /** 撤回确认：红冲分录 + 账单作废 + 结算回 draft + 作业 reopened */
 function reopenSettlement(db, id) {
   const s = settlementWithDetails(db, id);
   if (s.status !== 'confirmed') {
     throw new ApiError('INVALID_STATE', `结算单 ${s.settlement_no} 状态 ${s.status} 无需撤回`);
   }
+  // A0-B-C2：有 active 收款的结算禁止撤回——否则账单作废而收款悬空，C2/C5 双破
+  assertNoActiveReceipts(db, id, s.settlement_no);
   const now = nowISO();
   const tx = db.transaction(() => {
     // 红冲目标 = 未被红冲的最新 confirm 分录（撤回→再确认→再撤回不得重复红冲最初分录）
     const entry = findActiveEntry(db, 'settlement', id, { eventType: 'settlement_confirm' });
     if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '撤回结算 ' + s.settlement_no });
     db.prepare("UPDATE bills SET status = 'void', updated_at = ? WHERE settlement_id = ? AND status != 'void'").run(now, id);
-    db.prepare("UPDATE settlements SET status = 'draft', confirmed_at = NULL, updated_at = ? WHERE id = ?").run(now, id);
+    db.prepare("UPDATE settlements SET status = 'draft', confirmed_at = NULL, total_receivable_cents = 0, updated_at = ? WHERE id = ?").run(now, id);
     db.prepare("UPDATE jobs SET status = 'reopened', updated_at = ? WHERE id = ?").run(now, s.job_id);
     logEdit(db, { table: 'settlements', recordId: id, action: 'reopen', before: { status: 'confirmed' }, after: { status: 'draft' } });
   });
@@ -201,6 +216,8 @@ function voidSettlement(db, id) {
   const s = settlementWithDetails(db, id);
   if (s.status === 'void') return s;
   if (s.status === 'confirmed') {
+    // A0-B-C2：有 active 收款的结算禁止作废——收款须先逐笔作废
+    assertNoActiveReceipts(db, id, s.settlement_no);
     const now = nowISO();
     const tx = db.transaction(() => {
       // 红冲目标 = 未被红冲的最新 confirm 分录（确认→撤回→再确认→作废不得重复红冲最初分录）
@@ -252,7 +269,8 @@ function patchBill(db, id, { amount_cents, adjust_cents, note }) {
   if (!bill) throw new ApiError('NOT_FOUND', `账单不存在: ${id}`, 404);
   if (bill.status === 'void') throw new ApiError('INVALID_STATE', '账单已作废');
   if (bill.paid_cents > 0 || bill.status === 'paid') {
-    throw new ApiError('INVALID_STATE', '账单已有收款，请先撤回对应结算再改');
+    // A0-B-C2：正确引导顺序——先作废收款，再撤回结算；直接撤回会被守卫拒绝
+    throw new ApiError('INVALID_STATE', '账单已有收款，请先作废对应收款，再撤回结算');
   }
   if (amount_cents != null && (typeof amount_cents !== 'number' || amount_cents < 0)) {
     throw new ApiError('VALIDATION', 'amount_cents 必须是非负整数分');

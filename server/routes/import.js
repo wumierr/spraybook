@@ -157,7 +157,12 @@ function createImportRouter(db) {
   router.patch('/import/rows/:id', (req, res) => {
     const row = db.prepare('SELECT * FROM raw_import_rows WHERE id = ?').get(Number(req.params.id));
     if (!row) throw new ApiError('NOT_FOUND', `staging 行不存在`, 404);
-    if (row.status === 'applied') throw new ApiError('INVALID_STATE', '该行已落库');
+    // A0-B-M5：行级守卫原查 row.status==='applied'，但 CHECK 枚举无该值（落库后行仍 confirmed）
+    // 死代码 → 改为按批次状态拒绝：applied/rejected 批次一律冻结（审计快照与落库数据不得分叉）
+    const batch = db.prepare('SELECT status FROM import_batches WHERE id = ?').get(row.batch_id);
+    if (batch && (batch.status === 'applied' || batch.status === 'rejected')) {
+      throw new ApiError('INVALID_STATE', `批次已${batch.status === 'applied' ? '落库' : '取消'}，行不可再修改`);
+    }
     const { action, parsed } = req.body || {};
     const now = new Date().toISOString();
     const tx = db.transaction(() => {

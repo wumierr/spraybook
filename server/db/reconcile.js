@@ -68,14 +68,16 @@ function runReconcile(db) {
   add('C4', '作业收入 = Σ结算行(作业钱+药钱)', badJobs.length === 0,
     badJobs.length ? badJobs.slice(0, 5).map(j => `${j.job_no} 金额${j.income_cents}≠行`).join('；') + (badJobs.length > 5 ? ` 等 ${badJobs.length} 单` : '') : '全部一致');
 
-  /* C5 结算分录守恒（confirm − 红冲净额；红冲沿用原 ref_type/ref_id） */
+  /* C5 结算分录守恒（confirm − 红冲净额；红冲沿用原 ref_type/ref_id）
+     A0-B-M2：只对 confirmed 结算核对——reopen 后 draft 的 total_receivable_cents
+     已随撤回清零（settlements.js），draft 无分录可比，旧口径"非 void 全查"会误报 */
   const badSt = db.prepare(
     `SELECT s.id, s.settlement_no, s.total_receivable_cents,
             COALESCE((SELECT SUM(CASE l.direction WHEN 'debit' THEN l.amount_cents ELSE -l.amount_cents END)
                         FROM journal_entries e JOIN journal_lines l ON l.entry_id = e.id
                        JOIN accounts a ON a.id = l.account_id
                        WHERE e.ref_type = 'settlement' AND e.ref_id = s.id AND a.code = '1122'), 0) AS entry_net
-       FROM settlements s WHERE s.status != 'void'
+       FROM settlements s WHERE s.status = 'confirmed'
          AND s.total_receivable_cents != COALESCE(
                (SELECT SUM(CASE l.direction WHEN 'debit' THEN l.amount_cents ELSE -l.amount_cents END)
                   FROM journal_entries e JOIN journal_lines l ON l.entry_id = e.id
@@ -83,6 +85,25 @@ function runReconcile(db) {
                  WHERE e.ref_type = 'settlement' AND e.ref_id = s.id AND a.code = '1122'), 0)`).all();
   add('C5', '结算应收 = 分录 1122 净借方', badSt.length === 0,
     badSt.length ? badSt.slice(0, 5).map(s => `${s.settlement_no} ${s.total_receivable_cents}≠${s.entry_net}`).join('；') + (badSt.length > 5 ? ` 等 ${badSt.length} 笔` : '') : '全部一致');
+
+  /* C6 预收/预支账实一致（A0-B-C3 探针）：1123 账簿净额 = Σ非void客户预收余额；
+     1221 账簿净额 = Σ非void员工预支余额。作废抵扣/冲销不回滚余额的历史 bug 由此暴露 */
+  const adv1123 = one(
+    `SELECT (SELECT COALESCE(SUM(CASE l.direction WHEN 'credit' THEN l.amount_cents ELSE -l.amount_cents END),0)
+               FROM journal_lines l JOIN accounts a ON a.id = l.account_id
+              WHERE a.code = '1123') AS journal,
+            (SELECT COALESCE(SUM(balance_cents),0) FROM advances
+              WHERE direction = 'prepaid_by_customer' AND status != 'void') AS tbl`);
+  add('C6', '1123 预收账实一致（账簿=余额合计）', adv1123.journal === adv1123.tbl,
+    `1123 净额 ${adv1123.journal} 分 vs 预收余额合计 ${adv1123.tbl} 分（差 ${adv1123.journal - adv1123.tbl}）`);
+  const adv1221 = one(
+    `SELECT (SELECT COALESCE(SUM(CASE l.direction WHEN 'debit' THEN l.amount_cents ELSE -l.amount_cents END),0)
+               FROM journal_lines l JOIN accounts a ON a.id = l.account_id
+              WHERE a.code = '1221') AS journal,
+            (SELECT COALESCE(SUM(balance_cents),0) FROM advances
+              WHERE direction = 'advance_to_worker' AND status != 'void') AS tbl`);
+  add('C7', '1221 预支账实一致（账簿=余额合计）', adv1221.journal === adv1221.tbl,
+    `1221 净额 ${adv1221.journal} 分 vs 预支余额合计 ${adv1221.tbl} 分（差 ${adv1221.journal - adv1221.tbl}）`);
 
   /* 信息项 */
   const info = {};

@@ -144,6 +144,14 @@ function updateReceipt(db, id, { amount_cents, method, occurred_at, note, collec
   const bill = r.bill_id ? getActive(db, 'bills', r.bill_id) : null;
   const newAmount = amount_cents != null ? amount_cents : r.amount_cents;
   if (!Number.isInteger(newAmount) || newAmount <= 0) throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
+  // A0-B-M4：编辑路径同 createReceipt 的超收校验——改后总额不得超账单应付
+  if (bill) {
+    const payable = bill.amount_cents + bill.adjust_cents;
+    const paidAfter = bill.paid_cents - r.amount_cents + newAmount;
+    if (paidAfter > payable) {
+      throw new ApiError('VALIDATION', `修改后收款合计 ${paidAfter} 分超过账单应付 ${payable} 分`);
+    }
+  }
   const newMethod = method || r.method;
   const newOccurred = occurred_at || r.occurred_at;
   // P6-M2(F5)：金额/方式/日期任一变化才需要红冲重过账；只改备注/经手人走短路，不产生冗余凭证
@@ -286,6 +294,7 @@ function createPayment(db, { category, payee_party_id, job_id, amount_cents, occ
     if (advance.direction !== 'advance_to_worker') {
       throw new ApiError('VALIDATION', '从预支付款只适用于「员工预支」');
     }
+    if (advance.status === 'void') throw new ApiError('INVALID_STATE', '预支已作废，不可再使用');
     if (advance.balance_cents < amount_cents) {
       throw new ApiError('VALIDATION', `预支余额 ${advance.balance_cents} 分不足`);
     }
@@ -370,6 +379,7 @@ function settleAdvance(db, advance_id, { amount_cents, ref_type, ref_id, occurre
   if (adv.direction !== 'advance_to_worker') {
     throw new ApiError('VALIDATION', '冲销用于「员工预支」；客户预收走收款抵扣');
   }
+  if (adv.status === 'void') throw new ApiError('INVALID_STATE', '预支已作废，不可再冲销');
   if (!Number.isInteger(amount_cents) || amount_cents <= 0) {
     throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
   }
@@ -475,11 +485,29 @@ function voidFinanceRecord(db, table, id) {
         db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
           .run(paid, paid <= 0 ? 'unpaid' : 'partial', now, bill.id);
       }
+      // A0-B-C3：预收抵扣收款的作废必须回滚预收——否则账簿 1123 已被红冲恢复
+      // 而 advances 余额仍被扣减，客户预收凭空蒸发（账表永久分叉）
+      if (row.from_advance_id) {
+        const adv = db.prepare('SELECT * FROM advances WHERE id = ?').get(row.from_advance_id);
+        if (adv && adv.status !== 'void') {
+          const balance = adv.balance_cents + row.amount_cents;
+          db.prepare('UPDATE advances SET balance_cents = ?, status = ?, updated_at = ? WHERE id = ?')
+            .run(balance, balance >= adv.amount_cents ? 'open' : 'partial', now, adv.id);
+        }
+        db.prepare(
+          `UPDATE advance_usages SET status = 'void'
+           WHERE advance_id = ? AND ref_type = 'receipt' AND ref_id = ? AND status = 'active'`)
+          .run(row.from_advance_id, row.receipt_no);
+        logEdit(db, { table: 'advances', recordId: row.from_advance_id, action: 'update',
+          before: { note: '作废预收抵扣收款 ' + row.receipt_no }, after: { balance_restored: row.amount_cents } });
+      }
     }
     if (table === 'advances') {
       const used = db.prepare(
         "SELECT COALESCE(SUM(amount_cents),0) AS n FROM advance_usages WHERE advance_id = ? AND status = 'active'").get(id).n;
       if (used > 0) throw new ApiError('INVALID_STATE', '预收/预支已有抵扣或冲销流水，请先作废对应流水');
+      // A0-B-M1a：作废时余额清零——红冲已把账簿恢复，余额残留会让"作废的钱"继续可用
+      db.prepare('UPDATE advances SET balance_cents = 0, updated_at = ? WHERE id = ?').run(now, id);
     }
     db.prepare(`UPDATE ${table} SET status = 'void', updated_at = ? WHERE id = ?`).run(now, id);
     logEdit(db, { table, recordId: id, action: 'void', before: { status: row.status }, after: { status: 'void' } });
