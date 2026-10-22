@@ -126,6 +126,9 @@ table.lg-table tfoot td.num b { color: var(--text); font-size: 13px; }
 .lg-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .lg-modal-head h2 { margin: 0; }
 .lg-fab-types { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+/* P10-R5：LLM 审查区 findings 列表 */
+#lrFindings .lg-detail { margin: 6px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#lrFindings .lg-detail span { flex-basis: 100%; }
 .lg-modal-panel .imp-drop { margin: 0; }
 
 /* ---------- 总表（P4-M1）：17 列宽表横向滚动 + 密集数字输入 ----------

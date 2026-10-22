@@ -191,4 +191,39 @@ function tryParse(s) {
   try { return JSON.parse(s); } catch (e) { return null; }
 }
 
-module.exports = { check, generateRows, buildPrompt, ollamaBase, ollamaModel, PROMPT_VERSION };
+/**
+ * P10-R5：通用 JSON 生成（数据审查 prompt 专用；输出契约由调用方关笼）。
+ * 与 generateRows 共用传输/超时（按 prompt 行数自适应）/坏输出重试一次骨架；
+ * 返回 {ok:true, json, model} 或 {ok:false, error, hint}。
+ */
+async function generateJson(db, prompt, opts) {
+  const base = ollamaBase(db);
+  const model = ollamaModel(db);
+  const timeoutMs = callTimeoutMs(prompt, opts);
+  const call = async (p) => {
+    const res = await ollamaRequest(`${base}/api/generate`, {
+      method: 'POST', timeoutMs,
+      body: {
+        model, prompt: p, stream: false, format: 'json',
+        options: { temperature: 0, num_predict: 4096, num_ctx: 8192 }
+      }
+    });
+    if (res.status !== 200) return { ok: false, error: 'OLLAMA_UNREACHABLE', hint: `Ollama 返回 ${res.status}` };
+    return { ok: true, text: (res.json && res.json.response) || '' };
+  };
+  let r = await call(prompt);
+  if (!r.ok) return r;
+  let out = tryParse(r.text);
+  if (!out || typeof out !== 'object' || Array.isArray(out)) {
+    r = await call(prompt +
+      `\n\n【注意】你上一次的输出不是合法 JSON 对象（开头为：${r.text.slice(0, 80)}）。请只输出合法 JSON，不要任何解释。`);
+    if (!r.ok) return r;
+    out = tryParse(r.text);
+    if (!out || typeof out !== 'object' || Array.isArray(out)) {
+      return { ok: false, error: 'LLM_BAD_OUTPUT', hint: '模型两次输出均无法解析为 JSON' };
+    }
+  }
+  return { ok: true, json: out, model };
+}
+
+module.exports = { check, generateRows, generateJson, buildPrompt, ollamaBase, ollamaModel, PROMPT_VERSION };

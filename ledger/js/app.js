@@ -1022,8 +1022,9 @@
     const act = btn.dataset.act;
     const id = Number(btn.dataset.id);
     // 审核/主数据页签与导入 FAB 弹窗的处理在 app-extra.js（P2-4 拆分；P9-R2 增 dh- 体检动作前缀，
-    // P10-R4 增 fab- 弹窗动作前缀，md- 合并弹窗复用既有 md- 前缀——漏加前缀=按钮静默无效，P3 教训）
-    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-|dh-|fab-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
+    // P10-R4 增 fab- 弹窗动作前缀，P10-R5 增 lr- LLM 审查动作前缀，md- 合并弹窗复用既有 md- 前缀——
+    // 漏加前缀=按钮静默无效，P3 教训）
+    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-|dh-|fab-|lr-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
     switch (act) {
       case 'csv-export': {
         // 导出「按钮所在面板」的第一张表（月份+筛选口径；编辑态取输入值；展开明细与隐藏 slot 不导）。

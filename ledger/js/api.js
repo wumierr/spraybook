@@ -85,6 +85,10 @@
     // P8 本地 LLM 文本导入；P9-R3 起 body 可含 default_date（YYYY-MM-DD，
     // 无日期条目按它记）——llmParse 整包透传，调用方在 b 里带上即可
     llmParse: (b) => Api.post('/api/llm/parse', b),
+    // P10-R5：LLM 数据审查（只挑错，绝不改数据）
+    llmReviewBatch: (id) => Api.post(`/api/llm/review/batches/${id}`, {}),
+    llmReviewHealth: () => Api.post('/api/llm/review/health', {}),
+    llmReviewDismiss: (key) => Api.post('/api/llm/review/health/dismiss', { key }),
     llmStatus: () => Api.get('/api/llm/status'),
     llmCancelBatch: (id) => Api.post('/api/llm/batches/' + id + '/cancel', {}),
     editReceipt: (id, b) => Api.patch('/api/receipts/' + id, b),

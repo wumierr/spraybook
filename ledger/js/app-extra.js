@@ -11,6 +11,8 @@
   const importState = { batchId: null, rows: [], editId: null };
   // P10-R4：导入 FAB 弹窗状态（open/选中类型/批次快捷处理/行编辑中 id/LLM 就绪态）
   const fabState = { open: false, type: '', batchId: null, rows: [], editId: null, llmOk: null, summary: '', jobNo: null };
+  // P10-R5：审核页 LLM 审查区状态（本机 LLM 就绪态——按钮置灰依据）
+  let lrLlmOk = null;
   // P9-R2：数据体检缓存（主数据「疑似重复」区与「体检」页共用）+ 合并预览弹窗状态
   let mdHealth = null;            // GET /api/data-health 的最近一次结果
   let mdMergeGroup = null;        // 弹窗当前展示的重复组（suspect_dupes 元素）
@@ -55,7 +57,16 @@
         <th>sheet/行</th><th>类型</th><th>姓名</th><th>村/队</th><th>日期</th><th>应收</th><th>实收</th><th>复核提示</th><th>操作</th>
       </tr></thead><tbody id="impRows"><tr><td colspan="9">—</td></tr></tbody></table>
     </div>
-    <div id="reviewHealth"><div class="lg-panel">数据体检加载中…</div></div>`;
+    <div id="reviewHealth"><div class="lg-panel">数据体检加载中…</div></div>
+    <div class="lg-panel" id="reviewLlm">
+      <h2>🤖 LLM 数据审查（只挑错，不改数据；逐条人工采纳/忽略）</h2>
+      <div class="lg-form">
+        <button class="lg-btn primary" data-act="lr-health" id="lrHealthBtn">🤖 LLM 全库体检</button>
+        <span class="hint" id="lrStatus" style="color:var(--muted);font-size:12px">检查本机 LLM…</span>
+      </div>
+      <div class="hint" style="color:var(--muted);font-size:12px">批次审查：上方批次表「🤖 审查这批」——发现的问题并入该批行级复核（带原文证据）；全库体检：扫描客户/作业/账单摘要找疑似同名、疑似错字、金额离群、数据缺漏。LLM 只挑错，采纳与否由人决定，绝不改数据。</div>
+      <div id="lrFindings"></div>
+    </div>`;
   }
 
   /** 审核页拼装：骨架先行 → 批次表 → 体检区异步注入（一个 Promise 链，innerHTML 不互踩） */
@@ -66,6 +77,44 @@
     const hh = await renderHealth().catch(() => null);
     const el = document.getElementById('reviewHealth');
     if (el) el.innerHTML = hh || '<div class="lg-panel"><h2>数据体检</h2><div class="lg-detail">体检数据拉取失败（服务端较旧？需重启服务生效）</div></div>';
+    lrLoadStatus(); // P10-R5：LLM 审查区就绪态（Ollama 不可达→按钮置灰）
+  }
+
+  /* ---------- P10-R5：LLM 数据审查区（只挑错；采纳=跳对应编辑入口，忽略=settings 登记） ---------- */
+  async function lrLoadStatus() {
+    const el = document.getElementById('lrStatus');
+    const btn = document.getElementById('lrHealthBtn');
+    try {
+      const st = await Api.llmStatus();
+      lrLlmOk = !!(st && st.ollama_ok);
+      if (el) {
+        el.textContent = lrLlmOk
+          ? `本机 LLM 就绪（${st.model}）——批次审查与全库体检可用`
+          : `本机 LLM 未就绪：${st.hint || st.error || '请先启动 Ollama'}——Excel/作业包导入不受影响`;
+        if (!lrLlmOk) el.style.color = 'var(--err, #c62828)';
+      }
+      if (btn) btn.disabled = !lrLlmOk;
+      if (!lrLlmOk && typeof document.querySelectorAll === 'function') {
+        document.querySelectorAll('[data-act="lr-batch"]').forEach(b2 => { b2.disabled = true; });
+      }
+    } catch (e) {
+      lrLlmOk = false;
+      if (el) el.textContent = 'LLM 状态未知：' + e.message;
+      if (btn) btn.disabled = true;
+    }
+  }
+
+  function lrRenderFindings(d) {
+    const box = document.getElementById('lrFindings');
+    if (!box) return;
+    const sevTag = s => tag(s === 'high' ? '高' : s === 'medium' ? '中' : '低', s === 'high' ? 'err' : s === 'medium' ? 'warn' : '');
+    const items = (d.findings || []).map(f => `<div class="lg-detail" data-lrkey="${esc(f.key)}">
+      ${sevTag(f.severity)} <b>${esc(f.where)}</b>　${esc(f.what)}<br>
+      <span style="color:var(--muted)">证据：${esc(f.evidence || '—')}${f.verified ? '' : '（未在原文定位，请人工核对）'}</span>
+      <button class="lg-btn" data-act="lr-adopt" data-where="${esc(f.where)}">采纳（去处理）</button>
+      <button class="lg-btn" data-act="lr-dismiss" data-key="${esc(f.key)}">忽略</button>
+    </div>`).join('');
+    box.innerHTML = items || '<div class="lg-detail">✓ 未发现可疑问题（扫描范围与模型见状态行）</div>';
   }
 
   async function loadImportBatches() {
@@ -77,7 +126,7 @@
       <td>#${b.id}</td><td>${esc(b.filename)}</td><td>${srcTag(b.source_type)}</td>
       <td>${b.status === 'applied' ? tag('已落库') : b.status === 'reviewing' ? tag('待入库', 'warn') : b.status === 'rejected' ? tag('已取消', 'err') : tag(b.status)}</td>
       <td>${(b.imported_at || '').slice(0, 16).replace('T', ' ')}</td>
-      <td><button class="lg-btn" data-act="imp-open" data-id="${b.id}">打开复核</button></td>
+      <td><button class="lg-btn" data-act="imp-open" data-id="${b.id}">打开复核</button>${b.status !== 'applied' && b.status !== 'rejected' ? ` <button class="lg-btn" data-act="lr-batch" data-id="${b.id}"${lrLlmOk === false ? ' disabled title="本机 LLM 未就绪"' : ' title="LLM 只挑错带证据，绝不改数据；发现并入行级复核"'}>🤖 审查这批</button>` : ''}</td>
     </tr>`).join('') || '<tr><td colspan="6">暂无批次</td></tr>';
     if (batches.length && !importState.batchId) {
       importState.batchId = batches[0].id;
@@ -260,7 +309,7 @@
       <button class="lg-btn primary" data-act="fab-apply">✔ 确认并落库（仅已确认行）</button>
       <button class="lg-btn" data-act="fab-keep">放入待入库</button>
       <button class="lg-btn" data-act="fab-goto-review">去审核页细看</button>
-      <button class="lg-btn" data-act="fab-llm-review" disabled title="P10-R5 上线：LLM 只挑错、带原文证据，绝不改数据">🤖 LLM 审查这批（即将上线）</button>
+      <button class="lg-btn" data-act="fab-llm-review" id="fabLlmReviewBtn"${fabState.llmOk === false ? ' disabled title="本机 LLM 未就绪"' : ' title="LLM 只挑错、带原文证据，绝不改数据；发现并入行级复核"'}>🤖 LLM 审查这批</button>
       <button class="lg-btn" data-act="fab-again">↺ 再导一批</button>
     </div>
     <table class="lg-table"><thead><tr>
@@ -315,6 +364,8 @@
       }
       const b = document.getElementById('fabTypeLlm');
       if (b) { b.disabled = !fabState.llmOk; b.title = fabState.llmOk ? '' : '本机 LLM 未就绪（Excel/作业包不受影响）'; }
+      const rb = document.getElementById('fabLlmReviewBtn');
+      if (rb) { rb.disabled = !fabState.llmOk; rb.title = fabState.llmOk ? 'LLM 只挑错、带原文证据，绝不改数据；发现并入行级复核' : '本机 LLM 未就绪'; }
     }).catch(() => { fabState.llmOk = false; });
   }
   function fabClose(refreshPage) {
@@ -1027,8 +1078,52 @@
         fabRender();
         break;
       case 'fab-llm-review':
-        // R5 占位（按钮 disabled）：实现见 P10-R5——只挑错、带原文证据，绝不改数据
-        toast('🤖 LLM 数据审查即将上线（只挑错、带原文证据，不改数据）');
+        // P10-R5：FAB 快捷处理内审查这批（只挑错；发现 append 进行级复核 needs_review）
+        if (fabState.batchId == null) return toast('先解析一批数据', true);
+        run(() => Api.llmReviewBatch(fabState.batchId)).then(d => {
+          if (!d) return;
+          toast(`审查完成：${d.findings.length} 条发现，${d.appended} 条已并入行级复核（带证据，逐条人工判断后落库）`);
+          fabRenderRows(); // 行的复核提示出现 llm_review 项
+        });
+        break;
+      /* ---- P10-R5：审核页 LLM 审查区（lr- 前缀；只挑错，绝不改数据） ---- */
+      case 'lr-batch': {
+        const bid = Number(btn.dataset.id);
+        run(() => Api.llmReviewBatch(bid)).then(d => {
+          if (!d) return;
+          toast(`审查完成：${d.findings.length} 条发现，${d.appended} 条已并入行级复核（打开复核逐条人工判断）`);
+          if (importState.batchId === bid && document.getElementById('impRowsPanel')) loadImportRows(bid);
+        });
+        break;
+      }
+      case 'lr-health':
+        run(async () => {
+          const d = await Api.llmReviewHealth();
+          lrRenderFindings(d);
+          return d;
+        }).then(d => {
+          if (d) toast(`全库体检完成：${d.findings.length} 条发现（扫描 ${d.scanned} 条摘要${d.dismissed ? `，已忽略 ${d.dismissed} 条` : ''}）——逐条采纳或忽略`);
+        });
+        break;
+      case 'lr-adopt': {
+        // 采纳=跳对应页编辑入口（parties→主数据、jobs→工单、bills→账单）
+        const where = String(btn.dataset.where || '');
+        const tab = where.startsWith('parties#') ? 'master' : where.startsWith('jobs#') ? 'jobs' : where.startsWith('bills#') ? 'bills' : '';
+        if (!tab) return toast('该发现未关联可跳转的实体', true);
+        state.tab = tab;
+        if (switchNav) switchNav(tab);
+        if (T && T.render) T.render().catch(() => {});
+        break;
+      }
+      case 'lr-dismiss':
+        run(() => Api.llmReviewDismiss(btn.dataset.key)).then(r => {
+          if (!r) return;
+          toast('已登记忽略（settings 键 llmreview.dismissed）');
+          if (typeof btn.closest === 'function') {
+            const li = btn.closest('[data-lrkey]');
+            if (li && typeof li.remove === 'function') li.remove();
+          }
+        });
         break;
       case 'imp-keep':      case 'imp-keep':
         toast('批次保持在「待入库」，随时回来继续处理');

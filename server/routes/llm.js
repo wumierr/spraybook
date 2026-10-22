@@ -12,6 +12,7 @@ const { ApiError } = require('../services/apiError');
 const { logEdit } = require('../services/audit');
 const ollama = require('../services/ollamaClient');
 const { parseTextToBatch } = require('../services/llmImport');
+const { reviewBatch, reviewHealth, dismissFinding } = require('../services/llmReview');
 
 function createLlmRouter(db) {
   const router = express.Router();
@@ -54,6 +55,28 @@ function createLlmRouter(db) {
       tx();
       res.json({ ok: true, data: { batch_id: id, status: 'rejected' } });
     } catch (err) { next(err); }
+  });
+
+  /* ---- P10-R5：LLM 数据审查（D3 裁决：只挑错、人采纳，绝不改数据） ----
+     POST /api/llm/review/batches/:id → findings append 进行级复核（needs_review）
+     POST /api/llm/review/health     → 全库体检 findings（ephemeral，不落库）
+     POST /api/llm/review/health/dismiss → 忽略登记（settings 键 llmreview.dismissed） */
+  router.post('/llm/review/batches/:id', async (req, res, next) => {
+    try {
+      const data = await reviewBatch(db, Number(req.params.id));
+      res.json({ ok: true, data });
+    } catch (err) { next(err); }
+  });
+
+  router.post('/llm/review/health', async (req, res, next) => {
+    try {
+      const data = await reviewHealth(db);
+      res.json({ ok: true, data });
+    } catch (err) { next(err); }
+  });
+
+  router.post('/llm/review/health/dismiss', (req, res) => {
+    res.json({ ok: true, data: dismissFinding(db, req.body && req.body.key) });
   });
 
   return router;
