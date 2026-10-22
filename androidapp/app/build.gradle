@@ -11,7 +11,7 @@ android {
         minSdk 21          // Android 5.0（覆盖 99%+ 设备）
         targetSdk 34       // Android 14
         versionCode 5
-        versionName "4.8.0"  // 与 js/version.js APP_VERSION 手动同步（无预处理，R3 核对）
+        versionName "4.8.1"  // 与 js/version.js APP_VERSION 手动同步（无预处理，R3 核对）
         resConfigs "zh", "zh-rCN"  // 仅保留中文资源，减小体积
     }
 

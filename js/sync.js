@@ -143,17 +143,6 @@
   var _retryTimer = null;
   var _pollMs = 60000; // 轮询间隔（离线时指数退避到 5 分钟）
 
-  /** E3：同步失败时解除工单上的防重标记（允许直接重试，不再弹确认） */
-  function _clearSyncMarker(entry) {
-    try {
-      var wo = window.UI && window.UI.state && window.UI.state.workOrder;
-      if (wo && wo._synced_client_job_id === entry.client_job_id) {
-        delete wo._synced_client_job_id;
-        delete wo._synced_job_no;
-      }
-    } catch (e) { /* 只读环境忽略 */ }
-  }
-
   function _scheduleRetry(attempts) {
     if (_retryTimer) return;
     _retryTimer = setTimeout(function () {
@@ -213,11 +202,12 @@
                   entry.attempts += 1;
                   entry.last_error = 'HTTP ' + res.status;
                   entry.status = isDead(entry.attempts) ? 'dead' : 'pending';
-                  _clearSyncMarker(entry);          // E3：失败解除防重标记，允许直接重试
+                  // A0-F-C1：失败保留防重标记——队列自动退避重试，用户再点走 requeue 幂等路径，
+                  // 不再生成新 uuid（此前清标记+用户重按=同一作业两张单都 POST 成功）
                 } else {
                   entry.status = 'failed';          // 4xx 校验错，不会自愈
                   entry.last_error = (j && j.error && j.error.message) || ('HTTP ' + res.status);
-                  _clearSyncMarker(entry);          // E3：失败解除防重标记
+                  // A0-F-C1：同上，标记保留；failed 条目由 requeueFailed/再点同步重推
                 }
               });
             }).catch(function (err) {
@@ -225,7 +215,7 @@
               entry.last_error = String((err && err.message) || err) || 'network';
               entry.status = isDead(entry.attempts) ? 'dead' : 'pending';
               acc.offline = true;
-              _clearSyncMarker(entry);              // E3：网络失败解除防重标记
+              // A0-F-C1：网络失败同样保留防重标记，自动重试兜底
             });
         });
       });
@@ -258,8 +248,10 @@
 
   /* ---------- 入口：把当前作业入队 ---------- */
 
-  /** 复制工单 / 点同步按钮时调用。返回 payload 或 null（附原因码）。 */
-  function enqueueCurrent() {
+  /** 复制工单 / 点同步按钮时调用。返回 payload 或 null（附原因码）。
+      opts.forceNew = true：已同步完成的工单明确再建一单（经 UI 确认后调用）。 */
+  function enqueueCurrent(opts) {
+    opts = opts || {};
     var st = getSettings();
     if (!st.enabled || !st.base_url) return { ok: false, reason: 'disabled' };
     if (typeof location !== 'undefined' && location.protocol === 'https:' && st.base_url.indexOf('http://') === 0) {
@@ -267,16 +259,27 @@
     }
     var UI = window.UI;
     if (!UI || !UI._lastResult) return { ok: false, reason: 'no-result' };
-    // E3（P7-R4）同步防重：本工单已入队/已同步过（_synced_client_job_id 标记）
-    // 再点同步 = 账本会多出一张相同作业单（幂等键每次新生成拦不住）——
-    // 弹确认让用户明确"我要再建一单"，默认拦住手滑重复点击。
+    // A0-F-C1/F-M4：同步防重收敛——
+    // 队列里已有该单（未同步完成）→ 幂等重推（failed/dead 转 pending 立即 flush），不新建；
+    // 已同步完成（done 移出队列）→ 返回 already-synced，由 UI 自建确认框（APK WebView 里
+    // 原生 confirm 恒 false 会静默拦截，故不再使用）确认后带 forceNew 重调。
     var wo = UI.state && UI.state.workOrder;
-    if (wo && wo._synced_client_job_id) {
-      var allowed = false;
-      try {
-        allowed = window.confirm('该工单此前已同步（队列单号 ' + (wo._synced_job_no || wo._synced_client_job_id.slice(0, 8)) + '）。\n再次同步将在账本新建一单，继续吗？');
-      } catch (e) { allowed = true; } // 无 confirm 的环境（测试 vm）不拦
-      if (!allowed) return { ok: false, reason: 'already-synced' };
+    if (wo && wo._synced_client_job_id && !opts.forceNew) {
+      var q0 = loadQueue();
+      var existing = null;
+      for (var k = 0; k < q0.queue.length; k++) {
+        if (q0.queue[k].client_job_id === wo._synced_client_job_id) { existing = q0.queue[k]; break; }
+      }
+      if (existing) {
+        if (existing.status === 'failed' || existing.status === 'dead') {
+          existing.status = 'pending'; existing.attempts = 0; existing.last_error = null;
+          saveQueue(q0);
+        }
+        _updateUI();
+        flushNow();
+        return { ok: true, requeued: true, job_no: existing.job_no };
+      }
+      return { ok: false, reason: 'already-synced' };
     }
     var payload = buildJobPayload(UI.state, UI._lastResult, UI.state.mode || 'spray');
     if (!payload) return { ok: false, reason: 'no-result' };

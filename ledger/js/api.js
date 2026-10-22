@@ -41,6 +41,7 @@
     // P10-R3：charts.js 每卡独立拼端点查询串，复用同一「空参数整体省略」口径
     qs,
     post: (p, b) => request('POST', p, b || {}),
+    put: (p, b) => request('PUT', p, b || {}),
     patch: (p, b) => request('PATCH', p, b),
     // 便捷封装
     jobs: (params) => Api.get('/api/jobs' + (params || '')),
