@@ -509,6 +509,8 @@
         <button class="btn btn-secondary btn-sm" id="qrAcctClear" style="display:none;">✕</button>
         <span class="hint">收款码=主码大位（扫码付款）；两者都传=双码版</span>
       </div>
+      <!-- D5 同步队列面板（只读视图 + dead/failed 一键重推；渲染在 sync.js renderQueuePanel） -->
+      <div id="syncQueuePanel" class="sync-queue-panel" style="margin-top:10px;border-top:1px dashed var(--panel-border);padding-top:10px;"><!-- JS 注入 --></div>
       <div class="modal-actions">
         <button class="btn btn-secondary" id="syncCfgTest">🔍 测试连接</button>
         <button class="btn btn-secondary" data-close>取消</button>

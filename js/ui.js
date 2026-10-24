@@ -3308,6 +3308,8 @@ const UI = {
     document.getElementById('syncCfgEnabled').checked = !!s.enabled;
     document.getElementById('syncCfgTestResult').textContent = '';
     this.refreshQrState();
+    // D5：同步队列面板（渲染在 sync.js；打开弹窗即刷一次，随同步事件自刷）
+    if (window.SpraySync && window.SpraySync.renderQueuePanel) window.SpraySync.renderQueuePanel();
     this.openModal('syncCfgModal');
   },
 

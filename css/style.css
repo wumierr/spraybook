@@ -2017,3 +2017,22 @@ html, body {
 }
 .card-qr-label { font-size: 12px; font-weight: 600; color: var(--text-primary); }
 .card-qrset input[hidden] { display: none; }
+
+/* ---------- D5 同步队列面板（☁️ 弹窗内只读视图，2026-10-24b） ---------- */
+.sync-queue-panel { font-size: 12px; }
+.sq-head { font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+.sq-empty { color: var(--text-muted); }
+.sq-row {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 6px 8px; border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md); margin-bottom: 4px; background: var(--input-bg);
+}
+.sq-row.sq-failed { border-color: var(--warn); }
+.sq-row.sq-dead { border-color: var(--danger); }
+.sq-icon { flex: 0 0 auto; }
+.sq-main { flex: 1; min-width: 0; }
+.sq-main b { font-size: 12px; color: var(--text-primary); }
+.sq-main small { margin-left: 6px; color: var(--text-muted); }
+.sq-err { font-size: 11px; color: var(--danger); margin-top: 2px; }
+.sq-requeue { display: block; margin: 6px auto 0; }
+.sq-apk-hint { color: var(--text-muted); text-align: center; line-height: 1.8; }

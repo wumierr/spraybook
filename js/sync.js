@@ -54,6 +54,15 @@
     return RETRY_DELAYS_MIN[idx] * 60000;
   }
 
+  /* ---------- N-5（D5）：APK 离线壳检测 ----------
+     APK 壳固定 loadUrl file:///android_asset/www/（MainActivity START_URL），
+     且 AndroidManifest 已 tools:node="remove" INTERNET 权限——壳内任何
+     fetch 必失败。file: 协议=确定性特征（PWA/浏览器访问都是 http(s)）。
+     壳内行为：隐藏同步 UI + 提示改用浏览器访问电脑地址；入队口直接拒绝。 */
+  function isApkShell() {
+    return typeof location !== 'undefined' && location.protocol === 'file:';
+  }
+
   function isDead(attempts) { return attempts >= MAX_ATTEMPTS; }
 
   /**
@@ -187,6 +196,7 @@
    */
   function flushNow() {
     if (_flushing) return Promise.resolve({ sent: 0, busy: true });
+    if (isApkShell()) return Promise.resolve({ sent: 0, apk: true });   // N-5：壳内无网络
     var st = getSettings();
     if (!st.enabled || !st.base_url) {
       _updateUI();
@@ -283,6 +293,7 @@
       opts.forceNew = true：已同步完成的工单明确再建一单（经 UI 确认后调用）。 */
   function enqueueCurrent(opts) {
     opts = opts || {};
+    if (isApkShell()) return { ok: false, reason: 'apk' };   // N-5：壳内无网络权限，同步请用浏览器
     var st = getSettings();
     if (!st.enabled || !st.base_url) return { ok: false, reason: 'disabled' };
     if (typeof location !== 'undefined' && location.protocol === 'https:' && st.base_url.indexOf('http://') === 0) {
@@ -400,6 +411,18 @@
   function _updateUI(kind) {
     if (typeof document === 'undefined') return;
     var st = getStatus();
+    // N-5：APK 离线壳——徽标不建不显示；工单状态行改提示
+    if (isApkShell()) {
+      var b0 = document.getElementById('syncBadge');
+      if (b0) b0.style.display = 'none';
+      var row0 = document.getElementById('syncStatusRow');
+      if (row0) {
+        row0.textContent = '📱 APK 离线壳不带网络权限：同步请用浏览器访问电脑地址';
+        row0.hidden = false;
+      }
+      renderQueuePanel();
+      return;
+    }
     var badge = document.getElementById('syncBadge');
     if (!badge) {
       var header = document.querySelector('.header-left');
@@ -457,6 +480,59 @@
       if (done) syncBtn.title = '该工单已同步过' + (wo._synced_job_no ? '（单号 ' + wo._synced_job_no + '）' : '') + '；再次同步将新建一单';
       else syncBtn.removeAttribute('title');
     }
+    // D5：同步队列面板（☁️ 弹窗内；面板不在 DOM 时 no-op）
+    renderQueuePanel();
+  }
+
+  /* ---------- D5 同步队列面板（只读视图 + dead/failed 一键重推） ---------- */
+  var QUEUE_STATUS_META = {
+    pending: { icon: '⏳', label: '待同步' },
+    syncing: { icon: '🔄', label: '同步中' },
+    failed:  { icon: '⚠️', label: '失败' },
+    dead:    { icon: '⛔', label: '已停' }
+  };
+
+  function renderQueuePanel() {
+    if (typeof document === 'undefined') return;
+    var wrap = document.getElementById('syncQueuePanel');
+    if (!wrap) return;
+    if (isApkShell()) {
+      wrap.innerHTML = '<div class="sq-apk-hint">📱 APK 离线壳不带网络权限，同步功能不可用。<br>同步请用手机浏览器访问电脑地址（如 http://192.168.x.x:8080）。</div>';
+      return;
+    }
+    var q = loadQueue();
+    var st = getStatus();
+    if (!getSettings().enabled) {
+      wrap.innerHTML = '<div class="sq-empty">同步未启用——填好服务器地址并勾选「启用同步」后，工单将自动入队上传。</div>';
+      return;
+    }
+    if (!q.queue.length) {
+      wrap.innerHTML = '<div class="sq-empty">☁ 队列空：' + (st.lastServerJobNo ? '最近单 ' + st.lastServerJobNo + ' 已同步' : '暂无待同步作业') + '</div>';
+      return;
+    }
+    var rows = q.queue.map(function (e) {
+      var meta = QUEUE_STATUS_META[e.status] || { icon: '❓', label: e.status };
+      var errLine = e.last_error
+        ? '<div class="sq-err">' + String(e.last_error).replace(/[<>&]/g, '') + '</div>'
+        : (e.status === 'pending' && e.attempts > 0
+          ? '<div class="sq-err">第 ' + e.attempts + ' 次失败，' + RETRY_DELAYS_MIN[Math.min(e.attempts, RETRY_DELAYS_MIN.length) - 1] + ' 分钟后自动重试</div>'
+          : '');
+      return '<div class="sq-row sq-' + e.status + '">' +
+        '<span class="sq-icon">' + meta.icon + '</span>' +
+        '<span class="sq-main"><b>' + String(e.job_no || e.client_job_id || '').replace(/[<>&]/g, '') + '</b>' +
+        '<small>' + meta.label + (e.server_job_no ? ' · 已入账 ' + e.server_job_no : '') + '</small>' + errLine + '</span>' +
+        '</div>';
+    }).join('');
+    var hasBad = st.failed + st.dead > 0;
+    wrap.innerHTML =
+      '<div class="sq-head">队列 ' + q.queue.length + ' 单：待同步 ' + st.pending +
+      (st.failed ? ' · 失败 ' + st.failed : '') + (st.dead ? ' · 已停 ' + st.dead : '') + '</div>' +
+      rows +
+      (hasBad
+        ? '<button type="button" class="btn btn-secondary btn-sm sq-requeue">♻ 重推失败/停单（' + (st.failed + st.dead) + '）</button>'
+        : '');
+    var btn = wrap.querySelector('.sq-requeue');
+    if (btn) btn.addEventListener('click', function () { requeueFailed(); });
   }
 
   /* ---------- 初始化 ---------- */
@@ -501,6 +577,8 @@
     flushNow: flushNow,
     requeueFailed: requeueFailed,
     getStatus: getStatus,
+    isApkShell: isApkShell,
+    renderQueuePanel: renderQueuePanel,
     getSettings: getSettings,
     setSettings: setSettings,
     _queue: { load: loadQueue, save: saveQueue } // 测试专用
