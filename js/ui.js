@@ -341,6 +341,14 @@ const UI = {
       <div class="field" style="grid-column: 1 / -1;">
         <label>说明</label>
         <input type="text" id="tf-desc" value="${this.escapeHtml(v('description', ''))}" placeholder="如：雨后补喷注意加减量">
+      </div>
+      <div class="field">
+        <label>浓度下限 (套/100升) <i class="tip" data-tip="D6 安全区间下限（可空=不启用）。结果浓度低于此值警示药偏稀">i</i></label>
+        <input type="number" id="tf-concMin" step="0.1" min="0" value="${(t && t.concentrationRange && t.concentrationRange[0] != null) ? t.concentrationRange[0] : ''}" placeholder="选填">
+      </div>
+      <div class="field">
+        <label>浓度上限 (套/100升) <i class="tip" data-tip="D6 安全区间上限（可空=不启用）。结果浓度高于此值警示药偏浓有药害风险">i</i></label>
+        <input type="number" id="tf-concMax" step="0.1" min="0" value="${(t && t.concentrationRange && t.concentrationRange[1] != null) ? t.concentrationRange[1] : ''}" placeholder="选填">
       </div>`;
   },
 
@@ -352,6 +360,12 @@ const UI = {
       this.toast('请填写类型名称', 'warn');
       return;
     }
+    // D6 浓度安全区间：两格都有有效值且 min<max 才落档（否则视为不启用）
+    const concMin = parseFloat(get('tf-concMin'));
+    const concMax = parseFloat(get('tf-concMax'));
+    const range = (isFinite(concMin) && isFinite(concMax) && concMin > 0 && concMax > concMin)
+      ? [concMin, concMax] : null;
+    const prevRange = this._editingTypeKey ? (this.getType(this._editingTypeKey)?.concentrationRange || null) : null;
     const entry = {
       key: this._editingTypeKey || ('custom_' + Date.now().toString(36)),
       name,
@@ -365,6 +379,7 @@ const UI = {
       waterPerTree: num('tf-waterPerTree', 0),
       pesticideWaterPerSet: num('tf-perSet', 300),
       droneSavingCoeff: num('tf-coeff', 0.7),
+      concentrationRange: range || prevRange,
       description: get('tf-desc') || '',
       notes: this._editingTypeKey ? (this.getType(this._editingTypeKey)?.notes || '') : '',
       builtin: false   // 用户改过/新建的一律视为自定义（可删除）
@@ -1928,6 +1943,12 @@ const UI = {
     setText('srTripsSub', `水量 ${fmt(r.totalAddWater != null ? r.totalAddWater : r.water, 0)} 升`);
     const pc = document.getElementById('srProfitCard');
     if (pc) pc.dataset.loss = r.profit < 0 ? 'true' : 'false';
+    // D6 浓度警示（简单态同款红字条）
+    const sw = document.getElementById('srWarn');
+    if (sw) {
+      sw.textContent = r.concentrationWarning || '';
+      sw.style.display = r.concentrationWarning ? '' : 'none';
+    }
     // 顶部小结行：药型 · 面积 · 用药（D2 圈地口径时注明计费面积）
     const plant = this.state.plant || {};
     const basisNote = r.priceBasis === 'enclosed'
@@ -2401,13 +2422,20 @@ const UI = {
     setText('rProfitPerMu', `¥${Calculator.fmtMoney(r.profitPerMu)}`);
     setText('rSprayIncome', `¥${Calculator.fmtMoney(r.income)}`);
 
-    // 浓度：紧凑显示"现有 X / 参考 Y"（单位省略，靠标签说明）
+    // 浓度：紧凑显示"现有 X / 参考 Y"（单位省略，靠标签说明）；D6 越界红字+警示条
     const existingConc = r.water > 0 ? (r.existingSets / r.water) * 100 : 0;
     const refConc = r.concentration || 0;
     setText('rConcentration',
       (existingConc > 0 || refConc > 0)
         ? `${fmt(existingConc, 2)} / ${fmt(refConc, 2)}`
         : '—');
+    const concEl = document.getElementById('rConcentration');
+    if (concEl) concEl.dataset.warn = r.concentrationWarning ? 'true' : '';
+    const warnBar = document.getElementById('concWarnBar');
+    if (warnBar) {
+      warnBar.textContent = r.concentrationWarning || '';
+      warnBar.style.display = r.concentrationWarning ? '' : 'none';
+    }
 
     setText('rPesticideIncluded', r.pesticideIncluded ? '是（含药剂成本）' : '否（农户自备）');
     setText('rChargeOil', r.perChargeOil != null ? `¥${fmt(r.perChargeOil, 2)} / 次` : '—');

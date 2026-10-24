@@ -405,6 +405,8 @@ const Calculator = {
     result.stockStatus = existingSets <= 0 ? 'none'
       : (existingSets >= result.pesticideRounded ? 'enough' : 'short');
     result.concentration = totalWater > 0 ? (usedSets / totalWater) * 100 : 0;
+    // D6 浓度安全区间警示（可空；判定纯函数在 data.js）：并入可见防呆
+    result.concentrationWarning = concentrationWarning(plant.concentrationRange, result.concentration);
 
     /* 兑药批次：按总加水（计算水量+富余）算 */
     const mixRounds = totalAddWater > 0 ? Math.max(1, Math.ceil(totalAddWater / batchCapacity)) : 0;

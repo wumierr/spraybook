@@ -507,6 +507,23 @@ function settlementCardData(result, state, meta) {
 window.settlementCardData = settlementCardData;
 
 /* ============================================================
+   ★ D6 浓度安全区间警示（可空；空=该药型不启用警示）★
+   concentrationRange = [min, max]（套/100升，与参考浓度同口径）。
+   判定纯函数：区间缺失/浓度非法 → 无警示；越界给可读原因。
+   ============================================================ */
+function concentrationWarning(range, conc) {
+  const c = Number(conc);
+  if (!Array.isArray(range) || range.length !== 2) return null;
+  const min = Number(range[0]), max = Number(range[1]);
+  if (!isFinite(min) || !isFinite(max) || min >= max) return null;
+  if (!isFinite(c) || c <= 0) return null;
+  if (c < min) return `⚠️ 浓度 ${c.toFixed(2)} 低于安全区间 ${min}~${max}（套/100升），药偏稀——核对每亩水量与用药量`;
+  if (c > max) return `⚠️ 浓度 ${c.toFixed(2)} 超出安全区间 ${min}~${max}（套/100升），药偏浓——有药害风险，核对配方`;
+  return null;
+}
+window.concentrationWarning = concentrationWarning;
+
+/* ============================================================
    ★★★ 吊运模式（HAUL）—— 与打药模式完全独立 ★★★
    场景：无人机吊运水果/农产品从果园下山或跨地形运输
    收入：按每斤多少毛计费（用户填毛，实际 ×0.1 = 元）

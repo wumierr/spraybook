@@ -267,7 +267,7 @@ const Storage = {
         lines.push('');
         lines.push('【用药类型】');
         customTypes.forEach(t => {
-          lines.push(`  [类型] 名称=${t.name} | 图标=${t.icon || '🧪'} | 每亩水量=${t.waterPerMu} | 每亩棵数=${t.treesPerMu} | 每棵水量=${t.waterPerTree} | 一套药需水量=${t.pesticideWaterPerSet} | 省药系数=${t.droneSavingCoeff} | 飞行高度=${t.flightHeight} | 默认基准=${t.defaultBasis || 'area'} | 描述=${t.description || ''}`);
+          lines.push(`  [类型] 名称=${t.name} | 图标=${t.icon || '🧪'} | 每亩水量=${t.waterPerMu} | 每亩棵数=${t.treesPerMu} | 每棵水量=${t.waterPerTree} | 一套药需水量=${t.pesticideWaterPerSet} | 省药系数=${t.droneSavingCoeff} | 飞行高度=${t.flightHeight} | 默认基准=${t.defaultBasis || 'area'}${t.concentrationRange && t.concentrationRange[0] != null ? ` | 浓度区间=${t.concentrationRange[0]}~${t.concentrationRange[1]}` : ''} | 描述=${t.description || ''}`);
         });
       }
       // 时间参数
@@ -569,6 +569,7 @@ const Storage = {
             waterPerTree: parseFloat(kv['每棵水量']) || 0,
             pesticideWaterPerSet: parseFloat(kv['一套药需水量']) || 300,
             droneSavingCoeff: parseFloat(kv['省药系数']) || 0.7,
+            concentrationRange: (function () { const m = String(kv['浓度区间'] || '').match(/^([0-9.]+)~([0-9.]+)$/); return (m && +m[1] > 0 && +m[2] > +m[1]) ? [+m[1], +m[2]] : null; })(),
             description: kv['描述'] || '',
             notes: ''
           });

@@ -5,7 +5,7 @@ plugins {
 // E5 配置化：版本三件套由 scripts/build-apk.ps1 从 apk.config.json + js/version.js
 // 注入（-P 属性）；直接用 gradle 命令行构建时回退到下方字面量——
 // 字面量必须与 js/version.js APP_VERSION 保持一致（缺省基线，R3 核对规则延续）。
-def appVersionName = project.findProperty('APP_VERSION_NAME') ?: '4.15.0'
+def appVersionName = project.findProperty('APP_VERSION_NAME') ?: '4.16.0'
 def appVersionCode = (project.findProperty('APP_VERSION_CODE') ?: '5') as Integer
 def appPkgId       = project.findProperty('APP_PKG_ID') ?: 'com.dronespray.calculator'
 def ksFile         = project.findProperty('APP_KEYSTORE_FILE')   // 相对 androidapp/ 或绝对路径（apk.config.json 注入）
