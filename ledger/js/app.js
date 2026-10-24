@@ -134,6 +134,9 @@
     slot.innerHTML = `
       <div class="lg-detail">
         <div>备注：${esc(j.note || '—')}　·　机器：${esc(j.plant_type_name || '—')}　·　亩数 ${j.total_area_mu ?? '—'}　·　水量 ${j.total_water_l ?? '—'}L　·　趟数 ${j.total_trips ?? '—'}　·　充电 ${j.charge_count ?? '—'} 次${batteryText ? '　·　电池：' + batteryText : ''}</div>
+        <div style="margin-top:8px">
+          <button class="lg-btn primary" data-act="job-card" data-id="${j.id}" title="生成客户分享用结算卡图片（只含圈地面积口径）">📤 生成结算卡</button>
+        </div>
         ${parts ? `<div>成本构成：${parts}　→　合计 <b>${Core.fmtYuan(j.total_cost_cents)}</b>${subsidyText}</div>` : ''}
         ${plotRows ? `<h2 style="margin-top:8px">地块明细</h2>
         <table class="lg-table" data-colw="job-plots"><thead><tr><th>地块</th><th>农户</th><th>组</th><th>面积(亩)</th><th>水量(L)</th><th>飞行(分)</th><th>用药(套)</th><th>完成(L)</th></tr></thead>
@@ -1215,8 +1218,35 @@
       }).catch(() => {});
     }, 250);
   });
+  /** D4 设置区二维码配置状态（上传/清除后就地刷新，不整页重绘丢表单） */
+  function refreshQrState() {
+    const QRS = window.LedgerSettlementCard && window.LedgerSettlementCard.QRS;
+    if (!QRS) return;
+    const pay = document.getElementById('qrPayState');
+    const acct = document.getElementById('qrAcctState');
+    if (pay) pay.textContent = QRS.get(QRS.PAY_KEY) ? '已配置' : '未配置';
+    if (acct) acct.textContent = QRS.get(QRS.ACCT_KEY) ? '已配置' : '未配置';
+  }
+
   $main.addEventListener('change', e => {
     const el = e.target;
+    if (el.id === 'qrPayFile' || el.id === 'qrAcctFile') {
+      // D4 设置区二维码上传：读图→规范化（≤480px PNG dataURL）→ localStorage（QRS 统一存取）
+      const QRS = window.LedgerSettlementCard && window.LedgerSettlementCard.QRS;
+      const file = el.files && el.files[0];
+      el.value = ''; // 允许下次重选同一文件
+      if (!QRS || !file) return;
+      QRS.normalize(file).then(du => {
+        if (!du) { toast('不是可读的图片文件', true); return; }
+        if (!QRS.set(el.id === 'qrPayFile' ? QRS.PAY_KEY : QRS.ACCT_KEY, du)) {
+          toast('保存失败（存储空间不足或隐私模式）', true);
+          return;
+        }
+        toast('二维码已保存，生成结算卡时显示在右下角');
+        refreshQrState();
+      }).catch(() => toast('读图失败', true));
+      return;
+    }
     if (el.classList && el.classList.contains('lg-bulk-check')) {
       // B4 批量已收：行勾选进 Set（重绘由 Set 恢复；浮动条随重绘更新）
       const bid = Number(el.dataset.bulk);
@@ -1324,8 +1354,8 @@
     const id = Number(btn.dataset.id);
     // 审核/主数据页签与导入 FAB 弹窗的处理在 app-extra.js（P2-4 拆分；P9-R2 增 dh- 体检动作前缀，
     // P10-R4 增 fab- 弹窗动作前缀，P10-R5 增 lr- LLM 审查动作前缀，md- 合并弹窗复用既有 md- 前缀；
-    // B1 增 hm- 首页动作前缀——漏加前缀=按钮静默无效，P3 教训）
-    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-|dh-|fab-|lr-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
+    // B1 增 hm- 首页动作前缀——漏加前缀=按钮静默无效，P3 教训；D4 增 qr- 结算卡二维码前缀）
+    if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-|dh-|fab-|lr-|qr-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
     if (window.LedgerHome && /^hm-/.test(act)) return window.LedgerHome.handleAct(btn, T);
     switch (act) {
       case 'csv-export': {
@@ -1386,6 +1416,13 @@
       case 'job-detail':
         toggleDetailSlot(document.querySelector(`td[data-slot="${id}"]`), () =>
           jobDetail(document.querySelector(`td[data-slot="${id}"]`), id).catch(err => toast(err.message, true)));
+        break;
+      case 'job-card':
+        // D4 结算卡：重取工单（含 settlement_lines/plots 圈地快照）→ 纯前端 Canvas 弹窗
+        Api.job(id).then(j => {
+          if (!window.LedgerSettlementCard) { toast('结算卡组件未加载', true); return; }
+          return window.LedgerSettlementCard.open(j);
+        }).catch(err => toast(err.message, true));
         break;
       case 'job-settle':
         run(async () => {

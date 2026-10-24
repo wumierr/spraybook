@@ -76,7 +76,7 @@ const UI = {
     this.typeLibrary.push({
       key,
       name: snapshot.name,
-      icon: snapshot.icon || '🧪',
+      icon: String(snapshot.icon || '🧪').slice(0, 4), // D4 顺手：与 saveTypeForm 同款 4 字符截断（emoji 占 2 码元）
       defaultBasis: snapshot.defaultBasis || (snapshot.calcMode === 'tree' ? 'tree' : 'area'),
       flightHeight: snapshot.flightHeight != null ? snapshot.flightHeight : 2,
       waterPerMu: snapshot.waterPerMu != null ? snapshot.waterPerMu : 20,
@@ -278,7 +278,7 @@ const UI = {
       card.className = 'plant-card';
       card.dataset.key = t.key;
       if (this.state.plant && this.state.plant.name === t.name) card.classList.add('active');
-      card.innerHTML = `<span class="p-icon">${t.icon}</span><span class="p-name">${this.escapeHtml(t.name)}</span>`;
+      card.innerHTML = `<span class="p-icon">${this.escapeHtml(t.icon)}</span><span class="p-name">${this.escapeHtml(t.name)}</span>`;
       card.addEventListener('click', () => this.selectType(t.key));
       grid.appendChild(card);
     });
@@ -1945,7 +1945,7 @@ const UI = {
       card.type = 'button';
       card.className = 'stype-card' + (this.state.field.plantKey === t.key ? ' active' : '');
       card.dataset.key = t.key;
-      card.innerHTML = `<span class="p-icon">${t.icon}</span><span class="p-name">${this.escapeHtml(t.name)}</span>`;
+      card.innerHTML = `<span class="p-icon">${this.escapeHtml(t.icon)}</span><span class="p-name">${this.escapeHtml(t.name)}</span>`;
       card.addEventListener('click', () => this.selectType(t.key));
       bar.appendChild(card);
     });
