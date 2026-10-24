@@ -466,7 +466,7 @@ const Calculator = {
       f.usedSets += r.pesticideRaw;
     });
     farmerMap.forEach(f => {
-      const meta = farmerMeta.find(x => x.farmerId === f.farmerId);
+      const meta = farmerMeta.find(x => x.id === f.farmerId);
       const price = (meta && meta.pricePerMu > 0) ? meta.pricePerMu : (Number(income.pricePerMu) || 0);
       // D2 双口径（裁决 10-21）：打药钱按选中口径的面积算；圈地未填按 0 计（预估单可
       // 只填圈地先出账——work=0/enclosed=8 时按圈地口径即有收入，反之如实为 0）

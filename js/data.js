@@ -266,6 +266,215 @@ window.validateSimpleInput = validateSimpleInput;
 window.assembleSimpleInputs = assembleSimpleInputs;
 
 /* ============================================================
+   ★★★ 地块档案系统（D3，B 方案全量：以地块为主、农户为辅）★★★
+   存储 drone_spray_plots_v1（storage.js getPlots/savePlots），条目形状：
+     { id, farmerName, farmerVillage, farmerTeam, address,
+       areaWorkMu, areaEnclosedMu,
+       currentDrug: { typeKey, drugName, pricePerMu },
+       history: [{ date, drugName, pricePerMu, areaWorkMu, areaEnclosedMu, jobNo }],
+       useCount, lastUsed, note }
+   挂档键（D3 先决裁决 2026-10-24）= farmerName+farmerVillage+farmerTeam
+   （四元组的计算器本地形态，phone 不参与本地去重；全空退化姓名）。
+   以下全部纯函数（calc.test.js 四件套：预填装配/快捷条过滤/三态保存/导入导出往返）。
+   ============================================================ */
+
+/* 挂档键：空值一律空串参与（与服务端 IFNULL 口径一致） */
+function plotMatchKey(farmerName, farmerVillage, farmerTeam) {
+  return [farmerName, farmerVillage, farmerTeam].map(x => String(x || '').trim()).join('|');
+}
+
+/* 条目归一（导入/读取防御）：坏档字段逐条清洗，不整体丢弃（空值原则） */
+function normalizePlotEntry(raw) {
+  if (!raw || typeof raw !== 'object' || !String(raw.farmerName || '').trim()) return null;
+  const num = v => { const n = Number(v); return (!isNaN(n) && n > 0) ? n : null; };
+  const hist = Array.isArray(raw.history) ? raw.history.filter(h =>
+    h && typeof h === 'object' && String(h.drugName || '').trim()).map(h => ({
+    date: String(h.date || '').slice(0, 10) || null,
+    drugName: String(h.drugName).trim(),
+    pricePerMu: num(h.pricePerMu),
+    areaWorkMu: num(h.areaWorkMu),
+    areaEnclosedMu: num(h.areaEnclosedMu),
+    jobNo: h.jobNo ? String(h.jobNo) : null
+  })) : [];
+  const cd = (raw.currentDrug && typeof raw.currentDrug === 'object') ? raw.currentDrug : {};
+  return {
+    id: raw.id ? String(raw.id) : ('plot_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6)),
+    farmerName: String(raw.farmerName).trim(),
+    farmerVillage: String(raw.farmerVillage || '').trim(),
+    farmerTeam: String(raw.farmerTeam || '').trim(),
+    address: String(raw.address || ''),
+    areaWorkMu: num(raw.areaWorkMu),
+    areaEnclosedMu: num(raw.areaEnclosedMu),
+    currentDrug: {
+      typeKey: cd.typeKey ? String(cd.typeKey) : null,
+      drugName: String(cd.drugName || '').trim() || null,
+      pricePerMu: num(cd.pricePerMu)
+    },
+    history: hist,
+    useCount: Math.max(0, Math.round(Number(raw.useCount) || 0)),
+    lastUsed: raw.lastUsed ? String(raw.lastUsed) : null,
+    note: String(raw.note || '')
+  };
+}
+
+/* 全量归一（导入导出往返/坏档整包防御）：非数组/空名条目剔除，合法条目保留 */
+function normalizePlotArchive(raw) {
+  const list = Array.isArray(raw) ? raw
+    : (raw && typeof raw === 'object' && Array.isArray(raw.list)) ? raw.list : [];
+  return { list: list.map(normalizePlotEntry).filter(Boolean) };
+}
+
+/* 按挂档键找地块（同名不同村自动分开） */
+function findPlotEntry(plots, farmerName, farmerVillage, farmerTeam) {
+  const key = plotMatchKey(farmerName, farmerVillage, farmerTeam);
+  return (Array.isArray(plots) ? plots : []).find(p => plotMatchKey(p.farmerName, p.farmerVillage, p.farmerTeam) === key) || null;
+}
+
+/* 高频地块横条：useCount 降序 → lastUsed 新在前，取前 n（3-5 卡） */
+function topPlots(plots, n) {
+  const take = Math.max(1, Math.min(5, Number(n) || 3));
+  return (Array.isArray(plots) ? plots.slice() : [])
+    .sort((a, b) => (b.useCount - a.useCount) || String(b.lastUsed || '').localeCompare(String(a.lastUsed || '')))
+    .slice(0, take);
+}
+
+/* 预填装配（勾选地块卡 → 当前作业）：地块列表重建为该地块单卡，
+   药型/单价标 pendingConfirm（UI 黄底「沿用上次的」待确认；换值即消）。
+   返回 patch = { plots, pricePerMu, plantKey, pendingDrug, pendingPrice, toastText }；
+   不直接改 state（UI 层应用+compute+save）。 */
+function assembleFromPlotEntry(entry) {
+  if (!entry) return null;
+  const cd = entry.currentDrug || {};
+  return {
+    plots: [{
+      id: 'p_default',
+      name: entry.address || (entry.farmerName + '的地块'),
+      area: entry.areaWorkMu || 0,
+      areaEnclosedMu: entry.areaEnclosedMu || null,
+      groupId: 1,
+      farmerId: 'farmer_default'
+    }],
+    pricePerMu: cd.pricePerMu || null,
+    plantKey: cd.typeKey || null,
+    pendingDrug: !!(cd.typeKey || cd.drugName),
+    pendingPrice: !!(cd.pricePerMu > 0),
+    toastText: `已预填「${entry.farmerName}」的地块（${entry.useCount} 次作业）；药型/单价沿用上次，请确认`
+  };
+}
+
+/* 药型快捷条（只列该地块 history 出现过的药+单价）：
+   同名药聚合计数，按 次数降序 → 最近作业新在前；其他药型走 UI 的「其他药型…」 */
+function drugQuickList(entry) {
+  if (!entry || !Array.isArray(entry.history)) return [];
+  const map = new Map();
+  entry.history.forEach(h => {
+    const name = String(h.drugName || '').trim();
+    if (!name) return;
+    let it = map.get(name);
+    if (!it) { it = { drugName: name, count: 0, pricePerMu: null, lastUsed: '' }; map.set(name, it); }
+    it.count += 1;
+    if (it.pricePerMu == null && h.pricePerMu != null) it.pricePerMu = h.pricePerMu;
+    if (String(h.date || '') > it.lastUsed) it.lastUsed = String(h.date || '');
+  });
+  return [...map.values()].sort((a, b) =>
+    (b.count - a.count) || b.lastUsed.localeCompare(a.lastUsed));
+}
+
+/* 三态保存（出口裁决：另存新地块 / 覆盖本条 / 一键还原）。
+   current = 当前作业快照 {farmerName, farmerVillage, farmerTeam, address,
+     areaWorkMu, areaEnclosedMu, drugName, pricePerMu, typeKey, note}
+   sourceEntry = 预填来源条目（另存/还原用；覆盖时即目标条目）。
+   返回新 list（纯函数不改原数组）；还原=list 不变+重新装配由 UI 走 assembleFromPlotEntry。 */
+function applyPlotSave(plots, current, sourceEntry, mode) {
+  const list = (Array.isArray(plots) ? plots.slice() : []);
+  const now = new Date().toISOString();
+  if (mode === 'new') {
+    const entry = normalizePlotEntry({
+      ...current,
+      id: null,
+      currentDrug: { typeKey: current.typeKey, drugName: current.drugName, pricePerMu: current.pricePerMu },
+      history: [], useCount: 0, lastUsed: null
+    });
+    if (!entry) return list;
+    // 与既有条目同挂档键 → 提示语义交给 UI；此处仍另存（同名不同村由键区分）
+    list.push(entry);
+    return list;
+  }
+  if (mode === 'overwrite') {
+    const key = sourceEntry ? plotMatchKey(sourceEntry.farmerName, sourceEntry.farmerVillage, sourceEntry.farmerTeam) : null;
+    const idx = list.findIndex(p => key && plotMatchKey(p.farmerName, p.farmerVillage, p.farmerTeam) === key);
+    if (idx < 0) return list;
+    const merged = normalizePlotEntry({
+      ...sourceEntry,
+      farmerName: current.farmerName || sourceEntry.farmerName,
+      farmerVillage: current.farmerVillage != null ? current.farmerVillage : sourceEntry.farmerVillage,
+      farmerTeam: current.farmerTeam != null ? current.farmerTeam : sourceEntry.farmerTeam,
+      address: current.address != null ? current.address : sourceEntry.address,
+      areaWorkMu: current.areaWorkMu != null ? current.areaWorkMu : sourceEntry.areaWorkMu,
+      areaEnclosedMu: current.areaEnclosedMu != null ? current.areaEnclosedMu : sourceEntry.areaEnclosedMu,
+      currentDrug: {
+        typeKey: current.typeKey || sourceEntry.currentDrug.typeKey,
+        drugName: current.drugName || sourceEntry.currentDrug.drugName,
+        pricePerMu: current.pricePerMu != null ? current.pricePerMu : sourceEntry.currentDrug.pricePerMu
+      },
+      note: current.note != null ? current.note : sourceEntry.note,
+      history: sourceEntry.history, useCount: sourceEntry.useCount, lastUsed: now
+    });
+    list[idx] = merged;
+    return list;
+  }
+  return list; // 'revert'：档案不动
+}
+
+/* 用药史自动积累（零操作）：同步成功钩子按挂档键找条目 append history，
+   找不到=自动建档（useCount=1）；返回新 list（纯函数）。 */
+function recordPlotUse(plots, useInfo) {
+  const list = (Array.isArray(plots) ? plots.slice() : []);
+  const info = useInfo || {};
+  const name = String(info.farmerName || '').trim();
+  if (!name) return list;
+  const key = plotMatchKey(name, info.farmerVillage, info.farmerTeam);
+  let idx = list.findIndex(p => plotMatchKey(p.farmerName, p.farmerVillage, p.farmerTeam) === key);
+  const histEntry = {
+    date: String(info.date || '').slice(0, 10) || null,
+    drugName: String(info.drugName || '').trim() || null,
+    pricePerMu: (Number(info.pricePerMu) > 0) ? Number(info.pricePerMu) : null,
+    areaWorkMu: (Number(info.areaWorkMu) > 0) ? Number(info.areaWorkMu) : null,
+    areaEnclosedMu: (Number(info.areaEnclosedMu) > 0) ? Number(info.areaEnclosedMu) : null,
+    jobNo: info.jobNo ? String(info.jobNo) : null
+  };
+  if (idx < 0) {
+    const created = normalizePlotEntry({
+      farmerName: name, farmerVillage: info.farmerVillage, farmerTeam: info.farmerTeam,
+      address: info.address || '', areaWorkMu: info.areaWorkMu, areaEnclosedMu: info.areaEnclosedMu,
+      currentDrug: { typeKey: info.typeKey, drugName: histEntry.drugName, pricePerMu: histEntry.pricePerMu },
+      history: [histEntry], useCount: 1, lastUsed: new Date().toISOString()
+    });
+    if (created) list.push(created);
+    return list;
+  }
+  const p = { ...list[idx] };
+  p.history = [...(p.history || []), histEntry];
+  p.useCount = (p.useCount || 0) + 1;
+  p.lastUsed = new Date().toISOString();
+  if (histEntry.drugName) {
+    p.currentDrug = { typeKey: info.typeKey || p.currentDrug.typeKey, drugName: histEntry.drugName, pricePerMu: histEntry.pricePerMu != null ? histEntry.pricePerMu : p.currentDrug.pricePerMu };
+  }
+  list[idx] = p;
+  return list;
+}
+
+window.plotMatchKey = plotMatchKey;
+window.normalizePlotEntry = normalizePlotEntry;
+window.normalizePlotArchive = normalizePlotArchive;
+window.findPlotEntry = findPlotEntry;
+window.topPlots = topPlots;
+window.assembleFromPlotEntry = assembleFromPlotEntry;
+window.drugQuickList = drugQuickList;
+window.applyPlotSave = applyPlotSave;
+window.recordPlotUse = recordPlotUse;
+
+/* ============================================================
    ★★★ 吊运模式（HAUL）—— 与打药模式完全独立 ★★★
    场景：无人机吊运水果/农产品从果园下山或跨地形运输
    收入：按每斤多少毛计费（用户填毛，实际 ×0.1 = 元）

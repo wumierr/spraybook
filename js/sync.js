@@ -224,6 +224,11 @@
                       window.UI.state.workOrder._synced_client_job_id === entry.client_job_id) {
                     window.UI.state.workOrder._synced_job_no = entry.server_job_no;
                   }
+                  // D3 用药史自动积累（零操作）：结算确认成功=入账本成功，按挂档键
+                  // append history；失败不阻塞同步（UI 侧 try/catch 兜底）
+                  if (window.UI && typeof window.UI.recordPlotUseFromSync === 'function') {
+                    window.UI.recordPlotUseFromSync(entry.payload, entry.server_job_no);
+                  }
                 } else if (res.status >= 500) {
                   entry.attempts += 1;
                   entry.last_error = 'HTTP ' + res.status;

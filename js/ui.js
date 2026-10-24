@@ -30,10 +30,12 @@ const UI = {
     this.loadState();
     this.loadFarmers();
     this.loadBatteries();
+    this.loadPlotArchive();
     this.bindModeSwitcher();
     this.bindEvents();
     this.bindBatteryLedger();
     this.bindSimpleMode();
+    this.bindPlotArchive();
     this.applyMode(this.state.mode);
     this.renderBatteryLedger();
     this.applyTheme(Storage.getTheme());
@@ -219,10 +221,13 @@ const UI = {
     const sp = document.getElementById('simplePanel');
     if (sp) sp.style.display = simple ? '' : 'none';
     if (isSpray) {
-      document.querySelectorAll('.app-main > .panel:not(#simplePanel)').forEach(p => {
+      document.querySelectorAll('.app-main > .panel:not(#simplePanel):not(#plotStripPanel)').forEach(p => {
         p.style.display = simple ? 'none' : '';
       });
     }
+    // D3 高频地块横条：仅打药模式显示（两界面态共享）
+    const strip = document.getElementById('plotStripPanel');
+    if (strip) strip.style.display = isSpray ? '' : 'none';
     const btn = document.getElementById('simpleModeBtn');
     if (btn) {
       btn.style.display = isSpray ? '' : 'none';
@@ -248,6 +253,7 @@ const UI = {
       this.renderCostTabs();
       this.renderIncomeForm();
       this.renderTimingForm();
+      this.renderPlotStrip();   // D3 高频地块横条（随任意重渲染刷新）
       // 简单态表单同步（隐藏面板的渲染照走，切回完整态零成本）
       if (this.state.uiMode === 'simple') {
         this.renderSimpleTypeBar();
@@ -288,6 +294,8 @@ const UI = {
     });
     // D1 简单态药型条同步（完整态类型格在上面已切换）
     if (this.state.uiMode === 'simple') this.renderSimpleTypeBar();
+    // D3 预填待确认：手改药型=已确认，黄底按值比对重挂（三态出口保留）
+    if (this._plotPrefill) this.renderPrefillBar();
     // 套用类型推荐参数（飞行高度随类型快照自带；间距/速度写入时间参数，覆盖当前值）
     const applied = [];
     if (t.lineSpacing != null) { this.state.timing.lineSpacing = t.lineSpacing; applied.push(`间距${t.lineSpacing}米`); }
@@ -471,7 +479,7 @@ const UI = {
       return `
       <li data-id="${f.id}" class="${this._editingFarmerId === f.id ? 'selected' : ''}">
         <div>
-          <div><b>${this.escapeHtml(f.name)}</b> <span style="margin-left:6px;font-size:11px;color:var(--text-muted);">${f.pricePerMu > 0 ? `${f.pricePerMu}元/亩` : ''}${plotCount ? ` · ${plotCount} 块地` : ''}</span></div>
+          <div><b>${this.escapeHtml(f.name)}</b> <span style="margin-left:6px;font-size:11px;color:var(--text-muted);">${[f.village, f.team].filter(Boolean).join('') ? this.escapeHtml([f.village, f.team].filter(Boolean).join('') + ' · ') : ''}${f.pricePerMu > 0 ? `${f.pricePerMu}元/亩` : ''}${plotCount ? ` · ${plotCount} 块地` : ''}</span></div>
           <div class="preset-meta">${this.escapeHtml(f.notes || (f.phone || ''))}</div>
           ${cloudHint ? `<div style="font-size:11px;color:var(--accent);">☁ ${this.escapeHtml(cloudHint)}</div>` : ''}
         </div>
@@ -505,6 +513,8 @@ const UI = {
     form.innerHTML = `
       <div class="field"><label>名称 *</label><input type="text" id="ff-name" value="${this.escapeHtml(v('name'))}" placeholder="如：老王家果园"></div>
       <div class="field"><label>电话</label><input type="text" id="ff-phone" value="${this.escapeHtml(v('phone'))}"></div>
+      <div class="field"><label>村 <i class="tip" data-tip="所属村名（可空）。与村/队一起构成客户档案的唯一区分（同名不同村=不同人），同步记账后台按 姓名+电话+村+队 挂档">i</i></label><input type="text" id="ff-village" value="${this.escapeHtml(v('village'))}" placeholder="如：彰冠"></div>
+      <div class="field"><label>队 <i class="tip" data-tip="组/队名（可空），如 12队">i</i></label><input type="text" id="ff-team" value="${this.escapeHtml(v('team'))}" placeholder="如：红拉12队"></div>
       <div class="field"><label>默认每亩收费 (元)</label><input type="number" id="ff-price" step="0.5" min="0" value="${v('pricePerMu') || ''}" placeholder="0"></div>
       <div class="field"><label>备注</label><input type="text" id="ff-notes" value="${this.escapeHtml(v('notes'))}"></div>`;
     document.getElementById('farmerDelete').style.display = this._editingFarmerId ? '' : 'none';
@@ -516,22 +526,28 @@ const UI = {
       this.toast('请填写农户名称', 'warn');
       return;
     }
-    // 同名去重：已存在同名档案则转为编辑该档案（防重复建档）
+    const village = (document.getElementById('ff-village')?.value || '').trim();
+    const team = (document.getElementById('ff-team')?.value || '').trim();
+    // 同名去重（D3 四元组裁决）：按 姓名+村+队 识别既有档案（phone 可变不进去重键）
     if (!this._editingFarmerId) {
-      const dup = this.state.farmers.find(x => x.name === name);
+      const dup = this.state.farmers.find(x =>
+        x.name === name && String(x.village || '').trim() === village && String(x.team || '').trim() === team);
       if (dup) this._editingFarmerId = dup.id;
     }
     const num = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
     let f = this._editingFarmerId ? this.getFarmer(this._editingFarmerId) : null;
     if (f) {
       f.name = name;
+      f.village = village;
+      f.team = team;
       f.phone = document.getElementById('ff-phone')?.value || '';
       f.pricePerMu = num(document.getElementById('ff-price')?.value);
       f.notes = document.getElementById('ff-notes')?.value || '';
     } else {
       f = {
         id: 'farmer_' + Date.now().toString(36),
-        name, phone: document.getElementById('ff-phone')?.value || '',
+        name, village, team,
+        phone: document.getElementById('ff-phone')?.value || '',
         pricePerMu: num(document.getElementById('ff-price')?.value),
         typeId: '', notes: document.getElementById('ff-notes')?.value || '', enabled: true
       };
@@ -1984,6 +2000,8 @@ const UI = {
     if (key === 'pricePerMu' && patch.pricePerMu != null) {
       this.state.income.pricePerMu = patch.pricePerMu;
       this.syncIncomeFormFromState();   // 隐藏的完整模式收入表单同步
+      // D3 预填待确认：手改单价=已确认，黄底按值比对重挂（三态出口保留）
+      if (this._plotPrefill) this.renderPrefillBar();
     }
     this.compute();
     this.save();
@@ -2003,6 +2021,324 @@ const UI = {
       this.switchUiMode(this.state.uiMode === 'simple' ? 'full' : 'simple'));
     const woBtn = document.getElementById('simpleWorkOrderBtn');
     if (woBtn) woBtn.addEventListener('click', () => this.openWorkOrder());
+  },
+
+  /* ============================================================
+     ★★ D3 地块档案系统（B 方案全量：以地块为主、农户为辅）★★
+     存储 drone_spray_plots_v1（挂档键=姓名+村+队，DATA-CONTRACT §2a）；
+     纯函数在 data.js（预填装配/快捷条/三态保存/用药史积累，有单测）。
+     ============================================================ */
+  loadPlotArchive() {
+    this.state.plotArchive = Storage.getPlots();
+    this._plotPrefill = null;   // 当前预填来源条目（黄底待确认语义）
+  },
+
+  savePlotArchive() {
+    Storage.savePlots(this.state.plotArchive);
+    this.renderPlotStrip();
+  },
+
+  renderPlotStrip() {
+    const wrap = document.getElementById('plotStrip');
+    if (!wrap) return;
+    const list = topPlots(this.state.plotArchive.list, 4);
+    if (!list.length) {
+      wrap.innerHTML = '<div class="plot-strip-empty">还没有地块档案——作业后同步成功会自动积累，或在工单里「存为地块」</div>';
+      return;
+    }
+    wrap.innerHTML = '';
+    list.forEach(p => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'pstrip-card';
+      const place = [p.farmerVillage, p.farmerTeam].filter(Boolean).join('') || '—';
+      card.innerHTML = `
+        <div class="pstrip-name">${this.escapeHtml(p.farmerName)}</div>
+        <div class="pstrip-meta">${this.escapeHtml(place)} · ${Calculator.fmt(p.areaWorkMu || 0, 1)}亩 · ${p.useCount}次</div>
+        <div class="pstrip-drug">${p.currentDrug.drugName ? this.escapeHtml(p.currentDrug.drugName) + (p.currentDrug.pricePerMu ? ` ¥${p.currentDrug.pricePerMu}/亩` : '') : '未记药型'}</div>`;
+      card.addEventListener('click', () => this.prefillFromPlot(p));
+      wrap.appendChild(card);
+    });
+  },
+
+  /* 勾选地块卡 → 全预填：地块重建单卡+面积/圈地/地址/药型/单价（黄底待确认） */
+  prefillFromPlot(entry) {
+    const patch = assembleFromPlotEntry(entry);
+    if (!patch) return;
+    this.state.field.plots = patch.plots;
+    this.state.field.plotMode = false;
+    if (patch.pricePerMu != null) this.state.income.pricePerMu = patch.pricePerMu;
+    if (patch.plantKey && this.getType(patch.plantKey)) {
+      this.state.plant = { ...this.getType(patch.plantKey) };
+      this.state.field.plantKey = patch.plantKey;
+    }
+    this._plotPrefill = entry;
+    this.ensurePlots();
+    this.renderAll();
+    this.renderPlotStrip();
+    this.renderPrefillBar();
+    this.compute();
+    this.save();
+    this.toast(patch.toastText, 'success');
+  },
+
+  /* 预填待确认条：药型快捷条（只列该地块历史药）+ 三态出口 */
+  renderPrefillBar() {
+    const bar = document.getElementById('plotPrefillBar');
+    if (!bar) return;
+    const entry = this._plotPrefill;
+    if (!entry) { bar.style.display = 'none'; bar.innerHTML = ''; this.clearPrefillMarks(); return; }
+    const chips = drugQuickList(entry).map(d =>
+      `<button type="button" class="pq-chip" data-drug="${this.escapeHtml(d.drugName)}" data-price="${d.pricePerMu != null ? d.pricePerMu : ''}">${this.escapeHtml(d.drugName)}${d.pricePerMu != null ? ` ¥${d.pricePerMu}/亩` : ''} ×${d.count}</button>`
+    ).join('');
+    bar.innerHTML = `
+      <span>📌 已预填「${this.escapeHtml(entry.farmerName)}」· 药型/单价黄底沿用上次，点选更换：</span>
+      ${chips}
+      <button type="button" class="pq-chip" data-act="other">其他药型…</button>
+      <span style="flex:1"></span>
+      <button type="button" class="pq-chip" data-act="save-new">💾 另存新地块</button>
+      <button type="button" class="pq-chip" data-act="overwrite">🔄 覆盖本条</button>
+      <button type="button" class="pq-chip" data-act="revert">↩️ 还原</button>`;
+    bar.style.display = '';
+    this.markPrefillCells();
+  },
+
+  /* 黄底标记：药型卡 + 单价输入（值仍等于来源档案值才标；手改过=已确认不标） */
+  markPrefillCells() {
+    this.clearPrefillMarks();
+    const entry = this._plotPrefill;
+    if (!entry) return;
+    const drugSame = entry.currentDrug.typeKey && this.state.field.plantKey === entry.currentDrug.typeKey;
+    const priceSame = entry.currentDrug.pricePerMu != null &&
+      Number(this.state.income.pricePerMu) === entry.currentDrug.pricePerMu;
+    if (drugSame) {
+      document.querySelectorAll('.stype-card.active, .plant-card.active').forEach(el => el.dataset.prefill = 'true');
+    }
+    if (priceSame) {
+      ['inp-pricePerMu', 'simplePrice'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.dataset.prefill = 'true';
+      });
+    }
+  },
+
+  clearPrefillMarks() {
+    document.querySelectorAll('[data-prefill="true"]').forEach(el => { delete el.dataset.prefill; });
+  },
+
+  /* 手改药型/单价即视为已确认：清黄底与预填条（保留档案不动） */
+  clearPlotPrefill() {
+    this._plotPrefill = null;
+    this.clearPrefillMarks();
+    const bar = document.getElementById('plotPrefillBar');
+    if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; }
+  },
+
+  /* 三态出口：另存新地块 / 覆盖本条 / 一键还原（applyPlotSave 纯函数） */
+  plotSaveThreeWay(mode) {
+    const entry = this._plotPrefill;
+    if (!entry) return;
+    if (mode === 'revert') {
+      this.prefillFromPlot(entry);
+      return;
+    }
+    const snapshot = {
+      farmerName: entry.farmerName,
+      farmerVillage: entry.farmerVillage,
+      farmerTeam: entry.farmerTeam,
+      address: this.state.field.plots[0] ? (this.state.field.plots[0].name || entry.address) : entry.address,
+      areaWorkMu: this.state.field.plots[0] ? (Number(this.state.field.plots[0].area) || null) : entry.areaWorkMu,
+      areaEnclosedMu: this.state.field.plots[0] ? (this.state.field.plots[0].areaEnclosedMu || null) : entry.areaEnclosedMu,
+      typeKey: this.state.field.plantKey,
+      drugName: this.state.plant ? this.state.plant.name : null,
+      pricePerMu: Number(this.state.income.pricePerMu) || null,
+      note: entry.note
+    };
+    this.state.plotArchive = { list: applyPlotSave(this.state.plotArchive.list, snapshot, entry, mode) };
+    this.savePlotArchive();
+    this.toast(mode === 'new' ? `已另存新地块「${snapshot.farmerName}」` : `已覆盖「${entry.farmerName}」的地块档案`, 'success');
+    this.clearPlotPrefill();
+  },
+
+  /* 全部地块弹层：搜索 + 村分组条目；勾选即预填 */
+  openPlotArchive() {
+    this.renderPlotArchiveList();
+    this.openModal('plotArchiveModal');
+  },
+
+  renderPlotArchiveList() {
+    const wrap = document.getElementById('plotArchiveList');
+    if (!wrap) return;
+    const kw = (document.getElementById('plotArchiveSearch')?.value || '').trim();
+    const list = this.state.plotArchive.list.filter(p =>
+      !kw || p.farmerName.includes(kw) || (p.address || '').includes(kw) ||
+      (p.farmerVillage || '').includes(kw) || (p.farmerTeam || '').includes(kw));
+    if (!list.length) {
+      wrap.innerHTML = '<div class="plot-strip-empty">无匹配地块（右侧导出/导入可迁移全量档案）</div>';
+      return;
+    }
+    const byVillage = new Map();
+    list.forEach(p => {
+      const v = p.farmerVillage || '（未填村）';
+      if (!byVillage.has(v)) byVillage.set(v, []);
+      byVillage.get(v).push(p);
+    });
+    let html = '';
+    [...byVillage.keys()].sort((a, b) => a.localeCompare(b, 'zh')).forEach(v => {
+      html += `<div class="pa-village">🏘 ${this.escapeHtml(v)}</div>`;
+      byVillage.get(v).sort((a, b) => b.useCount - a.useCount).forEach(p => {
+        html += `
+        <div class="pa-row" data-id="${this.escapeHtml(p.id)}">
+          <div class="pa-main">
+            <div class="pa-name">${this.escapeHtml(p.farmerName)}${p.farmerTeam ? ` · ${this.escapeHtml(p.farmerTeam)}` : ''}</div>
+            <div class="pa-meta">${this.escapeHtml(p.address || '—')} · 作业 ${Calculator.fmt(p.areaWorkMu || 0, 1)}亩${p.areaEnclosedMu ? ` / 圈地 ${Calculator.fmt(p.areaEnclosedMu, 1)}亩` : ''} · ${p.currentDrug.drugName ? this.escapeHtml(p.currentDrug.drugName) : '未记药型'}</div>
+          </div>
+          <div class="pa-count">${p.useCount}次</div>
+        </div>`;
+      });
+    });
+    wrap.innerHTML = html;
+    wrap.querySelectorAll('.pa-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const hit = this.state.plotArchive.list.find(p => p.id === row.dataset.id);
+        if (!hit) return;
+        this.closeModal('plotArchiveModal');
+        this.prefillFromPlot(hit);
+      });
+    });
+  },
+
+  /* 全量 JSON 导入导出（含 history；导出走文本框可复制，导入粘贴后确认） */
+  plotExport() {
+    const box = document.getElementById('plotIoText');
+    const acts = document.getElementById('plotIoActions');
+    if (!box) return;
+    box.value = JSON.stringify(this.state.plotArchive, null, 2);
+    box.style.display = '';
+    if (acts) acts.style.display = 'none';
+    this.copyToClipboard(box.value).then(ok =>
+      this.toast(ok ? '全量地块档案已复制（含用药史）📋' : '已显示在文本框，请手动复制', ok ? 'success' : 'warn'));
+  },
+
+  plotImportStart() {
+    const box = document.getElementById('plotIoText');
+    const acts = document.getElementById('plotIoActions');
+    if (!box) return;
+    box.value = '';
+    box.placeholder = '粘贴地块档案 JSON（drone_spray_plots_v1 导出格式），确认后与本地合并（同名同村队覆盖）';
+    box.style.display = '';
+    if (acts) acts.style.display = '';
+  },
+
+  plotImportConfirm() {
+    const box = document.getElementById('plotIoText');
+    if (!box || !box.value.trim()) { this.toast('请先粘贴 JSON', 'warn'); return; }
+    let incoming;
+    try { incoming = JSON.parse(box.value); } catch (e) { this.toast('JSON 解析失败：' + e.message, 'error'); return; }
+    const norm = normalizePlotArchive(incoming);
+    const merged = this.state.plotArchive.list.slice();
+    let cover = 0, add = 0;
+    norm.list.forEach(p => {
+      const idx = merged.findIndex(x =>
+        plotMatchKey(x.farmerName, x.farmerVillage, x.farmerTeam) === plotMatchKey(p.farmerName, p.farmerVillage, p.farmerTeam));
+      if (idx >= 0) { merged[idx] = p; cover++; }
+      else { merged.push(p); add++; }
+    });
+    this.state.plotArchive = { list: merged };
+    this.savePlotArchive();
+    this.renderPlotArchiveList();
+    const acts = document.getElementById('plotIoActions');
+    if (acts) acts.style.display = 'none';
+    this.toast(`导入完成：新增 ${add}，覆盖 ${cover}`, 'success');
+  },
+
+  bindPlotArchive() {
+    if (this._plotBound) return;
+    this._plotBound = true;
+    const openBtn = document.getElementById('plotArchiveBtn');
+    if (openBtn) openBtn.addEventListener('click', () => this.openPlotArchive());
+    const search = document.getElementById('plotArchiveSearch');
+    if (search) search.addEventListener('input', () => this.renderPlotArchiveList());
+    const exp = document.getElementById('plotExportBtn');
+    if (exp) exp.addEventListener('click', () => this.plotExport());
+    const imp = document.getElementById('plotImportBtn');
+    if (imp) imp.addEventListener('click', () => this.plotImportStart());
+    const impOk = document.getElementById('plotImportConfirm');
+    if (impOk) impOk.addEventListener('click', () => this.plotImportConfirm());
+    const impCancel = document.getElementById('plotIoCancel');
+    if (impCancel) impCancel.addEventListener('click', () => {
+      const box = document.getElementById('plotIoText');
+      const acts = document.getElementById('plotIoActions');
+      if (box) box.style.display = 'none';
+      if (acts) acts.style.display = 'none';
+    });
+    // 预填条事件委托（快捷条/其他药型/三态出口）
+    const bar = document.getElementById('plotPrefillBar');
+    if (bar) {
+      bar.addEventListener('click', e => {
+        const chip = e.target.closest('.pq-chip');
+        if (!chip) return;
+        const act = chip.dataset.act;
+        if (act === 'other') {
+          // 换药走正常药型选择（简单态=药型横条；完整态=类型面板），黄底随之清除
+          this.clearPlotPrefill();
+          if (this.state.uiMode === 'simple') {
+            document.getElementById('simplePanel').scrollIntoView({ behavior: 'smooth' });
+          } else {
+            document.querySelector('.plant-panel')?.scrollIntoView({ behavior: 'smooth' });
+          }
+          this.toast('请从药型区选择其他药型（选完价格记得核对）', 'success');
+          return;
+        }
+        if (act === 'save-new') { this.plotSaveThreeWay('new'); return; }
+        if (act === 'overwrite') { this.plotSaveThreeWay('overwrite'); return; }
+        if (act === 'revert') { this.plotSaveThreeWay('revert'); return; }
+        // 药型快捷 chip：套该地块历史药+单价
+        const drugName = chip.dataset.drug;
+        const price = parseFloat(chip.dataset.price);
+        const t = this.typeLibrary.find(x => x.name === drugName);
+        if (t) {
+          this.state.plant = { ...t };
+          this.state.field.plantKey = t.key;
+        }
+        if (!isNaN(price) && price > 0) this.state.income.pricePerMu = price;
+        this.renderAll();
+        this.markPrefillCells();
+        this.compute();
+        this.save();
+        this.toast(`已套用「${drugName}」${!isNaN(price) && price > 0 ? ` ¥${price}/亩` : ''}`, 'success');
+      });
+    }
+  },
+
+  /* 用药史自动积累（零操作）：同步成功钩子（sync.js done 分支调用）。
+     按挂档键找条目 append history+useCount+1，找不到自动建档。 */
+  recordPlotUseFromSync(payload, jobNo) {
+    try {
+      const s = payload && payload.snapshot;
+      const r = payload && payload.result;
+      if (!s || !r || payload.job_type !== 'spray') return;
+      const farmers = Array.isArray(s.farmers) ? s.farmers : [];
+      (r.settlement || []).forEach(st => {
+        const meta = farmers.find(f => f.id === st.farmerId) || {};
+        this.state.plotArchive = {
+          list: recordPlotUse(this.state.plotArchive.list, {
+            farmerName: meta.name || st.farmerName,
+            farmerVillage: meta.village || '',
+            farmerTeam: meta.team || '',
+            date: payload.job_date,
+            drugName: s.plant ? s.plant.name : null,
+            typeKey: s.plant ? s.plant.key : null,
+            pricePerMu: s.income ? s.income.pricePerMu : null,
+            areaWorkMu: st.area,
+            areaEnclosedMu: st.areaEnclosedMu,
+            address: (r.plots && r.plots[0] && r.plots[0].name) || '',
+            jobNo: jobNo || null
+          })
+        };
+      });
+      this.savePlotArchive();
+    } catch (e) { /* 档案积累失败不阻塞同步 */ }
   },
 
   renderSprayResults(r) {

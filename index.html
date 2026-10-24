@@ -75,6 +75,15 @@
   </div>
 
   <main class="app-main">
+      <!-- D3 高频地块横条（打药模式常驻；简单/完整两态共享） -->
+      <section class="panel plot-strip-panel" id="plotStripPanel" aria-label="高频地块" style="display:none;">
+        <div class="panel-title"><span>📍</span> 高频地块 <span class="hint">点卡即全预填（面积/地址/药型/单价沿用上次）</span>
+          <button id="plotArchiveBtn" class="btn btn-secondary btn-sm plot-archive-open">📂 全部地块</button>
+        </div>
+        <div class="plot-strip" id="plotStrip"><!-- JS 注入 --></div>
+        <div class="plot-prefill-bar" id="plotPrefillBar" style="display:none;"></div>
+      </section>
+
       <!-- 一屏简单模式（D1）：结果四卡常驻顶部 + 三输入，其余参数沿用上次值/预设 -->
       <section class="panel simple-panel" id="simplePanel" aria-label="简单模式" style="display:none;">
       <div class="panel-title"><span>⚡</span> 快速计算 <span class="hint">亩数 · 单价 · 药型，三步出单</span></div>
@@ -523,6 +532,25 @@
         <button class="btn btn-secondary danger" id="farmerDelete">🗑 删除</button>
         <button class="btn btn-secondary" id="farmerNew">＋ 新建</button>
         <button class="btn btn-primary" id="farmerSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框：地块档案（D3 全部地块/导入/导出） -->
+  <div class="modal" id="plotArchiveModal" aria-hidden="true">
+    <div class="modal-box">
+      <div class="modal-title">📂 全部地块 <button class="modal-close" data-close>✕</button></div>
+      <input type="text" id="plotArchiveSearch" placeholder="搜索姓名/地址/村队…" style="width:100%;margin-bottom:8px;">
+      <div class="plot-archive-list" id="plotArchiveList"><!-- JS 注入 --></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="plotExportBtn">📤 导出JSON</button>
+        <button class="btn btn-secondary" id="plotImportBtn">📥 导入JSON</button>
+        <button class="btn btn-primary" data-close>关闭</button>
+      </div>
+      <textarea id="plotIoText" rows="6" style="display:none;width:100%;margin-top:6px;font-size:12px;" placeholder="粘贴地块档案 JSON 后点「确认导入」；导出时这里显示全量 JSON（含用药史）"></textarea>
+      <div class="modal-actions" id="plotIoActions" style="display:none;">
+        <button class="btn btn-primary" id="plotImportConfirm">确认导入</button>
+        <button class="btn btn-secondary" id="plotIoCancel">取消</button>
       </div>
     </div>
   </div>

@@ -11,7 +11,8 @@ const Storage = {
     theme: 'drone_spray_theme_v1',
     types: 'drone_spray_types_v1',
     farmers: 'drone_spray_farmers_v1',
-    batteries: 'drone_spray_batteries_v1'
+    batteries: 'drone_spray_batteries_v1',
+    plots: 'drone_spray_plots_v1'
   },
 
   get(key, fallback) {
@@ -57,6 +58,16 @@ const Storage = {
       list: Array.isArray(data && data.list) ? data.list : [],
       records: Array.isArray(data && data.records) ? data.records : []
     });
+  },
+
+  /* ---------- D3 地块档案（normalizePlotArchive 在 data.js，坏档逐条清洗不整丢） ---------- */
+  getPlots() {
+    const data = this.get(this.KEYS.plots, null);
+    return window.normalizePlotArchive ? window.normalizePlotArchive(data) : { list: [] };
+  },
+  savePlots(archive) {
+    const clean = window.normalizePlotArchive ? window.normalizePlotArchive(archive) : { list: [] };
+    return this.set(this.KEYS.plots, clean);
   },
 
   getState() { return this.get(this.KEYS.state, null); },

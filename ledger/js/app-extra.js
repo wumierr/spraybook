@@ -543,6 +543,12 @@
     const settings = await Api.settings().catch(() => ({}));
     const bootstrap = await Api.get('/api/bootstrap').catch(() => null);
     const balMap = new Map((bootstrap ? bootstrap.parties : []).map(p => [p.id, p]));
+    // D3：计算器地块档案（drone_spray_plots_v1，同源 localStorage 共享；坏档容错读）
+    let cplotList = [];
+    try {
+      const raw = JSON.parse(localStorage.getItem('drone_spray_plots_v1') || 'null');
+      cplotList = Array.isArray(raw && raw.list) ? raw.list : [];
+    } catch (e) { cplotList = []; }
     // P9-R2：疑似重复组（拉不到就不显示该区，不影响主数据页其余功能）
     // P10-R1：市/县筛选选中时随 ?county= 传给体检端点（四桶服务端过滤）
     mdHealth = await Api.dataHealth(mdCountyFilter || undefined).catch(() => null);
@@ -714,6 +720,28 @@
       <table class="lg-table" style="margin-top:8px" data-colw="master-plots"><thead><tr>
         <th>地块名</th><th>所属客户</th><th>面积(亩)</th><th>备注</th><th>操作</th>
       </tr></thead><tbody>${plotRows || '<tr><td colspan="5">暂无地块——新增后作业明细将自动按名关联</td></tr>'}</tbody></table>
+      <div class="lg-form" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+        <label style="flex-basis:100%">计算器地块档案（drone_spray_plots_v1，含用药史；与计算器页面同源共享本地存储。挂档键=姓名+村+队，DATA-CONTRACT §2a）<span style="color:var(--muted)">${cplotList.length} 条</span></label>
+        <button class="lg-btn" data-act="md-cplot-export">⬇ 导出JSON（含用药史）</button>
+        <button class="lg-btn" data-act="md-cplot-import">⬆ 导入JSON</button>
+      </div>
+      <textarea id="mdCplotIo" rows="5" style="display:none;font-size:12px" placeholder="导出时显示全量 JSON；导入时在此粘贴后点确认"></textarea>
+      <div class="lg-form" id="mdCplotActions" style="display:none">
+        <button class="lg-btn primary" data-act="md-cplot-import-confirm">确认导入（同名同村队覆盖）</button>
+        <button class="lg-btn" data-act="md-cplot-import-cancel">取消</button>
+      </div>
+      ${cplotList.length ? `<table class="lg-table" style="margin-top:6px" data-colw="master-cplots"><thead><tr>
+        <th>姓名</th><th>村/队</th><th>地址</th><th>作业/圈地(亩)</th><th>当前药型</th><th>次数</th><th>用药史</th><th>操作</th>
+      </tr></thead><tbody>${cplotList.map(p => `<tr>
+        <td><b>${esc(p.farmerName)}</b></td>
+        <td>${esc([p.farmerVillage, p.farmerTeam].filter(Boolean).join('/') || '—')}</td>
+        <td>${esc(p.address || '—')}</td>
+        <td>${p.areaWorkMu != null ? p.areaWorkMu : '—'}${p.areaEnclosedMu != null ? ' / ' + p.areaEnclosedMu : ''}</td>
+        <td>${esc((p.currentDrug && p.currentDrug.drugName) || '—')}${p.currentDrug && p.currentDrug.pricePerMu != null ? ` ¥${p.currentDrug.pricePerMu}/亩` : ''}</td>
+        <td>${p.useCount || 0}</td>
+        <td>${(p.history || []).slice(-3).map(h => esc(`${h.date || ''} ${h.drugName || ''}`).trim()).join('<br>') || '—'}</td>
+        <td><button class="lg-btn danger" data-act="md-cplot-del" data-id="${esc(p.id)}">删除</button></td>
+      </tr>`).join('')}</tbody></table>` : ''}
     </div>
     <div class="lg-panel">
       <h2>药品价格表（进价/售价/库存行内编辑；按使用频率排序；库存空=不启用）</h2>
@@ -1070,6 +1098,78 @@
           body.area_mu = n;
         }
         run(() => Api.masterCreate('plots', body), '地块已新增');
+        break;
+      }
+      /* ---------- D3 计算器地块档案导入导出（同源 localStorage；挂档键=姓名|村|队） ---------- */
+      case 'md-cplot-export': {
+        const box = document.getElementById('mdCplotIo');
+        const acts = document.getElementById('mdCplotActions');
+        if (!box) break;
+        const raw = localStorage.getItem('drone_spray_plots_v1') || '{"list":[]}';
+        try { box.value = JSON.stringify(JSON.parse(raw), null, 2); } catch (e) { box.value = raw; }
+        box.style.display = '';
+        if (acts) acts.style.display = 'none';
+        box.select();
+        try { document.execCommand('copy'); toast('全量档案已复制到剪贴板（含用药史）'); }
+        catch (e) { toast('已显示在文本框，请手动复制', true); }
+        break;
+      }
+      case 'md-cplot-import': {
+        const box = document.getElementById('mdCplotIo');
+        const acts = document.getElementById('mdCplotActions');
+        if (!box) break;
+        box.value = '';
+        box.style.display = '';
+        if (acts) acts.style.display = '';
+        break;
+      }
+      case 'md-cplot-import-cancel': {
+        const box = document.getElementById('mdCplotIo');
+        const acts = document.getElementById('mdCplotActions');
+        if (box) box.style.display = 'none';
+        if (acts) acts.style.display = 'none';
+        break;
+      }
+      case 'md-cplot-import-confirm': {
+        const box = document.getElementById('mdCplotIo');
+        if (!box || !box.value.trim()) { toast('请先粘贴 JSON', true); break; }
+        let incoming;
+        try { incoming = JSON.parse(box.value); } catch (e) { toast('JSON 解析失败：' + e.message, true); break; }
+        const list = Array.isArray(incoming && incoming.list) ? incoming.list
+          : Array.isArray(incoming) ? incoming : [];
+        const keyOf = p => [p.farmerName, p.farmerVillage, p.farmerTeam].map(x => String(x || '').trim()).join('|');
+        let current = [];
+        try {
+          const raw = JSON.parse(localStorage.getItem('drone_spray_plots_v1') || 'null');
+          current = Array.isArray(raw && raw.list) ? raw.list : [];
+        } catch (e) { current = []; }
+        let cover = 0, add = 0;
+        list.filter(p => p && String(p.farmerName || '').trim()).forEach(p => {
+          const idx = current.findIndex(x => keyOf(x) === keyOf(p));
+          if (idx >= 0) { current[idx] = p; cover++; } else { current.push(p); add++; }
+        });
+        localStorage.setItem('drone_spray_plots_v1', JSON.stringify({ list: current }));
+        toast(`导入完成：新增 ${add}，覆盖 ${cover}`);
+        window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
+        break;
+      }
+      case 'md-cplot-del': {
+        const id = btn.dataset.id;
+        let current = [];
+        try {
+          const raw = JSON.parse(localStorage.getItem('drone_spray_plots_v1') || 'null');
+          current = Array.isArray(raw && raw.list) ? raw.list : [];
+        } catch (e) { current = []; }
+        const hit = current.find(p => p.id === id);
+        if (!hit) { toast('条目不存在', true); break; }
+        confirmThen(`删除计算器地块档案「${hit.farmerName}」（含用药史 ${((hit.history) || []).length} 条）？计算器端同步消失，不可恢复。`,
+          () => Promise.resolve(true))
+          .then(r => {
+            if (!r) return;
+            localStorage.setItem('drone_spray_plots_v1', JSON.stringify({ list: current.filter(p => p.id !== id) }));
+            toast('已删除');
+            window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
+          });
         break;
       }
       case 'plot-edit':
