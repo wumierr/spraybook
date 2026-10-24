@@ -190,8 +190,9 @@
    * 计算器导出 JSON → /api/jobs 同步协议载荷（P6-M1 离线数据通路）。
    * 返回 { ok:true, payload } 或 { ok:false, error }。
    * 规则：
-   *  - 必须 type='drone-spray-config'；schemaVersion='2.1' 才带 result（可导入），
-   *    2.0/缺失 → 友好报错（老版本导出没有计算结果快照）；
+   *  - 必须 type='drone-spray-config'；schemaVersion 2.1/2.2 才带 result（可导入）——
+   *    2.2=D2 圈地面积双口径（plots[].areaEnclosedMu + settlement[].priceBasis），
+   *    2.1 旧包继续兼容（服务端缺省按作业面积）；2.0/缺失 → 友好报错；
    *  - client_job_id：优先用导出自带，否则本地生成（幂等键，含随机后缀防撞）；
    *  - job_date 取 exportedAt 的日期前缀，缺省 todayStr；
    *  - snapshot = 原导出对象剥离 result/schemaVersion/client_job_id（服务端原样存 raw_json）。
@@ -203,7 +204,7 @@
     if (!obj || obj.type !== 'drone-spray-config') {
       return { ok: false, error: '不是计算器导出的作业 JSON（缺少 type 标识）' };
     }
-    if (obj.schemaVersion !== '2.1' || !obj.result) {
+    if ((obj.schemaVersion !== '2.1' && obj.schemaVersion !== '2.2') || !obj.result) {
       return { ok: false, error: '旧版导出（无计算结果快照）。请在计算器重新计算后用「⬇ 下载作业包」导出' };
     }
     const mode = obj.mode === 'haul' ? 'haul' : 'spray';

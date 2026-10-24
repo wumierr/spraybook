@@ -289,7 +289,9 @@ const Calculator = {
        两者都再 ÷一套药需水量 × 省药系数 */
     const typeTree = (plant.defaultBasis || plant.calcMode) === 'tree';
 
-    /* 第 1 步：逐地块原始数据（水量/药量/所属组） */
+    /* 第 1 步：逐地块原始数据（水量/药量/所属组）
+       D2 圈地面积双口径（裁决 10-21）：areaEnclosedMu 可空快照（>0 才算已填），
+       不参与水量/药量计算（作业面积口径），只进结算计费 */
     const rows = [];
     plots.forEach((p, i) => {
       const area = Number(p.area) || 0;
@@ -297,10 +299,12 @@ const Calculator = {
       const pesticideRaw = typeTree
         ? (area * (Number(plant.treesPerMu) || 0) * (Number(plant.waterPerTree) || 0)) / pesticideWaterPerSet * savingCoeff
         : water / pesticideWaterPerSet * savingCoeff;
+      const enclosed = Number(p.areaEnclosedMu);
       rows.push({
         id: p.id != null ? p.id : i,
         name: p.name || `地块${i + 1}`,
         area: area,
+        areaEnclosedMu: enclosed > 0 ? enclosed : null,
         water: water,
         farmerId: p.farmerId || 'farmer_default',
         groupId: Math.max(1, Math.round(Number(p.groupId) || 1)),
@@ -353,6 +357,11 @@ const Calculator = {
     const totalTrips = groups.reduce((sum, g) => sum + g.trips, 0);
     const totalLoad = groups.reduce((sum, g) => sum + g.trips * loadTime, 0);
     const weightedTSum = groups.reduce((sum, g) => sum + g.trips * g.perTripTime, 0);
+    // D2 圈地合计：全部未填=null（结果区显示"—"），有任一已填则 Σ 有效值
+    const hasEnclosed = rows.some(r => r.areaEnclosedMu != null);
+    const totalEnclosed = hasEnclosed ? rows.reduce((s, r) => s + (r.areaEnclosedMu || 0), 0) : null;
+    // D2 计费口径（裁决 10-21）：逐单可选，默认作业面积；旧档 income 无 priceBasis=work
+    const priceBasis = income.priceBasis === 'enclosed' ? 'enclosed' : 'work';
 
     const result = {
       plots: rows,
@@ -360,6 +369,8 @@ const Calculator = {
       plotMode: true,
       droneTank: droneTank,
       area: totalArea,
+      areaEnclosed: totalEnclosed,      // 圈地合计（可空；结算卡 D4 客户只见这个）
+      priceBasis: priceBasis,           // 计费口径快照（服务端落 job_settlement_lines.price_basis）
       water: totalWater,
       spareWater: spareWater,
       totalAddWater: totalAddWater,
@@ -445,18 +456,24 @@ const Calculator = {
         f = {
           farmerId: fid,
           farmerName: meta ? meta.name : '未知农户',
-          area: 0, sprayFee: 0, usedSets: 0, selfSets: 0, supplementSets: 0, pesticideFee: 0,
+          area: 0, areaEnclosedMu: 0, sprayFee: 0, usedSets: 0, selfSets: 0, supplementSets: 0, pesticideFee: 0,
           included: result.pesticideIncluded === true
         };
         farmerMap.set(fid, f);
       }
       f.area += r.area;
+      f.areaEnclosedMu += r.areaEnclosedMu || 0;
       f.usedSets += r.pesticideRaw;
     });
     farmerMap.forEach(f => {
-      const meta = farmerMeta.find(x => x.id === f.farmerId);
+      const meta = farmerMeta.find(x => x.farmerId === f.farmerId);
       const price = (meta && meta.pricePerMu > 0) ? meta.pricePerMu : (Number(income.pricePerMu) || 0);
-      f.sprayFee = f.area * price;
+      // D2 双口径（裁决 10-21）：打药钱按选中口径的面积算；圈地未填按 0 计（预估单可
+      // 只填圈地先出账——work=0/enclosed=8 时按圈地口径即有收入，反之如实为 0）
+      f.areaEnclosedMu = f.areaEnclosedMu > 0 ? f.areaEnclosedMu : null;
+      f.priceBasis = priceBasis;
+      f.basisArea = priceBasis === 'enclosed' ? (f.areaEnclosedMu || 0) : f.area;
+      f.sprayFee = f.basisArea * price;
       // 凑药口径：农户自备部分不收钱，只收我们补充卖出的量
       f.selfSets = Math.max(0, Number(selfByFarmer[f.farmerId]) || 0);
       f.supplementSets = Math.max(0, f.usedSets - f.selfSets);

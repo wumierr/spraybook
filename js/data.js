@@ -77,7 +77,8 @@ const DEFAULT_COSTS = {
 /* 默认收入参数 */
 const DEFAULT_INCOME = {
   pricePerMu: 25,         // 每亩服务收费（元/亩）
-  subsidy: 0              // 农机补贴等（元）
+  subsidy: 0,             // 农机补贴等（元）
+  priceBasis: 'work'      // 计费口径（D2 裁决 10-21：逐单可选，默认作业面积；enclosed=按圈地面积）
 };
 
 /* 默认作业时间参数（用于作业时间估算） */
@@ -160,6 +161,10 @@ const FIELD_DEFS = {
 
   // 收入
   pricePerMu: { label: '每亩收费', unit: '元/亩', tip: '向农户/农场收取的每亩服务费。果树类一般 60-150 元/亩（含药），大田作物 8-25 元/亩', group: 'income', default: 25, step: 0.5, min: 0, warnBelow: 1, priority: 'high' },
+  priceBasis: { label: '计费口径', unit: '', tip: '按哪个面积算打药钱（D2 裁决 10-21）：作业面积=航线实际打的亩数（默认）；圈地面积=现场圈出来的合同亩数（客户只见圈地，选它时各地块须先填圈地面积）', group: 'income', type: 'radio', options: [
+    { value: 'work', label: '按作业面积' },
+    { value: 'enclosed', label: '按圈地面积' }
+  ], default: 'work' },
   subsidy: { label: '农机补贴等', unit: '元', tip: '政府补贴或项目补贴（若有）', group: 'income', default: 0, step: 10, min: 0 },
 
   // 作业时间参数
@@ -188,7 +193,7 @@ const FIELD_ORDER = {
   cycle: ['batteryDepreciation', 'fuelExpense', 'cycleArea'],
   labor: ['workers', 'days', 'dailyWage', 'mealCost', 'accommodation', 'accommodationDays'],
   other: ['pesticidePrice', 'pesticideIncluded', 'droneDepreciation', 'maintenanceReserve', 'protectiveGear', 'cleaningCost', 'insurance', 'miscCost'],
-  income: ['pricePerMu', 'subsidy'],
+  income: ['pricePerMu', 'priceBasis', 'subsidy'],
   timing: ['manualFlightTime', 'flightSpeed', 'lineSpacing', 'roundTripTime', 'loadTime', 'baseMixTime', 'batchCapacity', 'manualChargeCount', 'batteryCount', 'generatorChargeTime', 'threePhaseChargeTime', 'chargeMode', 'chargeAfterWork']
 };
 

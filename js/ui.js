@@ -619,12 +619,16 @@ const UI = {
         </div>
         <div class="plot-card-fields">
           <div class="field field-span">
-            <label>亩数 <i class="tip" data-tip="该地块需要打药的面积">i</i></label>
+            <label>亩数 <i class="tip" data-tip="该地块需要打药的面积（作业面积，算水量药量）">i</i></label>
             <div class="stepper" data-step="0.5">
               <button type="button" class="st-btn st-minus" aria-label="减少">−</button>
               <div class="unit-suffix" data-unit="亩"><input type="number" class="plot-size" step="0.5" min="0" value="${p.area || ''}" placeholder="0"></div>
               <button type="button" class="st-btn st-plus" aria-label="增加">＋</button>
             </div>
+          </div>
+          <div class="field">
+            <label>圈地面积 <i class="tip" data-tip="现场圈出来/合同约定的亩数（可空）。只进结算不参与水量药量计算；计费口径选「按圈地面积」时用它与客户结算，客户只见圈地">i</i></label>
+            <div class="unit-suffix" data-unit="亩"><input type="number" class="plot-enclosed" step="0.5" min="0" inputmode="decimal" value="${p.areaEnclosedMu != null ? p.areaEnclosedMu : ''}" placeholder="选填"></div>
           </div>
           <div class="field">
             <label>作业组 <i class="tip" data-tip="相邻地块填相同组号即可连片连续作业（合并算趟数，组内不返航）；不同组之间按远近来往升降时间在时间参数里体现">i</i></label>
@@ -696,9 +700,11 @@ const UI = {
   plotStatText(p) {
     const plant = this.state.plant || {};
     const a = Number(p.area) || 0;
+    const e = Number(p.areaEnclosedMu);
     const water = a * (plant.waterPerMu || 0);
     const g = Math.max(1, Math.round(Number(p.groupId) || 1));
-    return `${a}亩 · 水量 <b>${Calculator.fmt(water, 1)}</b>升 · 组<b>${g}</b>（组内合并算趟数）`;
+    const encText = e > 0 ? ` · 圈地 <b>${Calculator.fmt(e, 1)}</b>亩` : '';
+    return `${a}亩${encText} · 水量 <b>${Calculator.fmt(water, 1)}</b>升 · 组<b>${g}</b>（组内合并算趟数）`;
   },
 
   addPlot() {
@@ -1163,19 +1169,24 @@ const UI = {
       refill.style.display = 'none';
     }
 
-    /* 农户结算单：地块大小/打药钱/用药量/药钱（不包药隐藏后两项） */
+    /* 农户结算单：地块大小/打药钱/用药量/药钱（不包药隐藏后两项）
+       D2 双口径（裁决 10-21）：按圈地计费时标题注明，面积列两口同显 */
     const settleWrap = document.getElementById('woSettlement');
     if (settleWrap) {
       const st = r.settlement || [];
       if (st.length) {
+        const byEnclosed = r.priceBasis === 'enclosed';
         const rowsHtml = st.map(row => {
           const med = row.included
             ? `<td>${fmt(row.usedSets, 2)} 套${row.selfSets > 0 ? `<small>（自备${fmt(row.selfSets, 1)}）</small>` : ''}</td><td>¥${Calculator.fmtMoney(row.pesticideFee)}</td>`
             : '';
+          const areaCell = row.areaEnclosedMu != null
+            ? `${fmt(row.area, 1)}<small> / 圈地 ${fmt(row.areaEnclosedMu, 1)}</small>`
+            : fmt(row.area, 1);
           return `
           <tr>
             <td>${this.escapeHtml(row.farmerName)}</td>
-            <td>${fmt(row.area, 1)} 亩</td>
+            <td>${areaCell} 亩</td>
             <td>¥${Calculator.fmtMoney(row.sprayFee)}</td>
             ${med}
           </tr>`;
@@ -1185,10 +1196,13 @@ const UI = {
         const totalUsed = st.reduce((x, row) => x + row.usedSets, 0);
         const totalMed = st.reduce((x, row) => x + row.pesticideFee, 0);
         const medCols = st[0] && st[0].included;
+        const basisBadge = byEnclosed
+          ? `（按圈地面积计，共 ${fmt(r.areaEnclosed || 0, 1)} 亩）`
+          : '';
         settleWrap.innerHTML = `
-          <div class="wo-settle-title">农户结算单${medCols ? '' : '（不包药）'}</div>
+          <div class="wo-settle-title">农户结算单${basisBadge}${medCols ? '' : '（不包药）'}</div>
           <table class="summary-table">
-            <thead><tr><th>农户</th><th>地块大小</th><th>打药的钱</th>${medCols ? '<th>用药量</th><th>药钱</th>' : ''}</tr></thead>
+            <thead><tr><th>农户</th><th>地块大小${byEnclosed ? '（作业/圈地）' : ''}</th><th>打药的钱</th>${medCols ? '<th>用药量</th><th>药钱</th>' : ''}</tr></thead>
             <tbody>${rowsHtml}</tbody>
             <tfoot><tr><td>合计</td><td>${fmt(totalAreaS, 1)} 亩</td><td>¥${Calculator.fmtMoney(totalFee)}</td>${medCols ? `<td>${fmt(totalUsed, 2)} 套</td><td>¥${Calculator.fmtMoney(totalMed)}</td>` : ''}</tr></tfoot>
           </table>`;
@@ -1277,7 +1291,8 @@ const UI = {
     const plant = this.state.plant;
     const LINE = '──────────────────────';
     const L = [];
-    const basisText = '按亩数';
+    // D2 计费口径（裁决 10-21）：工单抬头注明，客户侧沟通零歧义
+    const basisText = r.priceBasis === 'enclosed' ? '按圈地面积计费' : '按亩数';
     L.push('🚁 无人机作业工单');
     L.push(`日期: ${new Date().toLocaleString('zh-CN')}`);
     if (this.state.field.farmerName) L.push(`农户: ${this.state.field.farmerName}`);
@@ -1328,8 +1343,13 @@ const UI = {
             ? ` | 用药量 ${fmt(row.usedSets, 2)}套（自备${fmt(row.selfSets, 1)}+我们补充${fmt(row.supplementSets, 1)}） | 药钱 ¥${Calculator.fmtMoney(row.pesticideFee)}（按补充量计）`
             : ` | 用药量 ${fmt(row.usedSets, 2)}套 | 药钱 ¥${Calculator.fmtMoney(row.pesticideFee)}`)
           : '';
-        L.push(`  ${row.farmerName}: 地块 ${fmt(row.area, 1)}亩 | 打药 ¥${Calculator.fmtMoney(row.sprayFee)}${medPart}`);
+        const encPart = row.areaEnclosedMu != null ? ` · 圈地 ${fmt(row.areaEnclosedMu, 1)}亩` : '';
+        const feeNote = r.priceBasis === 'enclosed' ? `（按圈地 ${fmt(row.basisArea, 1)}亩）` : '';
+        L.push(`  ${row.farmerName}: 作业 ${fmt(row.area, 1)}亩${encPart} | 打药 ¥${Calculator.fmtMoney(row.sprayFee)}${feeNote}${medPart}`);
       });
+    }
+    if (r.areaEnclosed != null) {
+      L.push(`  圈地合计 ${fmt(r.areaEnclosed, 1)}亩（计费口径：${r.priceBasis === 'enclosed' ? '圈地' : '作业'}面积）`);
     }
     L.push(`  成本 ¥${Calculator.fmtMoney(r.totalCost)} | 收入 ¥${Calculator.fmtMoney(r.income)} | 利润 ¥${Calculator.fmtMoney(r.profit)}`);
     if (wo.note) L.push(`【备注】${wo.note}`);
@@ -1469,7 +1489,14 @@ const UI = {
     Object.keys(this.state.income).forEach(k => {
       const el = document.getElementById(`inp-${k}`);
       if (!el) return;
-      el.value = this.state.income[k];
+      // D2 priceBasis 是 radio 组：整组按值选中（只对第一个 radio 赋值会改值不选中）
+      if (el.type === 'radio') {
+        document.querySelectorAll(`input[name="radio-${k}"]`).forEach(r => {
+          r.checked = r.value === String(this.state.income[k]);
+        });
+      } else {
+        el.value = this.state.income[k];
+      }
     });
   },
 
@@ -1885,9 +1912,12 @@ const UI = {
     setText('srTripsSub', `水量 ${fmt(r.totalAddWater != null ? r.totalAddWater : r.water, 0)} 升`);
     const pc = document.getElementById('srProfitCard');
     if (pc) pc.dataset.loss = r.profit < 0 ? 'true' : 'false';
-    // 顶部小结行：药型 · 面积 · 用药
+    // 顶部小结行：药型 · 面积 · 用药（D2 圈地口径时注明计费面积）
     const plant = this.state.plant || {};
-    setText('srSub', `${plant.icon || '🧪'} ${plant.name || '—'} · ${fmt(r.area, 1)}亩 · 用药 ${fmt(r.pesticide, 1)}套（采购 ${r.pesticideRounded}）`);
+    const basisNote = r.priceBasis === 'enclosed'
+      ? ` · 按圈地 ${fmt(r.areaEnclosed || 0, 1)}亩计费`
+      : '';
+    setText('srSub', `${plant.icon || '🧪'} ${plant.name || '—'} · ${fmt(r.area, 1)}亩${basisNote} · 用药 ${fmt(r.pesticide, 1)}套（采购 ${r.pesticideRounded}）`);
   },
 
   renderSimpleTypeBar() {
@@ -2019,6 +2049,10 @@ const UI = {
       `公式: 总收入 ¥${Calculator.fmtMoney(r.income)} − 总成本 ¥${Calculator.fmtMoney(r.totalCost)}`;
 
     setText('rHeight', `${fmt(this.state.plant.flightHeight, 1)} 米`);
+    // D2 圈地合计（可空：全未填=—；计费口径为圈地时注明）
+    setText('rAreaEnclosed', r.areaEnclosed != null
+      ? `${fmt(r.areaEnclosed, 1)} 亩${r.priceBasis === 'enclosed' ? '（计费）' : ''}`
+      : '—');
     // 充电次数主值直接带来源（手动/参考）；rCyclesSub 由作业时间渲染写"无等待"信息，勿占用
     setText('rCycles', r.cycles > 0
       ? `${r.cycles} 次${r.chargeSource === 'manual' ? '（手动）' : '（参考）'}`
@@ -2500,6 +2534,10 @@ const UI = {
         } else if (e.target.classList.contains('plot-size')) {
           const v = parseFloat(e.target.value);
           plot.area = isNaN(v) ? 0 : Math.max(0, v);
+        } else if (e.target.classList.contains('plot-enclosed')) {
+          // D2 圈地面积（可空）：空/0/负=未填（null）；只进结算不进水量药量
+          const v = parseFloat(e.target.value);
+          plot.areaEnclosedMu = (!isNaN(v) && v > 0) ? v : null;
         } else if (e.target.classList.contains('plot-group')) {
           const v = parseInt(e.target.value, 10);
           plot.groupId = (!v || v < 1) ? 1 : Math.min(9, Math.round(v));

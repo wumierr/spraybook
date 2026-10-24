@@ -142,12 +142,14 @@ function insertSubtables(db, jobId, body) {
       if (!plotIdByName.has(p.name)) plotIdByName.set(p.name, p.id);
     }
     const insPlot = db.prepare(
-      `INSERT INTO job_plots (job_id, seq, plot_name, plot_id, area_mu, farmer_ref, farmer_name, group_no,
+      `INSERT INTO job_plots (job_id, seq, plot_name, plot_id, area_mu, area_enclosed_mu, farmer_ref, farmer_name, group_no,
          water_l, flight_min, pesticide_sets, pesticide_rounded, completed_l, trips_override)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     (r.plots || []).forEach((p, i) => {
+      // D2 圈地面积快照（迁移 014）：可空，仅计费口径用，不参与水量药量
+      const enclosed = Number(p.areaEnclosedMu);
       insPlot.run(jobId, i, p.name || `地块${i + 1}`, plotIdByName.get(p.name) ?? null,
-        p.area ?? null, p.farmerId || null,
+        p.area ?? null, enclosed > 0 ? enclosed : null, p.farmerId || null,
         farmerNameOf(s, p.farmerId), p.groupId ?? null, p.water ?? null, p.flightMin ?? null,
         p.pesticideRaw ?? null, p.pesticideRounded ?? null,
         completedByPlot[p.id] ?? null, p.tripsOverride ?? null);
@@ -184,12 +186,15 @@ function insertSubtables(db, jobId, body) {
       }
     }
     const insLine = db.prepare(
-      `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, spray_fee_cents,
+      `INSERT INTO job_settlement_lines (job_id, farmer_ref, farmer_name, area_mu, area_enclosed_mu, price_basis, spray_fee_cents,
          used_sets, self_sets, supplement_sets, pesticide_fee_cents, included, unit_price_cents)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     for (const x of lineCents) {
       const st = x.st;
+      // D2 计费口径（迁移 014）：缺省 work=作业面积（2.1 旧包兼容），enclosed=按圈地
       insLine.run(jobId, st.farmerId || null, st.farmerName || '未知农户', st.area ?? null,
+        st.areaEnclosedMu ?? null,
+        st.priceBasis === 'enclosed' ? 'enclosed' : 'work',
         x.spray, st.usedSets ?? null,
         st.selfSets ?? null, st.supplementSets ?? null,
         x.pesticide,

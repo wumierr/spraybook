@@ -193,6 +193,8 @@ const Storage = {
           const parts = [`名称=${p.name || ''}`, `亩数=${p.area != null ? p.area : 0}`,
             `农户=${p.farmerId || 'farmer_default'}`,
             `组=${Math.max(1, Math.round(Number(p.groupId) || 1))}`];
+          // D2 圈地面积（可空）：有值才导出，空值不占位（空值原则）
+          if (p.areaEnclosedMu != null && Number(p.areaEnclosedMu) > 0) parts.push(`圈地=${p.areaEnclosedMu}`);
           lines.push(`  [地块] ${parts.join(' | ')}`);
         });
         const gt = state.field.groupTrips || {};
@@ -228,9 +230,10 @@ const Storage = {
       lines.push('');
       } // on('costs')
       if (on('income')) {
-      lines.push('【收入参数】');
-      lines.push(`  每亩收费: ${state.income.pricePerMu} 元/亩`);
-      lines.push(`  补贴: ${state.income.subsidy} 元`);
+        lines.push('【收入参数】');
+        lines.push(`  每亩收费: ${state.income.pricePerMu} 元/亩`);
+        lines.push(`  计费口径: ${state.income.priceBasis === 'enclosed' ? '按圈地面积' : '按作业面积'}`);
+        lines.push(`  补贴: ${state.income.subsidy} 元`);
       } // on('income')
       // 自定义用药类型定义（内置类型不导出）
       const customTypes = Array.isArray(state.typeLibrary) ? state.typeLibrary.filter(t => !t.builtin) : [];
@@ -274,10 +277,12 @@ const Storage = {
     return lines.join('\n');
   },
 
-  /* ---------- 导出为 JSON 格式（精确，支持双模式；P6:分节勾选+作业包 2.1） ----------
+  /* ---------- 导出为 JSON 格式（精确，支持双模式；P6:分节勾选+作业包 2.2） ----------
      opts = { sections: {...}|null, clientJobId, result }
-     - schemaVersion '2.1'：含 client_job_id + result 计算结果快照，可直接喂记账端 /api/jobs
-     - sections 未勾选的节省略（undefined 属性会被 JSON.stringify 忽略）
+     - schemaVersion '2.2'（D2 圈地面积双口径）：plots[].areaEnclosedMu（可空）+
+       settlement[].priceBasis('work'|'enclosed')/areaEnclosedMu；记账端对 2.1 旧包
+       仍按作业面积兼容。result 计算结果快照可直接喂记账端 /api/jobs
+     - sections 未勾选的省略（undefined 属性会被 JSON.stringify 忽略）
      - version 保持 '2.0'（计算器自身导入兼容），记账端认 schemaVersion */
   exportJSON(state, mode, opts) {
     const S = opts && opts.sections ? opts.sections : null;
@@ -285,7 +290,7 @@ const Storage = {
     const payload = {
       type: 'drone-spray-config',
       version: '2.0',
-      schemaVersion: '2.1',
+      schemaVersion: '2.2',
       mode: mode,
       // E1（P7-R4）：导出时间用本地墙钟串（原 toISOString 是 UTC，导入端直接取日期
       // 会把北京时间 0:00–8:00 的作业记到前一天）。格式 'YYYY-MM-DD HH:mm:ss'；
@@ -410,6 +415,8 @@ const Storage = {
       '其他杂费': ['costs', 'miscCost', parseFloat],
       // 打药-收入
       '每亩收费': ['income', 'pricePerMu', parseFloat],
+      // D2 计费口径（裁决 10-21）：文本串 → work/enclosed，未识别回落 work
+      '计费口径': ['income', 'priceBasis', (v) => (v === '按圈地面积' || v === 'enclosed') ? 'enclosed' : 'work'],
       '补贴': ['income', 'subsidy', parseFloat],
       // 工单
       '实际用药套数': ['workOrder', 'actualSets', parseFloat],
@@ -558,7 +565,7 @@ const Storage = {
         }
         return;
       }
-      // 地块行（多地块模式）：  [地块] 名称=xx | 亩数=12 | 组=1 | 转场=5
+      // 地块行（多地块模式）：  [地块] 名称=xx | 亩数=12 | 组=1 | 圈地=15
       if (line.includes('[地块]')) {
         const kv = {};
         line.replace(/^\s*\[地块\]\s*/, '').split('|').forEach(seg => {
@@ -567,10 +574,12 @@ const Storage = {
         });
         result.field.plotMode = true;
         if (!Array.isArray(result.field.plots)) result.field.plots = [];
+        const enclosed = parseFloat(kv['圈地']);
         result.field.plots.push({
           id: 'imp' + result.field.plots.length,
           name: kv['名称'] || '',
           area: parseFloat(kv['亩数']) || 0,
+          areaEnclosedMu: (!isNaN(enclosed) && enclosed > 0) ? enclosed : null,
           farmerId: kv['农户'] || 'farmer_default',
           groupId: parseInt(kv['组'], 10) || 1,
           tripsOverride: parseFloat(kv['趟数覆盖']) || 0
