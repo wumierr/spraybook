@@ -13,7 +13,9 @@ const { mergeParties } = require('../services/merge');
 const TABLES = {
   parties: ['name', 'phone', 'address', 'region', 'village', 'team', 'county', 'default_price_cents', 'default_area_mu', 'notes', 'enabled', 'type'],
   plots: ['party_id', 'name', 'area_mu', 'notes'],
-  chemicals: ['key', 'name', 'icon', 'water_per_mu', 'pesticide_water_per_set', 'drone_saving_coeff', 'price_cents_per_set', 'description', 'notes', 'flight_height', 'line_spacing', 'flight_speed'],
+  chemicals: ['key', 'name', 'icon', 'water_per_mu', 'pesticide_water_per_set', 'drone_saving_coeff', 'price_cents_per_set', 'description', 'notes', 'flight_height', 'line_spacing', 'flight_speed',
+    // C1 药品价格表经营三列（迁移 013）：进价/售价=INTEGER 分，库存=REAL 套数（NULL=不启用）
+    'cost_cents', 'price_cents', 'stock_qty'],
   equipment: ['name', 'kind', 'cycles_count', 'notes', 'status'],
   price_rules: ['party_id', 'job_type', 'unit', 'price_cents', 'effective_from', 'note']
 };

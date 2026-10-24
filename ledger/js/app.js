@@ -247,7 +247,8 @@
         <td class="num"><b>${b.payableYuan}</b></td><td class="num">${b.paidYuan}</td>
         <td>${actions(
           b.canReceive ? `<button class="lg-btn primary" data-act="bill-receive" data-id="${b.id}" data-party="${b.party_id || ''}" data-unpaid="${b.unpaidCents}">登记收款</button>` : '',
-          b.canEdit && !em ? `<button class="lg-btn" data-act="bill-edit" data-id="${b.id}">改金额/抹零</button>` : ''
+          b.canEdit && !em ? `<button class="lg-btn" data-act="bill-edit" data-id="${b.id}">改金额/抹零</button>` : '',
+          `<button class="lg-btn" data-act="usage-view" data-bill-id="${b.id}" data-bill-no="${esc(b.bill_no)}" title="本账单所属作业的用药明细">💊 用药</button>`
         )}</td>
       </tr>`;
     }).join('');
@@ -315,6 +316,7 @@
         <input id="qrcAmount" type="number" step="0.01" min="0.01" placeholder="金额(元)">
         <select id="qrcMethod"><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option><option value="bank">银行</option></select>
         <input id="qrcNote" placeholder="备注（选填）">
+        <button class="lg-btn" data-act="rc-mix-open" title="按客户收款且可改每张账单的核销分配（FIFO 预案可编辑）">🔀 混合核销</button>
       </div>
     </div>
     <div class="lg-panel">
@@ -362,7 +364,7 @@
   }
 
   /* ---------- 页签：支出 ---------- */
-  function renderPayments(listAll) {
+  async function renderPayments(listAll) { // C3 起含作业 datalist 预取（async）
     const catOpts = Object.entries(Core.MAPS.PAYMENT_CATEGORY)
       .map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
     const advOpts = (state._advances || []).filter(a => a.direction === 'advance_to_worker' && a.status !== 'void' && a.balance_cents > 0)
@@ -380,6 +382,11 @@
         )}</td>
       </tr>`).join('');
     const liveRows = list.filter(r => r.status !== 'void');
+    // C3：支出挂作业（payments.job_id 起用）——近期作业单号 datalist（输入单号关联，成本归集到作业）
+    let recentJobs = state._jobsRecent || [];
+    try { recentJobs = state._jobsRecent = await Api.jobs(); } catch (e) { /* 用旧缓存 */ }
+    const jobOpts = (recentJobs || []).filter(j => j.status !== 'void')
+      .slice(0, 100).map(j => `<option value="${esc(j.job_no)}">${esc(j.job_no)} ${esc(j.plant_type_name || j.job_type || '')} ${(j.job_date || '').slice(5)}</option>`).join('');
     return `<div class="lg-panel">
       <h2>登记支出（油费/药费/维修/吃饭/设备/人工）</h2>
       <div class="lg-form">
@@ -387,8 +394,9 @@
         <label>金额(元)<input id="pmAmount" type="number" step="0.01" min="0.01"></label>
         <label>支付方式<select id="pmMethod"><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option></select></label>
         <label>日期<input id="pmDate" type="date" value="${todayStr()}" title="B5/N-9：补记历史日期"></label>
+        <label>关联作业<input id="pmJob" list="pmJobList" placeholder="选填：单号关联" autocomplete="off"><datalist id="pmJobList">${jobOpts}</datalist></label>
         <label>从预支付款<select id="pmAdvance"><option value="">不使用</option>${advOpts}</select></label>
-        <label>备注<input id="pmNote" placeholder="如：中石化加油站"></label>
+        <label>备注*<input id="pmNote" placeholder="必填：如 中石化加油站"></label>
         <button class="lg-btn primary" data-act="pm-save">登记</button>
       </div>
     </div>
@@ -744,7 +752,9 @@
       ${statusMap ? `<select id="ftStatus" data-tab="${tab}"><option value="">全部状态</option>${statusOpts}</select>` : ''}
       ${category ? `<select id="ftCategory" data-tab="${tab}"><option value="">全部类别</option>${catOpts}</select>` : ''}
       ${state.custFilter ? `<span class="lg-tag warn">只看：${esc(state.custFilter)} <button class="lg-btn" data-act="cust-filter-clear">×</button></span>` : ''}
-      <button class="lg-btn" data-act="csv-export" ${csvname ? `data-csvname="${esc(csvname)}"` : ''} title="导出当前月份与筛选口径为 CSV（Excel 可开）">⬇ 导出CSV</button>
+      <button class="lg-btn" data-act="csv-export" ${csvname ? `data-csvname="${esc(csvname)}"` : ''} title="导出当前面板（月份+筛选口径）为 CSV（已做公式注入防护）">⬇ 导出CSV</button>
+      <!-- C2：U5 版式 Excel 导出（服务端 exceljs 真值单元格；按总表数据条区间） -->
+      <button class="lg-btn" data-act="export-xlsx" title="按 U5 月度表版式导出 Excel（当前数据条区间；可再导入回读）">⬇ 导出Excel</button>
     </div>`;
   }
   /** 可点击的客户名（点=只看此客户；再次点同名的取消） */
@@ -834,7 +844,7 @@
     charts: ($m) => window.LedgerCharts.renderTab('charts', $m),
     payments: async () => {
       state._advances = await Api.advances();
-      $main.innerHTML = renderPayments(await Api.payments());
+      $main.innerHTML = await renderPayments(await Api.payments()); // C3 起含作业 datalist 预取
     },
     advances: async () => {
       state._advances = await Api.advances();
@@ -1309,7 +1319,7 @@
   const T = { run, toast, confirmThen, needAmount, collectInputs, esc, tag, actions, Core, Api, state, switchNav, render, applyColWidths };
   window.__ledgerTools = T; // app-extra.js 的工具注入源（P2-4 拆分）
 
-  function handleAct(btn) {
+  async function handleAct(btn) { // C3 起含异步动作（usage-view/rc-mix）；委托为 fire-and-forget
     const act = btn.dataset.act;
     const id = Number(btn.dataset.id);
     // 审核/主数据页签与导入 FAB 弹窗的处理在 app-extra.js（P2-4 拆分；P9-R2 增 dh- 体检动作前缀，
@@ -1340,6 +1350,15 @@
         a.click();
         URL.revokeObjectURL(a.href);
         toast(`已导出 ${Math.max(lines.length - 1, 0)} 行 CSV`);
+        break;
+      }
+      case 'export-xlsx': {
+        // C2：U5 月度表版式 Excel 导出（服务端 /api/export/monthly；区间=总表数据条生效区间）
+        const ui = Core.barUiOf(state.bar, todayStr());
+        const rf = (ui.range && ui.range.from) || '', rt = (ui.range && ui.range.to) || '';
+        const qsParts = [rf && 'from=' + encodeURIComponent(rf), rt && 'to=' + encodeURIComponent(rt)].filter(Boolean);
+        window.open('/api/export/monthly' + (qsParts.length ? '?' + qsParts.join('&') : ''), '_blank');
+        toast(`已请求 Excel 导出（区间 ${rf || '起'}..${rt || '今'}，按月分表）`);
         break;
       }
       case 'cust-filter': {
@@ -1496,14 +1515,26 @@
       case 'pm-save': {
         const amount = Core.yuanInputToCents(document.getElementById('pmAmount').value);
         if (!needAmount(amount)) return;
+        // C3：手工支出备注必填（记录质量；导入通路不受影响——服务端不强制）
+        const pmNote = (document.getElementById('pmNote').value || '').trim();
+        if (!pmNote) return toast('备注必填（写清用途，如：中石化加油站）', true);
         const advId = document.getElementById('pmAdvance').value;
+        // C3：关联作业（单号→id；空=不挂）
+        let jobId;
+        const jobNo = (document.getElementById('pmJob').value || '').trim();
+        if (jobNo) {
+          const j = (state._jobsRecent || []).find(x => x.job_no === jobNo);
+          if (!j) return toast(`未找到作业 ${jobNo}（单号需与工单页一致）`, true);
+          jobId = j.id;
+        }
         run(() => Api.createPayment({
           category: document.getElementById('pmCategory').value,
           amount_cents: amount,
           method: document.getElementById('pmMethod').value,
           occurred_at: (document.getElementById('pmDate') || {}).value || undefined, // B5/N-9：补记历史日期
+          job_id: jobId, // C3：支出挂作业（payments.job_id 起用）
           from_advance_id: advId ? Number(advId) : undefined,
-          note: document.getElementById('pmNote').value || undefined
+          note: pmNote
         }), '支出已登记');
         break;
       }
@@ -1544,6 +1575,97 @@
         state.tab = to;
         document.querySelectorAll('#lgNav button').forEach(b => b.classList.toggle('active', b.dataset.tab === to));
         render().catch(err => toast(err.message, true));
+        break;
+      }
+      case 'modal-close': {
+        const m = document.getElementById('lgModal');
+        if (m) m.remove();
+        break;
+      }
+      case 'usage-view': {
+        // C3 用药史弹层：data-party-id=客户档案（主数据行）/ data-bill-id=账单所属作业（账单行）；
+        // 库存联动列 M2 未做显'—'（计划注记）
+        const q = btn.dataset.billId ? { bill_id: btn.dataset.billId } : { party_id: btn.dataset.partyId };
+        const title = btn.dataset.billId ? `账单用药明细（${btn.dataset.billNo || '#' + btn.dataset.billId}）`
+          : `用药史：${btn.dataset.partyName || ''}`;
+        try {
+          const rows = await Api.usageHistory(q);
+          showModal(`<h2>${esc(title)}</h2>
+            <table class="lg-table"><thead><tr>
+              <th>日期</th><th>药型</th><th>亩数</th><th>单价(元/亩)</th><th>用药(套)</th><th>自备(套)</th><th>药钱</th><th>口径</th><th>库存联动</th>
+            </tr></thead><tbody>${(rows || []).map(r => `<tr>
+              <td>${esc((r.job_date || '').slice(0, 10))}</td><td>${esc(r.drug || '—')}</td>
+              <td class="num">${r.area_mu ?? '—'}</td><td class="num">${r.unit_price_yuan ?? '—'}</td>
+              <td class="num">${r.used_sets ?? '—'}</td><td class="num">${r.self_sets ?? '—'}</td>
+              <td class="num">${r.pesticide_fee_cents ? Core.fmtYuan(r.pesticide_fee_cents) : '—'}</td>
+              <td>${r.included ? '包药' : '不包药'}</td><td>—</td>
+            </tr>`).join('') || `<tr><td colspan="9">${Core.emptyState('💊', '暂无用药记录', [], { cell: true })}</td></tr>`}</tbody></table>`);
+        } catch (e) { toast(e.message, true); }
+        break;
+      }
+      case 'rc-mix-open': {
+        // C3 混合核销弹层：选客户+金额 → FIFO 预案可改（每行金额输入，可移除），提交带 allocations
+        const custOpts = parties.filter(p => p.type === 'customer').map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+        showModal(`<h2>混合核销（按客户收款，可改 FIFO 预案）</h2>
+          <div class="lg-form">
+            <label>客户<select id="mixParty">${custOpts}</select></label>
+            <label>收款金额(元)<input id="mixAmount" type="number" step="0.01" min="0.01"></label>
+            <label>方式<select id="mixMethod"><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option><option value="bank">银行</option></select></label>
+            <button class="lg-btn" data-act="rc-mix-prefill">生成/刷新 FIFO 预案</button>
+          </div>
+          <div id="mixPlan"></div>
+          <div class="lg-form" style="margin-top:8px">
+            <button class="lg-btn primary" data-act="rc-mix-save">✔ 按预案收款</button>
+          </div>`);
+        break;
+      }
+      case 'rc-mix-prefill': {
+        // FIFO 预案：拉未清账单贪心分配到当前金额（每行可改/移除；余额自动转预收）
+        const pid = Number((document.getElementById('mixParty') || {}).value);
+        const amount = Core.yuanInputToCents((document.getElementById('mixAmount') || {}).value);
+        if (!pid) return toast('先选客户', true);
+        if (!needAmount(amount)) return;
+        try {
+          const bills = (await Api.bills()).filter(b => b.party_id === pid && (b.status === 'unpaid' || b.status === 'partial'));
+          let remaining = amount;
+          const rows = bills.map(b => {
+            const unpaid = b.amount_cents + b.adjust_cents - b.paid_cents;
+            const use = Math.min(unpaid, remaining);
+            remaining -= use;
+            return `<tr>
+              <td>${esc(b.bill_no)}</td>
+              <td class="num">${Core.fmtYuan(b.amount_cents + b.adjust_cents)}</td>
+              <td class="num">${Core.fmtYuan(unpaid)}</td>
+              <td class="num"><input data-mixbill="${b.id}" type="number" step="0.01" min="0" value="${(use / 100).toFixed(2)}" style="width:90px"></td>
+              <td><button class="lg-btn" data-act="rc-mix-drop" title="本行分配清零">✕</button></td>
+            </tr>`;
+          }).join('');
+          const plan = document.getElementById('mixPlan');
+          if (plan) plan.innerHTML = `<table class="lg-table"><thead><tr>
+              <th>账单</th><th>应付</th><th>未收</th><th>本笔分配(元)</th><th></th>
+            </tr></thead><tbody>${rows || '<tr><td colspan="5">该客户暂无未清账单（全额将转预收）</td></tr>'}</tbody></table>
+            ${remaining > 0 ? `<div class="lg-tag warn">余 ${Core.fmtYuan(remaining)} 将转预收</div>` : ''}`;
+        } catch (e) { toast(e.message, true); }
+        break;
+      }
+      case 'rc-mix-drop': {
+        const inp = btn.closest('tr').querySelector('input[data-mixbill]');
+        if (inp) inp.value = '0';
+        break;
+      }
+      case 'rc-mix-save': {
+        const pid = Number((document.getElementById('mixParty') || {}).value);
+        const amount = Core.yuanInputToCents((document.getElementById('mixAmount') || {}).value);
+        if (!needAmount(amount)) return;
+        const allocs = [...document.querySelectorAll('input[data-mixbill]')]
+          .map(el => ({ bill_id: Number(el.dataset.mixbill), amount_cents: Core.yuanInputToCents(el.value) }))
+          .filter(a => a.amount_cents != null && a.amount_cents > 0);
+        run(() => Api.createReceipt({
+          party_id: pid, amount_cents: amount,
+          method: (document.getElementById('mixMethod') || {}).value || 'cash',
+          allocations: allocs.length ? allocs : undefined, // 空=纯 FIFO；有=混合核销（服务端校验）
+          note: '混合核销（收款页弹层）'
+        }), '混合核销已登记').then(ok => { if (ok !== undefined) { const m = document.getElementById('lgModal'); if (m) m.remove(); } });
         break;
       }
       case 'onboard-replay':
@@ -1658,6 +1780,22 @@
     } else {
       fab.innerHTML = '<button class="lg-fab-btn lg-fab-edit" data-fab="edit">✏️ 编辑本页</button>';
     }
+  }
+
+  /** 通用信息弹层（body 级，重绘不丢；#lgModal 单例——每次覆盖） */
+  function showModal(innerHtml) {
+    let m = document.getElementById('lgModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.id = 'lgModal';
+      m.className = 'lg-modal-mask';
+      document.body.appendChild(m);
+    }
+    m.innerHTML = `<div class="lg-modal-panel"><div class="lg-modal-head">
+        <button class="lg-btn" data-act="modal-close">✕ 关闭</button></div>
+      <div class="lg-modal-body" style="max-height:70vh;overflow:auto">${innerHtml}</div></div>`;
+    m.querySelectorAll('[data-act="modal-close"]').forEach(b =>
+      b.addEventListener('click', () => m.remove()));
   }
 
   function switchNav(tab) {

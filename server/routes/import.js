@@ -8,7 +8,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const ExcelJS = require('exceljs');
-const { parseWorkbook, applyJobRow, applyExpenseRow, scanZone, buildStaffDict, cellVal } = require('../services/importExcel');
+const { parseWorkbook, applyJobRow, applyExpenseRow, scanZone, buildStaffDict, cellVal, locateHeader } = require('../services/importExcel');
 const { applyBatch } = require('../services/importApply');
 const { ApiError } = require('../services/apiError');
 const { logEdit, nextBizNo } = require('../services/audit');
@@ -53,21 +53,10 @@ function createImportRouter(db) {
       }
       const staffDict = buildStaffDict(allPersonValues);
       for (const ws of wb.worksheets) {
-        // 表头定位（与解析器同规则）：按列名映射，容忍 1 月多出的"作业目的"列
-        let hdrRow = null;
-        const inv = {};
-        for (let r = 1; r <= 5; r++) {
-          const cells = {};
-          for (let c = 1; c <= 16; c++) {
-            const s = String(cellVal(ws.getCell(r, c).value) ?? '').trim();
-            if (s) cells[c] = s;
-          }
-          if (Object.values(cells).includes('日期') && Object.values(cells).includes('姓名')) {
-            hdrRow = r;
-            for (const [c, name] of Object.entries(cells)) inv[name] = Number(c);
-            break;
-          }
-        }
+        // C2：表头定位走 importExcel.locateHeader 公共函数（与解析器同规则，三处镜像归一）
+        const { hdrRow, inv } = locateHeader(ws, {
+          cellText: v => String(cellVal(v) ?? '').trim()
+        });
         if (!hdrRow) continue;
         const recvCol = inv['应收金额'];
         const paidCol = inv['实收金额'];

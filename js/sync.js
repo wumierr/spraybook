@@ -64,6 +64,19 @@
     if (!state || !result) return null;
     var jobDate = localDateStr(now);
     var wo = state.workOrder || {};
+    var snap = JSON.parse(window.Storage.exportJSON(state, mode));
+    // C1 药品价格表联动：快照附当前药型的经营价参考（进价/售价/库存）——
+    // 数据来自 bootstrap 读反哺缓存（getCloud），只作记账端参考，不参与现场计算
+    var chem = cloudChemical(state);
+    if (chem) {
+      snap.chemicalPrices = {
+        key: chem.key || null,
+        name: chem.name || null,
+        cost_cents: chem.cost_cents != null ? chem.cost_cents : null,
+        price_cents: chem.price_cents != null ? chem.price_cents : null,
+        stock_qty: chem.stock_qty != null ? chem.stock_qty : null
+      };
+    }
     return {
       client_job_id: uuid(),
       job_no: genJobNo(jobDate),
@@ -72,9 +85,22 @@
       address: null,
       note: wo.note || null,
       operator_names: (getCloud() && getCloud().operator) ? [getCloud().operator] : [],
-      snapshot: JSON.parse(window.Storage.exportJSON(state, mode)),
+      snapshot: snap,
       result: result
     };
+  }
+
+  /** C1：按当前药型在 bootstrap 反哺缓存里找价格表档（名称精确匹配；找不到=null 不附加） */
+  function cloudChemical(state) {
+    var c = getCloud();
+    var list = c && c.chemicals;
+    if (!list || !list.length) return null;
+    var name = state && state.plant && state.plant.name;
+    if (!name) return null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].name === name) return list[i];
+    }
+    return null;
   }
 
   /* ---------- 队列（localStorage 持久） ---------- */

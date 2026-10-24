@@ -291,6 +291,28 @@ function scanZone(ws, r, inv, cmax, sheetYear, sheetMonth, dict) {
 
 /* ---------- 主解析 ---------- */
 
+/** C2 公共表头定位（原先 parseWorkbook / routes 对账合计 / 导出三处镜像，抽一防漂移）：
+ *  在前 maxRow 行 × 前 maxCol 列里找同时含「日期」「姓名」的行=表头行。
+ *  返回 { hdrRow, inv }（inv=列名→列号）；找不到返回 { hdrRow: null, inv: {} }。
+ *  cellText 可注入取值函数（默认本模块 cleanStr——全角空格清理+trim）。 */
+function locateHeader(ws, { maxRow = 5, maxCol = 16, cellText } = {}) {
+  const text = cellText || cleanStr;
+  for (let r = 1; r <= maxRow; r++) {
+    const cells = {};
+    for (let c = 1; c <= maxCol; c++) {
+      const s = text(ws.getCell(r, c).value);
+      if (s) cells[c] = s;
+    }
+    const names = Object.values(cells);
+    if (names.includes('日期') && names.includes('姓名')) {
+      const inv = {};
+      for (const [c, name] of Object.entries(cells)) inv[name] = Number(c);
+      return { hdrRow: r, inv };
+    }
+  }
+  return { hdrRow: null, inv: {} };
+}
+
 function parseWorkbook(wb, db) {
   const rows = [];
   const stats = { sheets: 0, jobs: 0, expenses: 0, incomes: 0, skipped: 0, review: 0 };
@@ -309,20 +331,8 @@ function parseWorkbook(wb, db) {
     const ym = sheetName.match(/(\d{1,2})\s*月份/);
     const sheetMonth = ym ? Number(ym[1]) : null;
 
-    let hdrRow = null;
-    const inv = {};
-    for (let r = 1; r <= 5; r++) {
-      const cells = {};
-      for (let c = 1; c <= 16; c++) {
-        const s = cleanStr(ws.getCell(r, c).value);
-        if (s) cells[c] = s;
-      }
-      if (Object.values(cells).includes('日期') && Object.values(cells).includes('姓名')) {
-        hdrRow = r;
-        for (const [c, name] of Object.entries(cells)) inv[name] = Number(c);
-        break;
-      }
-    }
+    // C2：表头定位走公共 locateHeader（三处镜像归一）
+    const { hdrRow, inv } = locateHeader(ws);
     if (!hdrRow) { stats.skipped += ws.rowCount; continue; }
 
     const colDate = inv['日期'] || 1;
@@ -638,4 +648,4 @@ function applyExpenseRow(db, parsed, batchId, rowId, operator) {
   return { payment_id: pid };
 }
 
-module.exports = { parseWorkbook, applyJobRow, applyExpenseRow, splitAddress, parseDate, splitOperators, buildStaffDict, expenseCategory, cellVal, scanZone, loadDirtyAddresses };
+module.exports = { parseWorkbook, applyJobRow, applyExpenseRow, splitAddress, parseDate, splitOperators, buildStaffDict, expenseCategory, cellVal, cleanStr, scanZone, locateHeader, loadDirtyAddresses };

@@ -71,6 +71,8 @@
     summary: (params) => Api.get('/api/reports/summary' + (params || '')),
     // B2 账龄分桶（首页催收卡数据源；as_of 可选注入回看口径）
     aging: (asOf) => Api.get('/api/reports/aging' + qs({ as_of: asOf })),
+    // C3 用药史（?party_id= 客户档案 / ?bill_id= 账单作业明细；零新表派生）
+    usageHistory: (q) => Api.get('/api/usage-history' + qs(q)),
     // P4-M1 总表（作业粒度聚合只读视图）
     overview: (params) => Api.get('/api/overview' + (params || '')),
     parties: () => Api.get('/api/parties'),

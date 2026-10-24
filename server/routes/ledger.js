@@ -9,6 +9,8 @@ const finance = require('../services/finance');
 const journal = require('../services/journal');
 const reports = require('../services/reports');
 const overview = require('../services/overview');
+const exportExcel = require('../services/exportExcel');
+const { ApiError } = require('../services/apiError');
 
 function createLedgerRouter(db) {
   const router = express.Router();
@@ -105,6 +107,26 @@ function createLedgerRouter(db) {
     res.json({ ok: true, data });
   });
 
+  // C3 用药史（零新表派生）：?party_id= 客户档案用药史 / ?bill_id= 账单所属作业用药明细。
+  // 行=job_settlement_lines JOIN jobs（药型=plant_type_name；单价=spray_fee/area 派生）。
+  router.get('/usage-history', (req, res) => {
+    const partyId = Number(req.query.party_id) || 0;
+    const billId = Number(req.query.bill_id) || 0;
+    if (!partyId && !billId) throw new ApiError('VALIDATION', 'party_id 或 bill_id 必填');
+    const cond = partyId
+      ? 'l.farmer_name = (SELECT name FROM parties WHERE id = ?)'
+      : 'j.id = (SELECT s.job_id FROM settlements s JOIN bills b ON b.settlement_id = s.id WHERE b.id = ?)';
+    const rows = db.prepare(
+      `SELECT j.job_no, j.job_date, j.plant_type_name AS drug, l.farmer_name,
+              l.area_mu, l.used_sets, l.self_sets, l.supplement_sets,
+              l.pesticide_fee_cents, l.included,
+              CASE WHEN l.area_mu > 0 THEN ROUND(l.spray_fee_cents * 1.0 / l.area_mu / 100.0, 2) END AS unit_price_yuan
+       FROM job_settlement_lines l JOIN jobs j ON j.id = l.job_id
+       WHERE j.deleted_at IS NULL AND j.status != 'void' AND ${cond}
+       ORDER BY j.job_date DESC, j.id DESC LIMIT 100`).all(partyId || billId);
+    res.json({ ok: true, data: rows });
+  });
+
   /* ---------- 主数据只读（下拉用） ---------- */
   router.get('/parties', (req, res) => {
     const data = db.prepare(
@@ -132,6 +154,22 @@ function createLedgerRouter(db) {
   // B2：账龄分桶（未清账单按 issued_at 0-30/31-60/61-90/90+；as_of 可注入回看口径）
   router.get('/reports/aging', (req, res) => {
     res.json({ ok: true, data: reports.aging(db, { as_of: req.query.as_of || undefined }) });
+  });
+  // C2：月度表 U5 版式 1:1 导出（xlsx 真值单元格，无 CSV 公式注入面；可再被 parseWorkbook 读回）
+  router.get('/export/monthly', async (req, res, next) => {
+    try {
+      const from = req.query.from || undefined, to = req.query.to || undefined;
+      const jobs = overview.listOverview(db, { from, to }).rows;
+      const pays = finance.listPayments(db);
+      const wb = await exportExcel.buildMonthlyWorkbook(jobs, pays);
+      const buf = await wb.xlsx.writeBuffer();
+      // 文件名走 ASCII（HTTP 头禁非 ASCII）
+      const stamp = new Date().toISOString().slice(0, 10);
+      const name = `spraybook-${from || 'all'}_${to || 'now'}_${stamp}.xlsx`;
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+      res.end(buf);
+    } catch (err) { next(err); }
   });
   router.get('/reports/by-month', (req, res) => {
     res.json({ ok: true, data: reports.byMonth(db, { from: req.query.from, to: req.query.to }) });

@@ -522,12 +522,19 @@
         window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
         return;
       }
+      // C1 药品搜索（change 即过滤；回车/失焦触发，不抢输入焦点）
+      if (e.target.id === 'mdChemQ') {
+        mdChemFilter = e.target.value || '';
+        window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
+      }
     });
   })();
 
   /* ---------- 主数据（客户行内直填 + 新增客户 + 地块档案） ---------- */
   let mdEditId = null;      // 行内编辑中的客户 id
   let mdPlotEditId = null;  // 行内编辑中的地块 id
+  let mdChemEditId = null;  // C1 行内编辑中的药品 id
+  let mdChemFilter = '';    // C1 药品搜索词
   let mdShowDeleted = false; // E8：显示已停用客户（软删）与恢复入口
 
   async function renderMasterData() {
@@ -575,16 +582,47 @@
         <td>${b.last_job ? esc((b.last_job.date || '') + ' ' + (b.last_job.price_yuan ? b.last_job.price_yuan.toFixed(1) + '元/亩' : '')) : '—'}</td>
         <td>${actions(
           `<button class="lg-btn" data-act="md-edit" data-id="${p0.id}">编辑</button>`,
+          // C3 用药史（零新表派生；弹层在 app.js usage-view 通用处理）
+          `<button class="lg-btn" data-act="usage-view" data-party-id="${p0.id}" data-party-name="${esc(p0.name)}" title="该客户的历次用药记录">💊 用药史</button>`,
           p0.enabled ? `<button class="lg-btn danger" data-act="md-disable" data-id="${p0.id}" data-name="${esc(p0.name)}">停用</button>` : ''
         )}</td>
       </tr>`;
     }).join('');
-    const chems = (bootstrap ? bootstrap.chemicals : []).map(c => `<tr>
+    /* C1 药品价格表：行内编辑（名称/进价/售价/库存）+ 搜索 + 按使用频率排序 +
+       库存警示（空=不启用库存显'—'，低于 1 套红⚠️）+ 入库按钮（M1 手档）。
+       经营三列经 masterdata TABLES 白名单（迁移 013）；作业参数列只读（计算器口径）。 */
+    const chemAll = bootstrap ? (bootstrap.chemicals || []) : [];
+    let chemUseCount = new Map();
+    try {
+      const jobsAll = await Api.jobs();
+      for (const j of jobsAll || []) {
+        if (!j.plant_type_name) continue;
+        chemUseCount.set(j.plant_type_name, (chemUseCount.get(j.plant_type_name) || 0) + 1);
+      }
+    } catch (e) { /* 频率拉不到就按原序 */ }
+    const chemQ = (mdChemFilter || '').trim().toLowerCase();
+    const chemSorted = [...chemAll].sort((a, b) =>
+      (chemUseCount.get(b.name) || 0) - (chemUseCount.get(a.name) || 0));
+    const chemList = chemQ ? chemSorted.filter(c =>
+      [c.name, c.key, c.description].some(v => String(v || '').toLowerCase().includes(chemQ))) : chemSorted;
+    const chems = chemList.map(c => {
+      if (mdChemEditId === c.id) return mdChemEditRow(c);
+      const stock = c.stock_qty == null ? '—'
+        : `${c.stock_qty < 1 ? '<span class="lg-tag err">⚠️</span> ' : ''}${c.stock_qty}`;
+      return `<tr>
         <td>${esc(c.name)}</td><td>${esc(c.key || '—')}</td>
         <td class="num">${c.water_per_mu ?? '—'}</td>
         <td class="num">${c.pesticide_water_per_set ?? '—'}</td>
         <td class="num">${c.price_cents_per_set ? Core.fmtYuan(c.price_cents_per_set) : '—'}</td>
-      </tr>`).join('');
+        <td class="num">${c.cost_cents != null ? Core.fmtYuan(c.cost_cents) : '—'}</td>
+        <td class="num">${c.price_cents != null ? Core.fmtYuan(c.price_cents) : '—'}</td>
+        <td class="num">${stock}</td>
+        <td>${actions(
+          `<button class="lg-btn" data-act="md-chem-edit" data-id="${c.id}">编辑</button>`,
+          `<button class="lg-btn" data-act="chem-restock" data-id="${c.id}" data-name="${esc(c.name)}" data-stock="${c.stock_qty ?? ''}">入库</button>`
+        )}</td>
+      </tr>`;
+    }).join('');
     /* 地块档案（007：作业按名自动关联） */
     let plots = [];
     try { plots = (await Api.masterList('plots')).filter(p => !p.deleted_at); } catch (e) { plots = []; }
@@ -678,10 +716,37 @@
       </tr></thead><tbody>${plotRows || '<tr><td colspan="5">暂无地块——新增后作业明细将自动按名关联</td></tr>'}</tbody></table>
     </div>
     <div class="lg-panel">
-      <h2>药品/用药类型（计算器类型库镜像；编辑暂走计算器端）</h2>
-      <table class="lg-table" data-colw="master-chems"><thead><tr><th>名称</th><th>key</th><th>水量/亩</th><th>兑水/套</th><th>药价/套</th></tr></thead>
-      <tbody>${chems || '<tr><td colspan="5">暂无（首次计算器同步后生成）</td></tr>'}</tbody></table>
+      <h2>药品价格表（进价/售价/库存行内编辑；按使用频率排序；库存空=不启用）</h2>
+      <div class="lg-toolbar">
+        <input id="mdChemQ" class="lg-search" value="${esc(mdChemFilter || '')}" placeholder="🔍 名称/key/说明" style="max-width:220px">
+      </div>
+      <table class="lg-table" data-colw="master-chems"><thead><tr>
+        <th>名称</th><th>key</th><th>水量/亩</th><th>兑水/套</th><th>药价/套(作业)</th>
+        <th>进价(元)</th><th>售价(元)</th><th>库存(套)</th><th>操作</th>
+      </tr></thead>
+      <tbody>${chems || `<tr><td colspan="9">${Core.emptyState('💊', '暂无药品档案——计算器同步后自动生成；进价/售价/库存在此维护',
+        [], { cell: true })}</td></tr>`}</tbody></table>
     </div>${mdMergeModalHtml()}`;
+  }
+
+  /** C1 药品编辑行（data-mc 前缀防与客户 md- 字段撞键）：名称/进价/售价/库存（元↔分） */
+  function mdChemEditRow(c) {
+    const inp = (f, val, ph, type, step) =>
+      `<input data-mc="${f}" value="${esc(val ?? '')}" placeholder="${ph}" ${type ? `type="${type}" step="${step || '0.01'}"` : ''}>`;
+    return `<tr class="lg-detail">
+      <td>${inp('name', c.name, '名称')}</td>
+      <td>${esc(c.key || '—')}</td>
+      <td class="num">${c.water_per_mu ?? '—'}</td>
+      <td class="num">${c.pesticide_water_per_set ?? '—'}</td>
+      <td class="num">${c.price_cents_per_set ? Core.fmtYuan(c.price_cents_per_set) : '—'}</td>
+      <td class="num">${inp('cost_yuan', c.cost_cents != null ? c.cost_cents / 100 : '', '进价', 'number')}</td>
+      <td class="num">${inp('price_yuan', c.price_cents != null ? c.price_cents / 100 : '', '售价', 'number')}</td>
+      <td class="num">${inp('stock_qty', c.stock_qty ?? '', '库存(套，空=不启用)', 'number', '0.1')}</td>
+      <td>${actions(
+        `<button class="lg-btn primary" data-act="md-chem-edit-save" data-id="${c.id}">保存</button>`,
+        `<button class="lg-btn" data-act="md-chem-edit-cancel">取消</button>`
+      )}</td>
+    </tr>`;
   }
 
   /* ---------- P9-R2：合并预览弹窗（主数据/体检两页共用） ---------- */
@@ -909,6 +974,45 @@
         mdEditId = null;
         window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
         break;
+      case 'md-chem-edit':
+        // C1 药品行内编辑（data-mc 字段；与客户 md- 编辑互斥）
+        mdChemEditId = id; mdEditId = null; mdPlotEditId = null;
+        window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
+        break;
+      case 'md-chem-edit-cancel':
+        mdChemEditId = null;
+        window.LedgerExtra.renderTab('master', document.getElementById('lgMain'));
+        break;
+      case 'md-chem-edit-save': {
+        const tr = btn.closest('tr');
+        const get = f => { const el = tr.querySelector(`[data-mc="${f}"]`); return el ? el.value : undefined; };
+        const body = {};
+        const name = get('name');
+        if (name != null && name.trim()) body.name = name.trim();
+        for (const [f, col] of [['cost_yuan', 'cost_cents'], ['price_yuan', 'price_cents']]) {
+          const v = get(f);
+          if (v == null) continue;
+          if (v === '') { body[col] = null; continue; } // 清空=未填（NULL）
+          const cents = Core.yuanInputToCents(v);
+          if (cents == null || isNaN(cents) || cents < 0) return toast(`${f === 'cost_yuan' ? '进价' : '售价'}非法`, true);
+          body[col] = cents;
+        }
+        const stock = get('stock_qty');
+        if (stock != null) body.stock_qty = stock === '' ? null : Number(stock);
+        if (!Object.keys(body).length) { mdChemEditId = null; return window.LedgerExtra.renderTab('master', document.getElementById('lgMain')); }
+        run(() => Api.masterPatch('chemicals', id, body), '药品已更新').then(() => { mdChemEditId = null; });
+        break;
+      }
+      case 'chem-restock': {
+        // C1 入库（M1 手档）：在现库存上加数（未启用库存=从 0 起）
+        const cur = btn.dataset.stock === '' ? 0 : Number(btn.dataset.stock);
+        const v = window.prompt(`入库 ${btn.dataset.name}（当前库存 ${cur} 套），输入入库套数：`);
+        if (v == null) return;
+        const n = Number(v);
+        if (!(n > 0)) return toast('入库数须为正数', true);
+        run(() => Api.masterPatch('chemicals', id, { stock_qty: Math.round((cur + n) * 10) / 10 }), `已入库 ${n} 套`);
+        break;
+      }
       case 'md-edit-save': {
         const tr = btn.closest('tr');
         const get = f => { const el = tr.querySelector(`[data-md="${f}"]`); return el ? el.value : undefined; };

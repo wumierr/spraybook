@@ -143,7 +143,13 @@
 
   /** CSV 单元转义：引号包裹 + 内部引号翻倍（Excel 直接打开需前置 BOM，由调用方处理） */
   function csvCell(v) {
-    return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    // M-4（C2）：CSV 公式注入防护——= + - @ 或制表符开头的值前置单引号，
+    // Excel 打开不再当公式求值（' 落在引号包裹外层语义为文本标记，不进数据本身）
+    let t = String(v == null ? '' : v);
+    const formulaLike = /^[=+\t\r]/.test(t) || (t.startsWith('@') && t.length > 1)
+      || (t.startsWith('-') && Number.isNaN(Number(t)));
+    if (formulaLike) t = "'" + t;
+    return '"' + t.replace(/"/g, '""') + '"';
   }
   /** 行数组 → CSV 文本（\r\n 行尾） */
   function csvRow(cells) {

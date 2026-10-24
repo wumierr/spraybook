@@ -23,12 +23,14 @@ function getActive(db, table, id) {
 /* ---------------- 收款 ---------------- */
 
 /**
- * 收款（M6 双模式）：
+ * 收款（M6 双模式；C3 起核销明细落 receipt_allocations 结构化表）：
  *  - 挂单笔：bill_id 给定 → 核销该账单（兼容 P0），可带 from_advance_id 预收抵扣
  *  - 按客户：bill_id 空、party_id 给定 → 对该客户全部未清账单按最早顺序 FIFO
- *    自动核销（分摊明细写 receipts.allocations），剩余金额自动生成客户预收 advance
+ *    自动核销（明细写 receipt_allocations；C3 混合核销：allocations 参数=显式
+ *    预分配数组 [{bill_id, amount_cents}]（如前端弹层可改的 FIFO 预案），校验
+ *    Σ=amount、账单属该客户、单张不超未收），剩余金额自动生成客户预收 advance
  */
-function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_at, note, from_advance_id, collector_name }) {
+function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_at, note, from_advance_id, collector_name, allocations: manualAllocs }) {
   if (!party_id) throw new ApiError('VALIDATION', 'party_id 必填');
   if (!Number.isInteger(amount_cents) || amount_cents <= 0) {
     throw new ApiError('VALIDATION', 'amount_cents 必须是正整数分');
@@ -85,22 +87,51 @@ function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_a
       }
       journalLines.push({ account_code: '1122', direction: 'credit', amount_cents, party_id, memo: '核销应收 ' + bill.bill_no });
     } else {
-      // ---- 模式2：按客户 FIFO 核销全部未清账单，余额转预收 ----
+      // ---- 模式2：按客户核销未清账单（C3 混合核销：显式 allocations 可改 FIFO 预案），余额转预收 ----
       const openBills = db.prepare(
         `SELECT * FROM bills WHERE party_id = ? AND status IN ('unpaid','partial') ORDER BY id`).all(party_id);
-      let remaining = amount_cents;
-      allocations = [];
-      for (const b of openBills) {
-        if (remaining <= 0) break;
-        const unpaid = (b.amount_cents + b.adjust_cents) - b.paid_cents;
-        if (unpaid <= 0) continue;
-        const use = Math.min(unpaid, remaining);
-        remaining -= use;
-        allocations.push({ bill_id: b.id, bill_no: b.bill_no, amount_cents: use });
-        const paid = b.paid_cents + use;
+      const unpaidOf = b => (b.amount_cents + b.adjust_cents) - b.paid_cents;
+      // 分配方案：显式 allocations（校验）缺省 FIFO 贪心
+      let plan;
+      if (Array.isArray(manualAllocs) && manualAllocs.length) {
+        plan = [];
+        let sum = 0;
+        const byId = new Map(openBills.map(b => [b.id, b]));
+        for (const a of manualAllocs) {
+          const bid = Number(a && a.bill_id);
+          const amt = Number(a && a.amount_cents);
+          const b = byId.get(bid);
+          if (!b) throw new ApiError('VALIDATION', `混合核销账单 #${bid} 不存在或不属于该客户/已非未清`);
+          if (!Number.isInteger(amt) || amt <= 0) throw new ApiError('VALIDATION', '混合核销金额必须是正整数分');
+          const dup = plan.find(p => p.bill_id === bid);
+          if (dup) throw new ApiError('VALIDATION', `账单 #${bid} 重复分配`);
+          if (amt > unpaidOf(b)) throw new ApiError('VALIDATION', `账单 #${bid} 分配 ${amt} 分超过未收 ${unpaidOf(b)} 分`);
+          plan.push({ bill_id: bid, amount_cents: amt });
+          sum += amt;
+        }
+        if (sum > amount_cents) {
+          throw new ApiError('VALIDATION', `混合核销合计 ${sum} 分超过收款 ${amount_cents} 分`);
+        }
+      } else {
+        plan = [];
+        let remaining = amount_cents;
+        for (const b of openBills) {
+          if (remaining <= 0) break;
+          const unpaid = unpaidOf(b);
+          if (unpaid <= 0) continue;
+          const use = Math.min(unpaid, remaining);
+          remaining -= use;
+          plan.push({ bill_id: b.id, amount_cents: use });
+        }
+      }
+      allocations = plan;
+      let remaining = amount_cents - plan.reduce((a, p) => a + p.amount_cents, 0);
+      for (const p of plan) {
+        const b = openBills.find(x => x.id === p.bill_id);
+        const paid = b.paid_cents + p.amount_cents;
         db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
           .run(paid, paid >= b.amount_cents + b.adjust_cents ? 'paid' : 'partial', now, b.id);
-        journalLines.push({ account_code: '1122', direction: 'credit', amount_cents: use, party_id, memo: '核销应收 ' + b.bill_no });
+        journalLines.push({ account_code: '1122', direction: 'credit', amount_cents: p.amount_cents, party_id, memo: '核销应收 ' + b.bill_no });
       }
       journalLines.push({ account_code: cashCode, direction: 'debit', amount_cents, party_id, memo: '收款 ' + receipt_no });
       if (remaining > 0) {
@@ -114,15 +145,24 @@ function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_a
       }
     }
 
-    const allocPayload = allocations
-      ? JSON.stringify({ items: allocations, remainder_advance_id: remainderAdvanceId })
-      : null;
+    // C3：核销明细落结构化表（receipts.allocations JSON 退役，历史行保留不写）
     const info = db.prepare(
-      `INSERT INTO receipts (receipt_no, bill_id, party_id, from_advance_id, amount_cents, method, occurred_at, note, status, allocations, collector_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`)
+      `INSERT INTO receipts (receipt_no, bill_id, party_id, from_advance_id, amount_cents, method, occurred_at, note, status, allocations, remainder_advance_id, collector_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?, ?, ?)`)
       .run(receipt_no, bill ? bill.id : null, party_id, from_advance_id || null, amount_cents,
-        method || 'cash', occurred_at || now, note || null, allocPayload, collector_name || null, now, now);
+        method || 'cash', occurred_at || now, note || null,
+        remainderAdvanceId || null, collector_name || null, now, now);
     const rid = info.lastInsertRowid;
+    // 结构化核销明细（挂单笔=单行，按客户=分配方案逐行）
+    if (bill) {
+      db.prepare(
+        `INSERT INTO receipt_allocations (receipt_id, bill_id, amount_cents, created_at) VALUES (?, ?, ?, ?)`)
+        .run(rid, bill.id, amount_cents, now);
+    } else {
+      const insAlloc = db.prepare(
+        `INSERT INTO receipt_allocations (receipt_id, bill_id, amount_cents, created_at) VALUES (?, ?, ?, ?)`);
+      for (const p of allocations || []) insAlloc.run(rid, p.bill_id, p.amount_cents, now);
+    }
 
     postEntry(db, {
       event_type: 'receipt', ref_type: 'receipt', ref_id: rid,
@@ -139,7 +179,11 @@ function createReceipt(db, { bill_id, party_id, amount_cents, method, occurred_a
 function updateReceipt(db, id, { amount_cents, method, occurred_at, note, collector_name }) {
   const r = getActive(db, 'receipts', id);
   if (r.status === 'void') throw new ApiError('INVALID_STATE', '已作废收款不可编辑');
-  if (r.allocations) throw new ApiError('INVALID_STATE', '按客户核销的收款不支持编辑，请作废后重录');
+  // C3：按客户核销（无 bill_id 且有结构化/JSON 核销行）不支持编辑，走作废重录
+  const allocCount = db.prepare('SELECT COUNT(*) AS c FROM receipt_allocations WHERE receipt_id = ?').get(id).c;
+  if (!r.bill_id && (allocCount > 0 || r.allocations)) {
+    throw new ApiError('INVALID_STATE', '按客户核销的收款不支持编辑，请作废后重录');
+  }
   if (r.from_advance_id) throw new ApiError('INVALID_STATE', '预收抵扣收款不支持编辑，请作废后重录');
   const bill = r.bill_id ? getActive(db, 'bills', r.bill_id) : null;
   const newAmount = amount_cents != null ? amount_cents : r.amount_cents;
@@ -181,6 +225,11 @@ function updateReceipt(db, id, { amount_cents, method, occurred_at, note, collec
       const payable = bill.amount_cents + bill.adjust_cents;
       db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
         .run(paid, paid >= payable ? 'paid' : 'partial', now, bill.id);
+      // C3：挂单笔的结构化核销行随编辑金额同步（审计一致；作废回退走单笔分支不依赖它）
+      if (journalAffecting && amount_cents != null && amount_cents !== r.amount_cents) {
+        db.prepare('UPDATE receipt_allocations SET amount_cents = ? WHERE receipt_id = ?')
+          .run(newAmount, id);
+      }
       postEntry(db, {
         event_type: 'receipt', ref_type: 'receipt', ref_id: id,
         occurred_at: newOccurred, memo: '收款(改) ' + r.receipt_no,
@@ -468,10 +517,17 @@ function voidFinanceRecord(db, table, id) {
     if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '作废 ' + noText });
     // 2) 回滚业务副作用
     if (table === 'receipts') {
-      // 分摊明细（按客户收款）优先：逐张账单回退 + 余额预收联动作废
-      let allocPayload = null;
-      try { allocPayload = row.allocations ? JSON.parse(row.allocations) : null; } catch (e) { allocPayload = null; }
-      const items = Array.isArray(allocPayload) ? allocPayload : (allocPayload && allocPayload.items) || [];
+      // C3：按客户核销读结构化表；挂单笔（bill_id 非空）走单笔分支——按 row.amount_cents
+      // 现值回退（编辑过的挂单收款金额以行现值为准，结构化明细行由 updateReceipt 同步维护）
+      let items = row.bill_id ? [] : db.prepare(
+        'SELECT bill_id, amount_cents FROM receipt_allocations WHERE receipt_id = ?').all(id);
+      let restId = row.remainder_advance_id != null ? row.remainder_advance_id : null;
+      if (!items.length && row.allocations) {
+        let legacy = null;
+        try { legacy = JSON.parse(row.allocations); } catch (e) { legacy = null; }
+        items = (legacy && (Array.isArray(legacy) ? legacy : legacy.items)) || [];
+        if (!restId && legacy && legacy.remainder_advance_id) restId = legacy.remainder_advance_id;
+      }
       if (items.length) {
         for (const a of items) {
           const bill = getActive(db, 'bills', a.bill_id);
@@ -479,7 +535,8 @@ function voidFinanceRecord(db, table, id) {
           db.prepare('UPDATE bills SET paid_cents = ?, status = ?, updated_at = ? WHERE id = ?')
             .run(paid, paid <= 0 ? 'unpaid' : 'partial', now, bill.id);
         }
-        const restId = allocPayload && allocPayload.remainder_advance_id;
+        // 结构化明细行随作废标记（保留审计：行不删，status 无列——以 receipts.status=void 为准，
+        // 回滚只依赖 bills.paid_cents 重算，重复作废被开头 row.status==='void' 短路）
         if (restId) {
           const rest = db.prepare('SELECT * FROM advances WHERE id = ?').get(restId);
           if (rest && rest.status !== 'void') {
@@ -542,10 +599,31 @@ function voidFinanceRecord(db, table, id) {
 /* ---------------- 查询 ---------------- */
 
 function listReceipts(db) {
+  // C3：核销明细从结构化表拼（前端形状不变：[{bill_id, bill_no, amount_cents}]）
+  const allocStmt = db.prepare(
+    `SELECT ra.bill_id, b.bill_no, ra.amount_cents FROM receipt_allocations ra
+     LEFT JOIN bills b ON b.id = ra.bill_id WHERE ra.receipt_id = ? ORDER BY ra.id`);
+  const legacyAllocs = (row) => {
+    if (row.allocations) {
+      try {
+        const j = JSON.parse(row.allocations);
+        return (j && (Array.isArray(j) ? j : j.items)) || [];
+      } catch (e) { /* 坏 JSON 忽略 */ }
+    }
+    return [];
+  };
   return db.prepare(
     `SELECT r.*, b.bill_no, p.name AS party_name FROM receipts r
      LEFT JOIN bills b ON b.id = r.bill_id LEFT JOIN parties p ON p.id = r.party_id
-     ORDER BY r.id DESC LIMIT 500`).all();
+     ORDER BY r.id DESC LIMIT 500`).all().map(r => ({
+      ...r,
+      allocations: (() => {
+        const rows = allocStmt.all(r.id);
+        if (rows.length) return JSON.stringify(rows.map(x => ({ bill_id: x.bill_id, bill_no: x.bill_no, amount_cents: x.amount_cents })));
+        const legacy = legacyAllocs(r);
+        return legacy.length ? JSON.stringify(legacy.map(x => ({ bill_id: x.bill_id, bill_no: x.bill_no, amount_cents: x.amount_cents }))) : null;
+      })()
+    }));
 }
 function listPayments(db) {
   return db.prepare(
