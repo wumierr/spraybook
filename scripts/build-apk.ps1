@@ -42,7 +42,30 @@ $GradleVersion = '8.5'      # 必须与 androidapp/build.gradle 的 AGP 8.2.0 �
 $SdkDefault    = 'D:\Android\Sdk'
 $CacheDir      = 'D:\Android\build-cache\drone'
 
-Write-Step "无人机打药计算器 — APK 打包 ($Type)"
+# ============================================================
+#  Step 0  读取打包配置（E5：apk.config.json，全默认可一把打包）
+# ============================================================
+$ConfigPath = Join-Path $ProjectRoot 'apk.config.json'
+$Cfg = @{ applicationId = 'com.dronespray.calculator'; apkNamePattern = 'drone-spray-calculator-{type}-{version}-{date}.apk'; iconDir = ''; versionCode = 5; signing = $null }
+if (Test-Path $ConfigPath) {
+    $j = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($k in @('applicationId', 'apkNamePattern', 'iconDir', 'versionCode')) {
+        if ($null -ne $j.$k -and "$($j.$k)" -ne '') { $Cfg[$k] = $j.$k }
+    }
+    if ($j.signing) { $Cfg.signing = $j.signing }
+}
+
+# versionName 单一来源：js/version.js 的 APP_VERSION（正则提取）
+$VersionJs = Get-Content (Join-Path $ProjectRoot 'js\version.js') -Raw -Encoding UTF8
+if ($VersionJs -notmatch "APP_VERSION\s*=\s*'([^']+)'") {
+    Write-Fail '无法从 js/version.js 提取 APP_VERSION'
+    Wait-Exit 1
+}
+$AppVersion = $Matches[1]
+# versionCode 自增（本轮打包用 +1 后的值，成功后写回 apk.config.json）
+$NextCode = [int]$Cfg.versionCode + 1
+Write-Step "无人机打药计算器 — APK 打包 ($Type) v$AppVersion ($NextCode)"
+Write-Tip  "配置: $ConfigPath（applicationId=$($Cfg.applicationId)，命名=$($Cfg.apkNamePattern)）"
 
 if (-not (Test-Path $AppDir)) {
     Write-Fail "未找到 Android 工程目录：$AppDir"
@@ -50,6 +73,21 @@ if (-not (Test-Path $AppDir)) {
 }
 Disable-ProxyForSession
 if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Path $CacheDir -Force | Out-Null }
+
+# 图标目录（可选）：把 iconDir 下的图标按密度子目录刷进 res（mipmap-*/ic_launcher.png）
+if ($Cfg.iconDir) {
+    $iconSrc = Join-Path $ProjectRoot $Cfg.iconDir
+    if (Test-Path $iconSrc) {
+        Get-ChildItem $iconSrc -Directory -Filter 'mipmap-*' | ForEach-Object {
+            $dst = Join-Path $AppDir "app\src\main\res\$($_.Name)"
+            New-Item -ItemType Directory -Path $dst -Force | Out-Null
+            Copy-Item (Join-Path $_.FullName '*') $dst -Force -Recurse
+        }
+        Write-Ok "图标已从 apk.config.json.iconDir 同步: $iconSrc"
+    } else {
+        Write-Note "apk.config.json.iconDir 配置了但目录不存在，跳过: $iconSrc"
+    }
+}
 
 # ============================================================
 #  Step 1 / 6  同步网页资源
@@ -310,6 +348,20 @@ if ($Type -eq 'release') { $gradleArgs += 'assembleRelease' } else { $gradleArgs
 $gradleArgs += '--no-daemon'
 $gradleArgs += '--warning-mode=none'
 
+# E5 配置化注入：版本三件套 + 签名（密码走环境变量，不进命令行不留痕）
+$gradleArgs += @("-PAPP_VERSION_NAME=$AppVersion", "-PAPP_VERSION_CODE=$NextCode", "-PAPP_PKG_ID=$($Cfg.applicationId)")
+if ($Cfg.signing -and $Cfg.signing.keystoreFile) {
+    $ksPath = if ([System.IO.Path]::IsPathRooted($Cfg.signing.keystoreFile)) { $Cfg.signing.keystoreFile }
+              else { Join-Path $ProjectRoot $Cfg.signing.keystoreFile }
+    if (Test-Path $ksPath) {
+        $gradleArgs += @("-PAPP_KEYSTORE_FILE=$ksPath", "-PAPP_KEYSTORE_ALIAS=$($Cfg.signing.alias)")
+        if (-not $env:SPRAYBOOK_KEYSTORE_PASS) { Write-Note '未设 SPRAYBOOK_KEYSTORE_PASS 环境变量，release 签名会失败（debug 包不受影响）' }
+        Write-Ok "release 签名已配置: $ksPath (alias=$($Cfg.signing.alias))"
+    } else {
+        Write-Note "apk.config.json.signing.keystoreFile 不存在，跳过签名: $($Cfg.signing.keystoreFile)"
+    }
+}
+
 if ($Mirror) {
     $initScript = Join-Path $ProjectRoot 'deploy\gradle-mirror.init.gradle'
     if (Test-Path $initScript) {
@@ -355,9 +407,19 @@ if (-not $apk) {
 }
 
 $stamp   = Get-Date -Format 'yyyyMMdd'
-$outName = "drone-spray-calculator-$Type-$stamp.apk"
+$outName = $Cfg.apkNamePattern -replace '\{type\}', $Type -replace '\{version\}', $AppVersion -replace '\{date\}', $stamp
+if ($outName -notmatch '\.apk$') { $outName += '.apk' }
 $outPath = Join-Path $ProjectRoot $outName
 Copy-Item $apk.FullName -Destination $outPath -Force
+
+# versionCode 自增写回（E5：打包成功才算数，失败不烧号）
+if (Test-Path $ConfigPath) {
+    $raw = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $raw.versionCode = $NextCode
+    # WriteAllText = UTF-8 无 BOM（PS 的 Set-Content UTF8 会带 BOM，破坏 node 端 JSON.parse）
+    [System.IO.File]::WriteAllText($ConfigPath, ($raw | ConvertTo-Json -Depth 5))
+    Write-Ok "versionCode 已自增并写回 apk.config.json: $NextCode"
+}
 
 Write-Host ''
 Write-Ok 'APK 打包成功！'

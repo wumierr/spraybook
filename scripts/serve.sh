@@ -41,7 +41,7 @@ start_server() {
 
   mkdir -p "$LOG_DIR"
   if command -v node >/dev/null 2>&1; then
-    note "使用 Node.js 静态服务器，端口 $PORT"
+    note "使用 Node.js 静态服务器，端口 $PORT（托管 dist/ 构建产物，E0.1 后不再托管仓库根）"
     BIND_HOST="$([ "${LAN:-0}" = "1" ] && echo 0.0.0.0 || echo 127.0.0.1)" \
       nohup node "$ROOT/scripts/static-server.cjs" "$PORT" >"$LOG_FILE" 2>&1 &
   elif command -v python3 >/dev/null 2>&1; then

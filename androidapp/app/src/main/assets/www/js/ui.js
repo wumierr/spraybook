@@ -1081,6 +1081,15 @@ const UI = {
     const sumWrap = document.getElementById('workOrderSummary');
     const refill = document.getElementById('woRefill');
     if (!wrap || !sumWrap || !refill) return;
+    // A0-F-M6：本函数可能被输入事件触发重建（wo-self/wo-sets），重建前记住焦点与值，
+    // 重建后恢复——否则每敲一键输入框失焦，无法连续输入
+    const ae = document.activeElement;
+    let focusSel = null, focusVal = null, focusPos = null;
+    if (ae && ae.classList) {
+      if (ae.classList.contains('wo-sets')) focusSel = '.wo-sets';
+      else if (ae.classList.contains('wo-self') && ae.dataset.fid != null) focusSel = `.wo-self[data-fid="${ae.dataset.fid}"]`;
+      if (focusSel) { focusVal = ae.value; try { focusPos = ae.selectionStart; } catch (e) { focusPos = null; } }
+    }
     const r = this._lastResult;
     const wo = this.getWorkOrder();
     const fmt = Calculator.fmt.bind(Calculator);
@@ -1193,6 +1202,15 @@ const UI = {
         <input type="text" class="wo-note" value="${this.escapeHtml(wo.note)}" placeholder="如：农户自备2套 / 下午续药">
       </div>`;
     wrap.innerHTML = html;
+    // A0-F-M6：恢复焦点与光标（值已由 state 渲染一致，仅兜底不等场景）
+    if (focusSel) {
+      const el = document.querySelector('#workOrderModal ' + focusSel);
+      if (el) {
+        if (focusVal != null && el.value !== focusVal) el.value = focusVal;
+        el.focus();
+        try { el.setSelectionRange(focusPos != null ? focusPos : el.value.length, focusPos != null ? focusPos : el.value.length); } catch (e) { /* number 类型不支持选区 */ }
+      }
+    }
   },
 
   /* 已完成总量（多地块求和 / 单地块取值） */
@@ -2431,10 +2449,23 @@ const UI = {
           return;
         }
         const r = window.SpraySync.enqueueCurrent();
-        if (r && r.ok) {
+        if (r && r.ok && r.requeued) {
+          this.toast('该单已在同步队列，将自动重试（单号 ' + r.job_no + '）', 'success');
+        } else if (r && r.ok) {
           this.toast('作业已入队，同步中…（单号 ' + r.job_no + '）', 'success');
         } else if (r && r.reason === 'no-result') {
           this.toast('请先完成一次计算再同步', 'warn');
+        } else if (r && r.reason === 'already-synced') {
+          // A0-F-M4：APK WebView 原生 confirm 恒 false，必须走自建确认框
+          const wo = this.state.workOrder || {};
+          this.confirmDialog(
+            '该工单此前已同步到账本（单号 ' + (wo._synced_job_no || '') + '）。\n再次同步将在账本新建一单，继续吗？',
+            () => {
+              const r2 = window.SpraySync.enqueueCurrent({ forceNew: true });
+              if (r2 && r2.ok) this.toast('已作为新单入队同步（单号 ' + r2.job_no + '）', 'success');
+              window.SpraySync.flushNow();
+            });
+          return;
         }
         window.SpraySync.flushNow();
       });
@@ -2464,7 +2495,7 @@ const UI = {
           if (restEl && plot) {
             const done = wo.completedByPlot[plot.id] || 0;
             const rest = Math.max(0, plot.water - done);
-            restEl.textContent = `剩余 ${Calculator.fmt(rest, 1)} 升 ≈ ${plot.perTripWater > 0 ? Math.ceil(rest / plot.perTripWater) : 0} 趟`;
+            restEl.textContent = `剩余 ${Calculator.fmt(rest, 1)} 升 ≈ ${plot.groupPerTripWater > 0 ? Math.ceil(rest / plot.groupPerTripWater) : 0} 趟`;
           }
         } else if (e.target.classList.contains('wo-single')) {
           const v = parseFloat(e.target.value);

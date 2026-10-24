@@ -86,14 +86,31 @@ function buildApp(db) {
   return app;
 }
 
+/* ---------- 绑定裁决（E0.1 / C-1 fail-closed，规格=DEPLOY §7.1） ----------
+   未配置口令 → 只绑 127.0.0.1（本机自用照常，双击 bat 场景不受影响）；
+   配置 SPRAYBOOK_AUTH_TOKEN（≥16 位）→ 才允许绑 0.0.0.0（局域网手机 / 公网）。
+   注意：本层只是绑定开关；口令校验本体（登录页/cookie/401）属公网安全批（NR-C）。
+   cloudflared 等本机隧道在绑定层看来就是本机——先配口令再接隧道（DEPLOY §7.2 步骤 0）。 */
+function resolveBindHost(env = process.env) {
+  const token = env.SPRAYBOOK_AUTH_TOKEN;
+  return token && token.length >= 16 ? '0.0.0.0' : '127.0.0.1';
+}
+
 /* ---------- 启动（仅直接运行时） ---------- */
 if (require.main === module) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const db = initDb(DB_FILE);
   const app = buildApp(db);
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[spraybook] listening on http://0.0.0.0:${PORT}`);
-    console.log(`[spraybook] 计算器: http://<本机IP>:${PORT}/  记账后台: http://<本机IP>:${PORT}/ledger/  API: /api/health`);
+  const host = resolveBindHost();
+  const server = app.listen(PORT, host, () => {
+    console.log(`[spraybook] listening on http://${host}:${PORT}`);
+    if (host === '127.0.0.1') {
+      console.log('[spraybook] 未配置 SPRAYBOOK_AUTH_TOKEN（或不足 16 位），仅本机可访问（fail-closed）。');
+      console.log('[spraybook] 手机/局域网要用：设置环境变量 SPRAYBOOK_AUTH_TOKEN（≥16 位随机串）后重启服务。');
+    } else {
+      console.log('[spraybook] 已配置口令，局域网/外部可访问：先实测登录链路再暴露公网（DEPLOY §7）。');
+    }
+    console.log(`[spraybook] 计算器: http://${host}:${PORT}/  记账后台: http://${host}:${PORT}/ledger/  API: /api/health`);
   });
   server.on('error', (err) => {
     if (err && err.code === 'EADDRINUSE') {
@@ -106,4 +123,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildApp, DB_FILE, DATA_DIR };
+module.exports = { buildApp, resolveBindHost, DB_FILE, DATA_DIR };

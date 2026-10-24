@@ -187,8 +187,12 @@ case "$MODE" in
     }
     id webapp >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin webapp
     mkdir -p "$APP_ROOT"
+    # C-2 静态收敛（E0.1）：服务器上绝不落 data/（真库）/ backups/ / server/ / tests/，
+    # static-server 默认也只托管 dist/——静态站点不需要任何数据与后端文件
     rsync -a --delete --exclude '.git' --exclude 'androidapp' --exclude 'android-webview' \
-          --exclude 'docs' --exclude '*.apk' "$ROOT/" "$APP_ROOT/" 2>/dev/null || cp -r "$ROOT/." "$APP_ROOT/"
+          --exclude 'docs' --exclude 'data' --exclude 'backups' --exclude 'server' \
+          --exclude 'tests' --exclude 'node_modules' --exclude 'logs' \
+          --exclude '*.apk' --exclude '*.db' "$ROOT/" "$APP_ROOT/" 2>/dev/null || cp -r "$ROOT/." "$APP_ROOT/"
     chown -R webapp:webapp "$APP_ROOT"
     cp "$ROOT/deploy/drone-spray.service" /etc/systemd/system/
     # 直接对公网暴露时改监听地址
@@ -198,6 +202,13 @@ case "$MODE" in
     open_firewall 8080
     sleep 2
     systemctl is-active --quiet drone-spray && ok "服务运行中" || { err "服务启动失败"; journalctl -u drone-spray -n 20 --no-pager; exit 1; }
+    # 部署后自动验证（C-2）：数据文件必须不可达——200 即部署失败
+    probe="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/data/app.db || true)"
+    if [ "$probe" = "200" ]; then
+      err "安全验证失败：/data/app.db 可被下载（C-2 收敛未生效），已退出"
+      exit 1
+    fi
+    ok "安全验证通过：/data/app.db 不可达 (HTTP $probe)"
     IP="$(curl -s --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
     ok "部署完成 -> http://$IP:8080"
     ;;

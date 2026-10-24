@@ -8,5 +8,5 @@
      预处理器，保持字面量；R3 验收核对两处一致）
    规则：改任何 JS/CSS 后必须递增此版本（README 缓存守门规则）。
    ============================================================ */
-const APP_VERSION = '4.8.0';
+const APP_VERSION = '4.8.1';
 if (typeof window !== 'undefined') window.APP_VERSION = APP_VERSION;

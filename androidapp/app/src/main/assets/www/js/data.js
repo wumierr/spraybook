@@ -122,8 +122,8 @@ const DEFAULT_FIELD = {
 */
 const FIELD_DEFS = {
   // 作业参数
-  spareWater: 35,         // 富余水量（升）：填充管道、富余、留底，总加水=计算水量+富余
-  drawReserve: 40,        // 抽药占用（升）：兑药时抽水抽药的空间，按药种类 20~60
+  // A0-F-M3：spareWater/drawReserve 补入 FIELD_ORDER.param（此前有定义不渲染，
+  // 用户无法修改「留底富余」——calculator 已在用 spareWater 算总加水）
   spareWater: { label: '富余水量', unit: '升', tip: '填充管道、喷洒富余、留底等的额外水量：总加水 = 计算水量 + 富余（一般 30~40）', group: 'param', default: 35, step: 5, min: 0 },
   drawReserve: { label: '抽药占用', unit: '升', tip: '兑药时抽水抽药占用的空间，按药种类 20~60 升。每批先加水到目标减去此值，兑药后看情况补满', group: 'param', default: 40, step: 5, min: 0 },
   droneTank: { label: '机载装药上限', unit: '升/趟', tip: '无人机药箱一次最多装载的药液量（多地块模式按此算每组最少趟数）。T40约40-50升，T60/T100更大，可超配到85', group: 'param', advanced: true, default: 85, step: 1, integer: true, minHard: 1, warnBelow: 10 },
@@ -184,7 +184,7 @@ const FIELD_DEFS = {
 
 /* 顺序字段分组（控制表单渲染顺序） */
 const FIELD_ORDER = {
-  param: ['droneTank', 'existingPesticideSets', 'flightHeight', 'waterPerMu', 'treesPerMu', 'waterPerTree', 'pesticideWaterPerSet', 'droneSavingCoeff'],
+  param: ['droneTank', 'existingPesticideSets', 'flightHeight', 'waterPerMu', 'treesPerMu', 'waterPerTree', 'pesticideWaterPerSet', 'droneSavingCoeff', 'spareWater', 'drawReserve'],
   cycle: ['batteryDepreciation', 'fuelExpense', 'cycleArea'],
   labor: ['workers', 'days', 'dailyWage', 'mealCost', 'accommodation', 'accommodationDays'],
   other: ['pesticidePrice', 'pesticideIncluded', 'droneDepreciation', 'maintenanceReserve', 'protectiveGear', 'cleaningCost', 'insurance', 'miscCost'],

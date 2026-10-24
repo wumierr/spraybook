@@ -74,10 +74,11 @@ while ($true) {
         '8' { Invoke-Script 'deploy-cloudflare.ps1' }
         '9' {
             Write-Host ''
-            Write-Host '   首次打包建议加自动装 SDK + 国内镜像（约 600MB 下载）' -ForegroundColor Yellow
-            $auto = Read-Host '   自动安装 Android SDK 并使用国内镜像？(Y/n)'
+            Write-Host '   打包配置见 apk.config.json（包名/图标/签名/命名，全默认可一把打包）' -ForegroundColor DarkGray
+            Write-Host '   版本号自动取 js/version.js，versionCode 自动自增；签名密码走环境变量' -ForegroundColor DarkGray
+            $auto = Read-Host '   用国内镜像加速依赖下载？(Y/n)'
             if ($auto.Trim().ToLower() -eq 'n') { Invoke-Script 'build-apk.ps1' }
-            else { Invoke-Script 'build-apk.ps1' @('-InstallSdk', '-Mirror') }
+            else { Invoke-Script 'build-apk.ps1' @('-Mirror') }
         }
         'D' {
             $doc = Join-Path $ProjectRoot 'docs\DEPLOY.md'

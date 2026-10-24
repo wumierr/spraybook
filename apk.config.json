@@ -1,0 +1,11 @@
+{
+    "_comment":  "APK 打包配置（E5）。全字段可选：留空/保持默认即可一把打包（scripts/build-apk.ps1）。密码永不写本文件——签名密码走环境变量 SPRAYBOOK_KEYSTORE_PASS / SPRAYBOOK_KEY_PASS。",
+    "applicationId":  "com.dronespray.calculator",
+    "apkNamePattern":  "drone-spray-calculator-{type}-{version}-{date}.apk",
+    "iconDir":  "",
+    "versionCode":  6,
+    "signing":  {
+                    "keystoreFile":  "",
+                    "alias":  ""
+                }
+}

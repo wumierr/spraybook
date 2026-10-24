@@ -386,7 +386,11 @@ const Calculator = {
     result.pesticide = usedSets;                       // 合计小数用量
     result.usedSets = usedSets;
     result.pesticideRounded = this.round78(usedSets);  // 采购取整
-    result.needToBuy = Math.max(0, result.pesticideRounded - existingSets);
+    // A0-F-M1（裁决：包药=药成本与售价都有，差价即利润）：
+    // 农户自备药不进入我方采购——先扣自备总量，再扣我方库存
+    const selfByFarmer0 = (state.workOrder && typeof state.workOrder.selfByFarmer === 'object' && state.workOrder.selfByFarmer) || {};
+    const selfTotal = Object.keys(selfByFarmer0).reduce((s, k) => s + Math.max(0, Number(selfByFarmer0[k]) || 0), 0);
+    result.needToBuy = Math.max(0, result.pesticideRounded - selfTotal - existingSets);
     result.stockStatus = existingSets <= 0 ? 'none'
       : (existingSets >= result.pesticideRounded ? 'enough' : 'short');
     result.concentration = totalWater > 0 ? (usedSets / totalWater) * 100 : 0;
@@ -487,7 +491,8 @@ const Calculator = {
     result.costBreakdown.other = (Number(costs.protectiveGear) || 0)
       + (Number(costs.cleaningCost) || 0) + (Number(costs.miscCost) || 0);
     result.totalCost = Object.values(result.costBreakdown).reduce((a, b) => a + b, 0);
-    result.income = result.settlement.reduce((sum, f) => sum + f.sprayFee, 0) + (Number(income.subsidy) || 0);
+    // A0-F-M1：药钱计入收入（包药场景向农户收的药钱是真实收入，利润=收入−成本）
+    result.income = result.settlement.reduce((sum, f) => sum + f.sprayFee + f.pesticideFee, 0) + (Number(income.subsidy) || 0);
     result.profit = result.income - result.totalCost;
     result.costPerMu = totalArea > 0 ? result.totalCost / totalArea : 0;
     result.profitPerMu = totalArea > 0 ? result.profit / totalArea : 0;
