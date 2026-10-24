@@ -765,6 +765,7 @@
 
   /** 渲染串行化门：连续触发（切页签+搜索防抖）时按序执行，避免旧渲染晚写覆盖新状态 */
   let renderChain = Promise.resolve();
+  let lastRenderedTab = null; // B7 切页淡入：仅页签变化时播 120ms 淡入（搜索/保存等重绘不闪）
   function render() {
     const p = renderChain.then(() => doRender());
     renderChain = p.catch(() => {});
@@ -789,6 +790,13 @@
     if (window.__lgHasMore) {
       toast('注意：列表已达服务端单次返回上限，更早数据未显示（可用搜索/月份缩小范围）');
       window.__lgHasMore = false;
+    }
+    // B7 切页淡入：页签变化才播 120ms 淡入（重排动画需先强制回流再挂类）
+    if (lastRenderedTab !== tab) {
+      lastRenderedTab = tab;
+      $main.classList.remove('lg-fade');
+      void $main.offsetWidth;
+      $main.classList.add('lg-fade');
     }
   }
 
@@ -875,7 +883,6 @@
      preventDefault+stopPropagation，与点击过滤/排序、handleAct 委托互不干扰。 */
   function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* 隐私模式丢弃 */ } }
-  function lsDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* 忽略 */ } }
   /** 本表的 colgroup：只找直接子级（querySelector 会误命中嵌套明细表的 colgroup） */
   function findColgroup(table) {
     for (const el of table.children) { if (el.tagName === 'COLGROUP') return el; }
@@ -897,7 +904,7 @@
       if (th.querySelector(':scope > .lg-colw-h')) continue;
       const h = document.createElement('span');
       h.className = 'lg-colw-h';
-      h.title = '拖动调列宽；双击恢复默认列宽';
+      h.title = '拖动调列宽；双击=该列按内容自适应';
       th.appendChild(h);
     }
   }
@@ -1004,10 +1011,55 @@
     if (!h) return;
     const table = h.closest('table[data-colw]');
     if (!table || !table.dataset.colw) return;
-    lsDel(Core.colwKey(state.tab, table.dataset.colw)); // 双击手柄=清除该表存档回默认
+    const idx = headCells(table).indexOf(h.closest('th'));
+    if (idx < 0) return;
+    autoFitTable(table, idx); // B7：双击手柄=该列按内容自适应（替代旧「清存档回默认」）
     applyColWidths();
   });
   window.LedgerColWidths = { apply: applyColWidths };
+
+  /* ---------- B7 列宽按内容自适应（手柄双击=该列 / 顶栏 ⇔=本页全部表） ----------
+     测量法：临时把表切到 auto 布局 + width:max-content（同步改同步还原，不产生可见
+     重排），逐列取跨列安全的最宽实格 offsetWidth（colspan 会在 cells 下标里占位，
+     必须按视觉列游标走，跨列格不计入单列宽）。测完经 clampColw 入存档，回显交给
+     applyColWidths（colgroup+lg-fixed 同一条管线，与拖拽记忆同源）。 */
+  function measureColWidths(table) {
+    const cg = findColgroup(table);
+    const savedW = cg ? [...cg.children].map(c => c.style.width) : null;
+    if (cg) [...cg.children].forEach(c => { c.style.width = 'auto'; }); // col 宽在 auto 布局是最小值，须先解除再量
+    const prevCss = table.style.cssText;
+    table.style.tableLayout = 'auto';
+    table.style.width = 'max-content';
+    table.style.minWidth = '0';
+    const widths = headCells(table).map((_, i) => {
+      let w = 0;
+      for (const tr of table.rows) {
+        let vis = 0;
+        for (const cell of tr.cells) {
+          if (vis > i) break;
+          if (vis === i && cell.colSpan === 1) w = Math.max(w, cell.offsetWidth);
+          vis += cell.colSpan;
+        }
+      }
+      return w;
+    });
+    table.style.cssText = prevCss;
+    if (cg) [...cg.children].forEach((c, j) => { c.style.width = savedW[j]; });
+    return widths;
+  }
+  /** 自适应并入存档：idx 缺省=全列按内容；否则只改该列，其余列保持现渲染宽 */
+  function autoFitTable(table, idx) {
+    const key = table.dataset.colw;
+    if (!key || !headCells(table).length) return;
+    const measured = measureColWidths(table);
+    const widths = snapshotCols(table);
+    if (idx == null) {
+      for (let i = 0; i < widths.length; i++) widths[i] = measured[i] || widths[i];
+    } else if (measured[idx] > 0) {
+      widths[idx] = measured[idx];
+    }
+    lsSet(Core.colwKey(state.tab, key), JSON.stringify(widths.map(w => Core.clampColw(w))));
+  }
 
   /* ---------- 事件委托 ---------- */
   document.getElementById('lgNav').addEventListener('click', e => {
@@ -1612,7 +1664,59 @@
     document.querySelectorAll('#lgNav button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   }
 
+  /* ---------- B7 顶栏视觉控件：主题三态 / 字号双档 / 全局列宽自适应 ----------
+     存档键与解析纯函数在 core.js（lg-theme / lg-fontsize，坏档安全回退）；
+     data-theme 挂 <html> 由 ledger.css 三态选择器消费（显式档覆盖 prefers-color-scheme）。 */
+  const THEME_ORDER = ['auto', 'light', 'dark'];
+  const THEME_LABEL = { auto: '跟随系统', light: '亮色', dark: '暗色' };
+  const THEME_ICON = { auto: '🌗', light: '☀️', dark: '🌙' };
+  function applyTheme() {
+    const saved = lsGet(Core.THEME_KEY);
+    const mode = THEME_ORDER.includes(saved) ? saved : 'auto';
+    document.documentElement.dataset.theme = mode;
+    const btn = document.getElementById('lgThemeBtn');
+    if (btn) {
+      btn.textContent = THEME_ICON[mode];
+      btn.title = `主题：${THEME_LABEL[mode]}（点击切换）`;
+    }
+  }
+  function applyFontsize() {
+    const compact = Core.normalizeFontsize(lsGet(Core.FONTSIZE_KEY)) === 'compact';
+    document.body.classList.toggle('compact', compact);
+    const btn = document.getElementById('lgFontBtn');
+    if (btn) {
+      btn.classList.toggle('active', compact);
+      btn.title = compact ? '字号：紧凑（点击切回标准）' : '字号：标准（点击切到紧凑）';
+    }
+  }
+  function bindVisualTools() {
+    const themeBtn = document.getElementById('lgThemeBtn');
+    if (themeBtn) themeBtn.addEventListener('click', () => {
+      const cur = document.documentElement.dataset.theme || 'auto';
+      const next = THEME_ORDER[(THEME_ORDER.indexOf(cur) + 1) % THEME_ORDER.length];
+      lsSet(Core.THEME_KEY, next);
+      applyTheme();
+      render().catch(() => {}); // 重挂当前页图表（echarts 色值在挂载时读 CSS 变量）
+    });
+    const fontBtn = document.getElementById('lgFontBtn');
+    if (fontBtn) fontBtn.addEventListener('click', () => {
+      lsSet(Core.FONTSIZE_KEY, document.body.classList.contains('compact') ? 'normal' : 'compact');
+      applyFontsize();
+    });
+    const fitBtn = document.getElementById('lgAutofitBtn');
+    if (fitBtn) fitBtn.addEventListener('click', () => {
+      const tables = document.querySelectorAll('#lgMain table[data-colw]');
+      if (!tables.length) { toast('本页没有可调列宽的表格'); return; }
+      tables.forEach(table => autoFitTable(table));
+      applyColWidths();
+      toast('已按内容自适应本页全部表格列宽');
+    });
+  }
+
   /* ---------- 启动 ---------- */
+  applyTheme(); // B7：主题/字号在首绘前落位（防暗色用户见白闪）
+  applyFontsize();
+  bindVisualTools();
   Api.parties().then(p => { parties = p || []; }).catch(() => { parties = []; }).finally(() => {
     render().catch(err => toast(err.message, true));
     // B3：首次访问弹三步引导（看完/跳过标记 lg-onboarded-v1，不再打扰）

@@ -113,10 +113,15 @@
     </div>`;
   }
 
-  /** echarts option 简版构建（结构版固定双色；走 mountOne 注册表） */
+  /** echarts option 简版构建（结构版固定双色；走 mountOne 注册表）
+      B7 主题三态：暗色判定走 core.resolveTheme（lg-theme 显式档覆盖系统偏好） */
   function darkMode() {
-    try { return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches; }
-    catch (e) { return false; }
+    let saved = null;
+    try { saved = window.localStorage.getItem(Core.THEME_KEY); } catch (e) { /* 忽略 */ }
+    let sysDark = false;
+    try { sysDark = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches; }
+    catch (e) { /* 无 matchMedia 环境（node） */ }
+    return Core.resolveTheme(saved, sysDark) === 'dark';
   }
   function trendOption(rows) {
     const dark = darkMode();
@@ -192,7 +197,8 @@
         setTimeout(() => {
           const target = document.getElementById('lgHomeGridWrap');
           if (!target) return;
-          homeGrid = G.init(target, { column: 3, cellHeight: 46, float: true, margin: 6 });
+          // v12 签名 init(options, container)——与 charts.js initGrid 同序（批3 遗留：原参数倒置致 init 静默失败、卡全叠放）
+          homeGrid = G.init({ column: 3, cellHeight: 46, float: true, margin: 6 }, target);
           if (save.layout && save.layout.length) {
             try { homeGrid.load(save.layout.map(l => ({ ...l, el: target.querySelector(`[data-hcard="${l.id}"]`) }))); } catch (e) { /* 布局坏=用默认 auto */ }
           }

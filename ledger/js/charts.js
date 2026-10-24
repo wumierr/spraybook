@@ -884,7 +884,7 @@
   const api = {
     renderTab, handleAct, handleCardDate, handleCounty, periodLabel,
     buildTimeOption, buildBarOption, buildPieOption, chartTheme,
-    mountMini, mountScope, disposeAll, resizeAll, CARD_TYPES, DEFAULT_TYPES
+    mountMini, mountScope, mountOne, disposeAll, resizeAll, CARD_TYPES, DEFAULT_TYPES
   };
   if (typeof window !== 'undefined') window.LedgerCharts = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

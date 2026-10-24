@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="day">
+<!-- B7 主题三态：data-theme 由 app.js 按 lg-theme 存档维护（auto=跟随系统 / light / dark） -->
+<html lang="zh-CN" data-theme="auto">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -39,6 +40,12 @@
       <button data-tab="review">审核</button>
       <button data-tab="master">主数据</button>
     </nav>
+    <!-- B7 顶栏视觉控件：字号双档 / 主题三态 / 全局列宽自适应（行为见 app.js B7 段） -->
+    <span class="lg-header-tools">
+      <button id="lgFontBtn" class="lg-iconbtn" type="button">Aa</button>
+      <button id="lgThemeBtn" class="lg-iconbtn" type="button">🌗</button>
+      <button id="lgAutofitBtn" class="lg-iconbtn" type="button" title="本页全部表格列宽按内容自适应">⇔</button>
+    </span>
   </header>
 
   <main class="lg-main" id="lgMain"><!-- 各页 JS 注入 --></main>

@@ -16,13 +16,24 @@
   --c3: #b7791f;
   --c4: #4a6fa5;
   --radius: 10px;
+  --ok: #2e7d32;      /* B7：并入主调色板（原散落 B3 段），亮暗两档各一份 */
+  --edit-bg: #fff8e1; /* B7：编辑态浅黄底（输入格与顶部细条共用），暗档见下 */
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  /* B7 主题三态：显式亮色（data-theme="light"）不进暗档；auto/未定跟随系统 */
+  :root:not([data-theme="light"]) {
     --bg: #141a20; --panel: #1c242c; --border: #2c3742; --text: #e6edf3;
     --muted: #8fa1b3; --accent: #2fbf9a; --accent-soft: #1d3a33;
     --c1: #2fbf9a; --c2: #e07b6a; --c3: #d9a441; --c4: #6f9fd8;
+    --ok: #5cb860; --edit-bg: #3a331c;
   }
+}
+/* B7 主题三态：显式暗色（data-theme="dark"）在亮色系统也生效（与上同值集） */
+:root[data-theme="dark"] {
+  --bg: #141a20; --panel: #1c242c; --border: #2c3742; --text: #e6edf3;
+  --muted: #8fa1b3; --accent: #2fbf9a; --accent-soft: #1d3a33;
+  --c1: #2fbf9a; --c2: #e07b6a; --c3: #d9a441; --c4: #6f9fd8;
+  --ok: #5cb860; --edit-bg: #3a331c;
 }
 * { box-sizing: border-box; }
 body {
@@ -47,7 +58,8 @@ body {
 .lg-nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .lg-main { padding: 14px 16px 60px; max-width: 1600px; margin: 0 auto; }
 .lg-panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 14px; overflow-x: auto; }
-.lg-panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+/* B7：面板标题左侧 3px accent 色条（对照 TARGET-UI-MOCK .panel h2） */
+.lg-panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; border-left: 3px solid var(--accent); padding-left: 8px; }
 table.lg-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }
 table.lg-table th, table.lg-table td { border-bottom: 1px solid var(--border); padding: 7px 8px; text-align: left; white-space: nowrap; }
 table.lg-table th { color: var(--muted); font-weight: 600; }
@@ -328,8 +340,8 @@ input.lg-inp--sm { width: 70px; }
    B3 视觉化引导（结构版；视觉打磨=批4 flash）
    四色语义：绿=ok 完成 / 琥珀=warn 待办 / 红=err 异常欠款 / 蓝=info 待复核
    ============================================================ */
-:root { --ok: #2e7d32; }
-@media (prefers-color-scheme: dark) { :root { --ok: #5cb860; } }
+/* 四色语义：绿=ok 完成 / 琥珀=warn 待办 / 红=err 异常欠款 / 蓝=info 待复核
+   （--ok 亮暗两档已并入文件头主调色板——B7 主题三态共用一份暗值） */
 .lg-tag.ok { background: #e3f2e6; color: var(--ok); }
 .lg-tag.info { background: #e8eef8; color: var(--c4); }
 /* 工序步骤条（工单→结算→账单→收款 四页顶；可点跳转） */
@@ -383,19 +395,14 @@ input.lg-inp--sm { width: 70px; }
   border-left: 1px solid var(--border); margin-left: 6px; align-self: center;
 }
 #lgNav .lg-nav-group:first-of-type { border-left: none; margin-left: 0; padding-left: 0; }
-/* 编辑态：可改单元格浅黄底（body.lg-editing 由 updateFab 切换） */
+/* 编辑态：可改单元格浅黄底（body.lg-editing 由 updateFab 切换；底色走 --edit-bg 随主题三态） */
 body.lg-editing input[data-ek], body.lg-editing input[data-ekb], body.lg-editing input[data-ekp],
-body.lg-editing select[data-ek] { background: #fff8e1; border-color: var(--warn); }
-@media (prefers-color-scheme: dark) {
-  body.lg-editing input[data-ek], body.lg-editing input[data-ekb], body.lg-editing input[data-ekp],
-  body.lg-editing select[data-ek] { background: #3a331c; }
-}
+body.lg-editing select[data-ek] { background: var(--edit-bg); border-color: var(--warn); }
 /* 编辑态顶部细条（#lgEditbar 由 updateFab 管理，body 级不随重绘丢） */
 #lgEditbar {
-  position: sticky; top: 0; z-index: 60; background: #fff8e1; color: var(--warn);
+  position: sticky; top: 0; z-index: 60; background: var(--edit-bg); color: var(--warn);
   border-bottom: 1px solid var(--warn); font-size: 13px; padding: 5px 16px;
 }
-@media (prefers-color-scheme: dark) { #lgEditbar { background: #3a331c; } }
 /* 批量已收：勾选列与底部浮动条 */
 .lg-bulk-check { width: 16px; height: 16px; cursor: pointer; }
 .lg-bulk-bar {
@@ -431,3 +438,30 @@ body.lg-editing select[data-ek] { background: #fff8e1; border-color: var(--warn)
 .lg-hcard-body { flex: 1; min-height: 0; overflow: auto; }
 .lg-hchart { width: 100%; height: 100%; min-height: 120px; }
 .lg-hcard-loading { color: var(--muted); font-size: 12px; padding: 14px 8px; text-align: center; }
+
+/* ============================================================
+   B7 美观层（顶栏控件 / 字号双档 / 切页淡入；视觉基准=TARGET-UI-MOCK.html）
+   ============================================================ */
+/* 顶栏图标控件组（#lgFontBtn 字号 / #lgThemeBtn 主题 / #lgAutofitBtn 列宽自适应） */
+.lg-header-tools { display: flex; gap: 6px; align-items: center; }
+.lg-iconbtn {
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 13px;
+}
+.lg-iconbtn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* 字号双档：body.compact=紧凑小字档（存档 lg-fontsize；只收字号/行距，不动布局与列宽存档） */
+body.compact { font-size: 13px; }
+body.compact table.lg-table { font-size: 12px; }
+body.compact table.lg-table th, body.compact table.lg-table td { padding: 4px 7px; }
+body.compact .lg-panel h2 { font-size: 13px; }
+body.compact .lg-nav button { font-size: 12px; padding: 4px 10px; }
+body.compact .lg-btn { font-size: 11px; }
+body.compact .lg-tag { font-size: 11px; }
+body.compact .lg-form input, body.compact .lg-form select { font-size: 12px; }
+body.compact .lg-quickbar input, body.compact .lg-quickbar select { font-size: 13px; }
+body.compact .lg-kpi-num { font-size: 18px; }
+body.compact .lg-kpi-big { font-size: 19px; }
+/* 切页 120ms 淡入（app.js doRender 页签变化时挂 .lg-fade；系统减动效时不播） */
+@keyframes lg-fadein { from { opacity: 0; } to { opacity: 1; } }
+#lgMain.lg-fade { animation: lg-fadein 120ms ease-out; }
+@media (prefers-reduced-motion: reduce) { #lgMain.lg-fade { animation: none; } }

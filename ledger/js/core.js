@@ -472,6 +472,18 @@
     return (cards || []).reduce((a, c) => Math.max(a, Number(c && c.id) || 0), 0) + 1;
   }
 
+  /* ---------- B7 美观层：主题三态与字号双档（纯函数，node:test 可测） ---------- */
+  const THEME_KEY = 'lg-theme';       // 'auto'（跟随系统）| 'light' | 'dark'；缺档=auto
+  const FONTSIZE_KEY = 'lg-fontsize'; // 'normal' | 'compact'；缺档=normal
+  /** 主题三态解析：显式 light/dark 优先覆盖 prefers-color-scheme，其余（auto/未知/缺存档）跟随系统 */
+  function resolveTheme(saved, systemDark) {
+    if (saved === 'dark') return 'dark';
+    if (saved === 'light') return 'light';
+    return systemDark ? 'dark' : 'light';
+  }
+  /** 字号档解析：只认 'compact'（紧凑小字档），其余一律标准档（坏存档安全回退） */
+  function normalizeFontsize(saved) { return saved === 'compact' ? 'compact' : 'normal'; }
+
   /** B3 空状态即教程：图标 + 一句话 + 直达动作（按钮走既有 data-act 委托，
    *  跳页动作统一 data-act="goto-tab" data-tab="…"）。
    *  opts.cell=true 返回表格空态内容（放在 <td colspan=N> 内）；
@@ -507,6 +519,7 @@
     fmtYuan, yuanInputToCents, statusLabel,
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
     colwKey, clampColw, parseColw,
+    THEME_KEY, FONTSIZE_KEY, resolveTheme, normalizeFontsize,
     normDate, dateRangeOf, quickRangeOf, weekRangeOf, barUiOf, parseBarState,
     parseCardState, parseGridSave, gridLayoutOf, nextCardId, emptyState, parseHomeGridSave,
     BAR_QUICKS, CARD_GRANS, GRID_COLUMNS,
