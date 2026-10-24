@@ -129,6 +129,10 @@ function createLedgerRouter(db) {
   router.get('/reports/summary', (req, res) => {
     res.json({ ok: true, data: reports.summary(db, { from: req.query.from, to: req.query.to }) });
   });
+  // B2：账龄分桶（未清账单按 issued_at 0-30/31-60/61-90/90+；as_of 可注入回看口径）
+  router.get('/reports/aging', (req, res) => {
+    res.json({ ok: true, data: reports.aging(db, { as_of: req.query.as_of || undefined }) });
+  });
   router.get('/reports/by-month', (req, res) => {
     res.json({ ok: true, data: reports.byMonth(db, { from: req.query.from, to: req.query.to }) });
   });

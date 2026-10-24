@@ -14,22 +14,30 @@
       <span class="lg-logo">📒</span>
       <h1>spraybook 记账后台</h1>
       <span id="lgSummary" class="lg-summary"></span>
+      <!-- B1 全局搜索：/ 聚焦；回车跳「作业明细」注入搜索词（复用总表筛选管线，零新端点） -->
+      <input id="lgGlobalSearch" class="lg-global-search" placeholder="🔍 搜索（按 / 聚焦，回车到作业明细）" />
     </div>
     <nav class="lg-nav" id="lgNav">
-      <button data-tab="overview" class="active">总表</button>
+      <!-- B1 复合首页设为默认页签；原「总表」降级为「作业明细」 -->
+      <!-- B4 导航四组（动线序）：作业 · 资金 · 分析 · 数据；组标签只读不可点 -->
+      <button data-tab="home" class="active">首页</button>
+      <span class="lg-nav-group">作业</span>
+      <button data-tab="overview">作业明细</button>
+      <button data-tab="jobs">工单</button>
       <button data-tab="settlements">结算</button>
+      <span class="lg-nav-group">资金</span>
       <button data-tab="bills">账单</button>
       <button data-tab="receipts">收款</button>
       <button data-tab="payments">支出</button>
       <button data-tab="advances">预收预支</button>
       <button data-tab="splits">分成</button>
+      <span class="lg-nav-group">分析</span>
       <button data-tab="charts">图表</button>
       <button data-tab="reports">报表</button>
-      <button data-tab="jobs">工单</button>
-      <button data-tab="master">主数据</button>
-      <!-- P10-R4：导入页升级「审核」页（批次复核+数据体检并入，D2 裁决）；独立体检页签移除 -->
-      <button data-tab="review">审核</button>
       <button data-tab="journal">流水</button>
+      <span class="lg-nav-group">数据</span>
+      <button data-tab="review">审核</button>
+      <button data-tab="master">主数据</button>
     </nav>
   </header>
 
@@ -45,6 +53,10 @@
   <script src="vendor/gridstack/gridstack-all.js"></script>
   <script src="js/charts.js"></script>
   <script src="js/app-extra.js"></script>
+  <!-- B1: 复合首页（三区：钱况/待办/当月明细；hm- 动作前缀经 app.js 委托） -->
+  <script src="js/home.js"></script>
+  <!-- B3: 首次引导遮罩（lg-onboarded-v1 一次性；设置区可重看） -->
+  <script src="js/lg-onboard.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

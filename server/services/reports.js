@@ -601,8 +601,44 @@ function byOperator(db, { from, to, county } = {}) {
   };
 }
 
+/** B2 账龄分桶：未清账单（unpaid/partial 且 due>0）按 issued_at 距 as_of 天数分桶
+ *  0-30 / 31-60 / 61-90 / 90+（负天数=预发单归 0-30）；四桶恒齐（零值也返回），
+ *  附 total 汇总（金额/户数/账单数）。as_of 可注入固定日期（测试/回看口径）。 */
+function aging(db, { as_of } = {}) {
+  const today = as_of || new Date().toISOString().slice(0, 10);
+  const rows = db.prepare(
+    `SELECT
+       CASE
+         WHEN CAST(julianday(?) - julianday(b.issued_at) AS INTEGER) <= 30 THEN '0-30'
+         WHEN CAST(julianday(?) - julianday(b.issued_at) AS INTEGER) <= 60 THEN '31-60'
+         WHEN CAST(julianday(?) - julianday(b.issued_at) AS INTEGER) <= 90 THEN '61-90'
+         ELSE '90+'
+       END AS bucket,
+       COUNT(*) AS bills,
+       COUNT(DISTINCT b.party_id) AS parties,
+       COALESCE(SUM(b.amount_cents + b.adjust_cents - b.paid_cents), 0) AS due_cents
+     FROM bills b
+     WHERE b.status IN ('unpaid','partial')
+       AND b.amount_cents + b.adjust_cents - b.paid_cents > 0
+       AND b.issued_at IS NOT NULL
+     GROUP BY bucket`
+  ).all(today, today, today);
+  const byKey = Object.fromEntries(rows.map(r => [r.bucket, r]));
+  const buckets = ['0-30', '31-60', '61-90', '90+'].map(k =>
+    byKey[k] || { bucket: k, bills: 0, parties: 0, due_cents: 0 });
+  const total = {
+    bills: buckets.reduce((a, b) => a + b.bills, 0),
+    parties: db.prepare(
+      `SELECT COUNT(DISTINCT party_id) AS n FROM bills
+       WHERE status IN ('unpaid','partial')
+         AND amount_cents + adjust_cents - paid_cents > 0 AND party_id IS NOT NULL`).get().n,
+    due_cents: buckets.reduce((a, b) => a + b.due_cents, 0)
+  };
+  return { as_of: today, buckets, total };
+}
+
 module.exports = {
   summary, byMonth, byCustomer, byJob, partyBalance,
   byPeriod, adjustments, costBreakdown, GRANULARITIES, periodLabel,
-  byRange, byRegion, byOperator
+  byRange, byRegion, byOperator, aging
 };

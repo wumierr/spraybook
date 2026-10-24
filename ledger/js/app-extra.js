@@ -625,6 +625,7 @@
       <div class="lg-form">
         <label>记账人（写入 edit_logs 与工单 operator）<input id="mdOperator" value="${esc(settings.operator || 'local')}"></label>
         <button class="lg-btn primary" data-act="md-save-operator">保存</button>
+        <button class="lg-btn" data-act="onboard-replay" title="重看三步引导（工单→结算→收款）">🎓 重看新手引导</button>
       </div>
     </div>
     <div class="lg-panel">

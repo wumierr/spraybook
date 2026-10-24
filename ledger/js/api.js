@@ -67,7 +67,10 @@
     createSplit: (b) => Api.post('/api/splits', b),
     voidFinance: (table, id) => Api.post('/api/' + table + '/' + id + '/void'),
     journal: () => Api.get('/api/journal'),
-    summary: () => Api.get('/api/reports/summary'),
+    // B1 首页双行 KPI：本月区间与全期各调一次（服务端 summary 自 P5-M2 起支持 from/to）
+    summary: (params) => Api.get('/api/reports/summary' + (params || '')),
+    // B2 账龄分桶（首页催收卡数据源；as_of 可选注入回看口径）
+    aging: (asOf) => Api.get('/api/reports/aging' + qs({ as_of: asOf })),
     // P4-M1 总表（作业粒度聚合只读视图）
     overview: (params) => Api.get('/api/overview' + (params || '')),
     parties: () => Api.get('/api/parties'),

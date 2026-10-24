@@ -291,3 +291,143 @@ input.lg-inp--sm { width: 70px; }
 .lg-details[open] > summary { margin-bottom: 10px; }
 /* 禁用态占位按钮（拍照/语音）：保留 click 事件以 toast 引导，用 aria-disabled 表达禁用 */
 .lg-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+
+/* ============================================================
+   B1 复合首页（结构性布局；视觉打磨=批4 flash，只做功能必需样式）
+   ============================================================ */
+.lg-global-search {
+  margin-left: 10px; padding: 5px 10px; width: 230px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel); color: var(--text); font-size: 13px;
+}
+.lg-home-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.lg-kpi-card {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; background: var(--panel); min-width: 0;
+}
+.lg-kpi-label { font-size: 12px; color: var(--muted); }
+.lg-kpi-big { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.lg-kpi-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.lg-home-todos { display: flex; flex-wrap: wrap; gap: 10px; }
+.lg-todo-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-width: 170px; padding: 10px 14px; cursor: pointer;
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--panel); color: var(--text); font-size: 13px; text-align: left;
+}
+.lg-todo-card:hover { border-color: var(--accent); }
+.lg-todo-card .lg-todo-num { font-size: 20px; font-weight: 700; }
+.lg-todo-card.red .lg-todo-num { color: var(--danger); }
+.lg-todo-card.amber .lg-todo-num { color: var(--warn); }
+.lg-todo-card.blue .lg-todo-num { color: var(--c4); }
+.lg-todo-card .lg-todo-sub { color: var(--muted); font-size: 12px; }
+/* 当月明细网格：支出行灰底（与作业行同屏区分） */
+.lg-table tr.lg-row-pay td { background: color-mix(in srgb, var(--muted) 10%, transparent); }
+
+/* ============================================================
+   B3 视觉化引导（结构版；视觉打磨=批4 flash）
+   四色语义：绿=ok 完成 / 琥珀=warn 待办 / 红=err 异常欠款 / 蓝=info 待复核
+   ============================================================ */
+:root { --ok: #2e7d32; }
+@media (prefers-color-scheme: dark) { :root { --ok: #5cb860; } }
+.lg-tag.ok { background: #e3f2e6; color: var(--ok); }
+.lg-tag.info { background: #e8eef8; color: var(--c4); }
+/* 工序步骤条（工单→结算→账单→收款 四页顶；可点跳转） */
+.lg-steps { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.lg-step {
+  border: 1px solid var(--border); border-radius: 999px; background: var(--panel);
+  color: var(--text); font-size: 13px; padding: 5px 14px; cursor: pointer;
+}
+.lg-step.cur { background: var(--accent); border-color: var(--accent); color: #fff; }
+.lg-step.done { border-color: var(--ok); color: var(--ok); }
+.lg-step-arrow { color: var(--muted); }
+/* 待办徽标（导航按钮右上角圆形数字，三色） */
+#lgNav button { position: relative; }
+.lg-badge {
+  position: absolute; top: -7px; right: -5px; min-width: 17px; height: 17px;
+  border-radius: 999px; background: var(--muted); color: #fff;
+  font-size: 11px; line-height: 17px; text-align: center; padding: 0 4px;
+}
+.lg-badge.red { background: var(--danger); }
+.lg-badge.blue { background: var(--c4); }
+.lg-badge.amber { background: var(--warn); }
+/* 空状态即教程（emptyState：图标+一句话+直达按钮） */
+.lg-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 26px 10px; }
+.lg-empty-icon { font-size: 30px; }
+.lg-empty-text { color: var(--muted); font-size: 13px; }
+.lg-empty-actions { display: flex; gap: 8px; }
+/* 首次引导遮罩（三步；lg-onboarded-v1 一次性） */
+.lg-onboard-mask {
+  position: fixed; inset: 0; z-index: 300; background: rgba(10, 14, 18, .55);
+  display: flex; align-items: center; justify-content: center;
+}
+.lg-onboard-card {
+  background: var(--panel); border-radius: var(--radius); padding: 22px 26px;
+  max-width: 460px; width: calc(100% - 32px); text-align: center;
+}
+.lg-onboard-icon { font-size: 40px; }
+.lg-onboard-card h2 { margin: 8px 0; font-size: 16px; }
+.lg-onboard-card p { color: var(--muted); font-size: 13px; line-height: 1.7; margin: 8px 0 14px; }
+.lg-onboard-dots { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; }
+.lg-onboard-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--border); }
+.lg-onboard-dot.cur { background: var(--accent); }
+.lg-onboard-dot.done { background: var(--ok); }
+.lg-onboard-actions { display: flex; gap: 8px; justify-content: center; }
+
+/* ============================================================
+   B4 导航分组 + FAB 收敛 + 批量已收（结构版；视觉打磨=批4 flash）
+   ============================================================ */
+/* 导航四组（作业/资金/分析/数据）：组标签只读，组间留白分隔 */
+.lg-nav-group {
+  font-size: 11px; color: var(--muted); padding: 0 2px 0 10px;
+  border-left: 1px solid var(--border); margin-left: 6px; align-self: center;
+}
+#lgNav .lg-nav-group:first-of-type { border-left: none; margin-left: 0; padding-left: 0; }
+/* 编辑态：可改单元格浅黄底（body.lg-editing 由 updateFab 切换） */
+body.lg-editing input[data-ek], body.lg-editing input[data-ekb], body.lg-editing input[data-ekp],
+body.lg-editing select[data-ek] { background: #fff8e1; border-color: var(--warn); }
+@media (prefers-color-scheme: dark) {
+  body.lg-editing input[data-ek], body.lg-editing input[data-ekb], body.lg-editing input[data-ekp],
+  body.lg-editing select[data-ek] { background: #3a331c; }
+}
+/* 编辑态顶部细条（#lgEditbar 由 updateFab 管理，body 级不随重绘丢） */
+#lgEditbar {
+  position: sticky; top: 0; z-index: 60; background: #fff8e1; color: var(--warn);
+  border-bottom: 1px solid var(--warn); font-size: 13px; padding: 5px 16px;
+}
+@media (prefers-color-scheme: dark) { #lgEditbar { background: #3a331c; } }
+/* 批量已收：勾选列与底部浮动条 */
+.lg-bulk-check { width: 16px; height: 16px; cursor: pointer; }
+.lg-bulk-bar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 22px; z-index: 58;
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 999px;
+  padding: 8px 18px; display: flex; gap: 10px; align-items: center;
+  box-shadow: 0 4px 14px rgba(0,0,0,.25); font-size: 13px;
+}
+
+/* ============================================================
+   B5 键盘流与快速录入（结构版；视觉打磨=批4 flash）
+   ============================================================ */
+.lg-quickbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.lg-quickbar input, .lg-quickbar select {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel); color: var(--text); padding: 6px 10px; font-size: 14px;
+}
+.lg-quickbar input:focus, .lg-quickbar select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+#lgQuickRc #qrcParty { width: 190px; }
+#lgQuickRc #qrcNote { flex: 1; min-width: 120px; }
+/* ↑↓ 行聚焦可见性（roving focus） */
+#lgMain .lg-table tbody tr:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ============================================================
+   B6 钱况 dashboard（GridStack lg-home-grid-v1；结构版，视觉=批4 flash）
+   ============================================================ */
+.lg-hcard { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.lg-hcard-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; color: var(--muted); padding: 2px 4px 6px; cursor: default;
+}
+.lg-hcard-title { cursor: text; }
+.lg-hcard-body { flex: 1; min-height: 0; overflow: auto; }
+.lg-hchart { width: 100%; height: 100%; min-height: 120px; }
+.lg-hcard-loading { color: var(--muted); font-size: 12px; padding: 14px 8px; text-align: center; }

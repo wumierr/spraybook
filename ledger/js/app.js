@@ -39,16 +39,38 @@
     }[c]));
   }
   function tag(text, cls) {
-    const c = cls || (text === '已收清' || text === '已确认' ? '' : (text === '未收' || text === '待确认' || text === '待结算' || text === '已重开' ? 'warn' : (text === '已作废' ? 'err' : '')));
+    // B3 四色语义：绿=已到手/完成（ok）、琥珀=待办（warn）、红=异常/欠款（err）、蓝=待复核（info）
+    const c = cls || (text === '已收清' || text === '已确认' || text === '已结算' ? 'ok'
+      : (text === '未收' || text === '待确认' || text === '待结算' || text === '已重开' ? 'warn'
+      : (text === '已作废' ? 'err' : '')));
     return `<span class="lg-tag ${c}">${esc(text)}</span>`;
   }
   function actions(...btns) { return btns.filter(Boolean).join(' '); }
+
+  /* ---------- B3 工序步骤条（工单→结算→账单→收款；结构版，视觉打磨=批4） ----------
+     当前步高亮、已完成打绿✓；完成信号按当页数据更新（state._steps 缓存，
+     每页渲染自己那步的信号，其余步沿用缓存——零额外请求）。块可点跳转。 */
+  const STEP_DEFS = [
+    { key: 'jobs', tab: 'jobs', label: '① 工单' },
+    { key: 'settlements', tab: 'settlements', label: '② 结算' },
+    { key: 'bills', tab: 'bills', label: '③ 账单' },
+    { key: 'receipts', tab: 'receipts', label: '④ 收款' }
+  ];
+  function stepsHtml(current) {
+    const sig = state._steps || (state._steps = {});
+    return `<div class="lg-steps">${STEP_DEFS.map(s => {
+      const cls = s.key === current ? 'cur' : (sig[s.key] ? 'done' : '');
+      return `<button class="lg-step ${cls}" data-act="goto-tab" data-tab="${s.tab}" title="${sig[s.key] ? '已完成 ✓' : '去这一步'}">${s.label}${sig[s.key] && s.key !== current ? ' ✓' : ''}</button>`;
+    }).join('<span class="lg-step-arrow">→</span>')}</div>`;
+  }
 
   /* ---------- 页签：工单 ---------- */
   function renderJobs(jobsAll) {
     const rowsAll = jobsAll.map(j => ({
       ...Core.jobRow(j), _month: (j.job_date || '').slice(0, 7), _note: j.note || '', _income: j.income_cents
     }));
+    state._steps = state._steps || {};
+    state._steps.jobs = rowsAll.length > 0; // B3 步骤条信号：已有工单=步①完成
     const rows = pipeFilters(byMonth(rowsAll, '_month', 'jobs'), 'jobs', { q: ['job_no', '_note'] });
     const body = rows.map(r => `<tr>
         <td>${esc(r.job_no)}</td><td>${esc(r.job_date)}</td><td>${esc(r.type)}</td>
@@ -60,13 +82,14 @@
           r.canVoid ? `<button class="lg-btn danger" data-act="job-void" data-id="${r.id}" data-no="${esc(r.job_no)}">作废</button>` : ''
         )}</td>
       </tr><tr hidden><td colspan="7" class="lg-detail-slot" data-slot="${r.id}"></td></tr>`).join('');
-    return `<div class="lg-panel">
+    return `${stepsHtml('jobs')}<div class="lg-panel">
       <h2>现场工单（计算器上报，只读执行数据；金额可更正）</h2>
       ${toolbarHtml('jobs', { searchPh: '单号/备注' })}
       ${monthStrip('jobs', rowsAll, '_month')}
       <table class="lg-table" data-colw="jobs"><thead><tr>
         <th>单号</th><th>日期</th><th>类型</th><th>状态</th><th>规模</th><th>收入(元)</th><th>操作</th>
-      </tr></thead><tbody>${body || '<tr><td colspan="7">暂无工单——请用计算器完成作业并点"同步到账本"</td></tr>'}</tbody>
+      </tr></thead><tbody>${body || `<tr><td colspan="7">${Core.emptyState('🛩️', '暂无工单——计算器作业后点「同步到账本」，或导入记账文本',
+        [{ act: 'goto-tab', tab: 'review', label: '去导入', icon: '📥', title: 'LLM 文本 / 作业包 / Excel' }], { cell: true })}</td></tr>`}</tbody>
       ${tfootHtml(5, rows, [['收入', sumCents(rows, '_income')]], 1)}</table>
     </div>`;
   }
@@ -131,6 +154,8 @@
       ...Core.settlementRow(s0), _total: s0.total_receivable_cents, _paid: s0.paid_cents,
       _spray: s0.total_spray_fee_cents, _pesticide: s0.total_pesticide_fee_cents
     }));
+    state._steps = state._steps || {};
+    state._steps.settlements = rowsAll.some(s => s.status === 'confirmed'); // B3：有已确认结算=步②完成
     const list = pipeFilters(byMonth(rowsAll, 'job_date', 'settlements'), 'settlements', { q: ['settlement_no', 'job_no'] });
     const rows = list.map(s => `<tr>
         <td>${esc(s.settlement_no)}</td><td>${esc(s.job_no)}</td><td>${esc(s.job_date)}</td>
@@ -145,14 +170,15 @@
           s.canVoid ? `<button class="lg-btn danger" data-act="st-void" data-id="${s.id}" data-no="${esc(s.settlement_no)}" data-confirmed="${s.status === 'confirmed' ? 1 : 0}">作废</button>` : ''
         )}</td>
       </tr><tr hidden><td colspan="9" class="lg-detail-slot" data-slot="st${s.id}"></td></tr>`).join('');
-    return `<div class="lg-panel">
+    return `${stepsHtml('settlements')}<div class="lg-panel">
       <h2>结算单（确认后生成账单与分录；撤回=红冲重开）</h2>
       ${toolbarHtml('settlements', { statusMap: Core.MAPS.SETTLEMENT_STATUS, searchPh: '结算号/作业单号' })}
       ${monthStrip('settlements', listAll, 'job_date')}
       <table class="lg-table" data-colw="st-main"><thead><tr>
         <th>结算号</th><th>作业单</th><th>日期</th><th>状态</th>
         <th>作业费(元)</th><th>药费(元)</th><th>应收合计</th><th>已收</th><th>操作</th>
-      </tr></thead><tbody>${rows || '<tr><td colspan="9">暂无结算单</td></tr>'}</tbody>
+      </tr></thead><tbody>${rows || `<tr><td colspan="9">${Core.emptyState('🧾', '暂无结算单——在工单页对已完成作业「生成结算」并确认，才会出账单与分录',
+        [{ act: 'goto-tab', tab: 'jobs', label: '去工单页', icon: '🛩️' }], { cell: true })}</td></tr>`}</tbody>
       ${tfootHtml(4, list, [['作业费', sumCents(list, '_spray')], ['药费', sumCents(list, '_pesticide')], ['应收', sumCents(list, '_total')], ['已收', sumCents(list, '_paid')]], 1)}</table>
     </div>`;
   }
@@ -192,7 +218,10 @@
       ...Core.billRow(b0), _month: String(b0.issued_at || '').slice(0, 7),
       _amount: b0.amount_cents, _adjust: b0.adjust_cents, _payable: Core.billPayable(b0), _paid: b0.paid_cents
     }));
+    state._steps = state._steps || {};
+    state._steps.bills = billsAll.some(b => b.status && b.status !== 'void'); // B3：有非作废账单=步③完成
     const list = pipeFilters(byMonth(rowsAll, '_month', 'bills'), 'bills', { q: ['bill_no', 'party'], party: 'party' });
+    state._bulkSel = state._bulkSel || new Set(); // B4 批量已收勾选（重绘保留；离开页面不清，回来仍在）
     const rows = list.map(b => {
       // 编辑模式：未收款行金额/调整直填；已收款行锁定（服务端 patchBill 拒绝已收款改单）
       // 注意：type=number 的 value 必须是不带千分位的纯数字，否则浏览器清空 value 误判变更
@@ -207,7 +236,12 @@
           ? `<input data-ek="${b.id}" data-f="adjust_cents" type="number" step="0.01" value="${((b._adjust || 0) / 100).toFixed(2)}" data-orig="${((b._adjust || 0) / 100).toFixed(2)}">`
           : b.adjustYuan)
         : b.adjustYuan;
+      // B4 批量已收：未清账单行首勾选（编辑态隐藏避免与输入框焦点打架）
+      const checkCell = (!em && b.canReceive)
+        ? `<input type="checkbox" class="lg-bulk-check" data-bulk="${b.id}" ${state._bulkSel.has(b.id) ? 'checked' : ''} title="勾选加入批量已收">`
+        : '';
       return `<tr>
+        <td>${checkCell}</td>
         <td>${esc(b.bill_no)}</td>${custCell(b.party)}<td>${tag(b.statusText)}</td>
         <td class="num">${amountCell}</td><td class="num">${adjustCell}</td>
         <td class="num"><b>${b.payableYuan}</b></td><td class="num">${b.paidYuan}</td>
@@ -217,20 +251,36 @@
         )}</td>
       </tr>`;
     }).join('');
-    return `<div class="lg-panel">
+    return `${stepsHtml('bills')}<div class="lg-panel">
       <h2>账单（确认后只读；未收可改金额/抹零；收款在「收款」页或下方按钮）</h2>
       ${toolbarHtml('bills', { statusMap: Core.MAPS.BILL_STATUS, searchPh: '客户名/账单号' })}
       ${monthStrip('bills', rowsAll, '_month')}
       <table class="lg-table" data-colw="bills"><thead><tr>
-        <th>账单号</th><th>客户</th><th>状态</th><th>金额</th><th>调整</th><th>应收</th><th>已收</th><th>操作</th>
-      </tr></thead><tbody>${rows || '<tr><td colspan="8">暂无账单</td></tr>'}</tbody>
-      ${tfootHtml(3, list, [['金额', sumCents(list, '_amount')], ['调整', sumCents(list, '_adjust')], ['应收', sumCents(list, '_payable')], ['已收', sumCents(list, '_paid')]], 1)}</table>
+        <th><input type="checkbox" id="lgBulkAll" title="全选当前列表的未收账单"></th><th>账单号</th><th>客户</th><th>状态</th><th>金额</th><th>调整</th><th>应收</th><th>已收</th><th>操作</th>
+      </tr></thead><tbody>${rows || `<tr><td colspan="9">${Core.emptyState('🧾', '暂无账单——结算确认后自动生成；期初旧账走「主数据→期初补录」',
+        [{ act: 'goto-tab', tab: 'settlements', label: '去看结算', icon: '🧾' }], { cell: true })}</td></tr>`}</tbody>
+      ${tfootHtml(4, list, [['金额', sumCents(list, '_amount')], ['调整', sumCents(list, '_adjust')], ['应收', sumCents(list, '_payable')], ['已收', sumCents(list, '_paid')]], 1)}</table>
+    </div>
+    ${bulkBarHtml(list)}`;
+  }
+
+  /** B4 批量已收浮动条：勾选 N 张未收账单后出现；逐张走既有 createReceipt 挂单通路（零新端点） */
+  function bulkBarHtml(list) {
+    const sel = list.filter(b => state._bulkSel.has(b.id));
+    if (!sel.length) return '';
+    const total = sel.reduce((a, b) => a + (b.unpaidCents || 0), 0);
+    return `<div class="lg-bulk-bar" id="lgBulkBar">
+      已勾选 <b>${sel.length}</b> 张 · 合计未收 <b>${Core.fmtYuan(total)}</b>
+      <button class="lg-btn primary" data-act="bill-bulk-receive">✔ 批量已收（按未收金额全额收款）</button>
+      <button class="lg-btn" data-act="bill-bulk-clear">清空勾选</button>
     </div>`;
   }
 
   /* ---------- 页签：收款 ---------- */
   function renderReceipts(listAll) {
     const rowsAll = listAll.map(r0 => ({ ...r0, _amount: r0.amount_cents }));
+    state._steps = state._steps || {};
+    state._steps.receipts = listAll.some(r => r.status === 'active'); // B3：有有效收款=步④完成
     const list = pipeFilters(byMonth(rowsAll, 'occurred_at', 'receipts'), 'receipts',
       { q: ['receipt_no', 'party_name', 'note'], party: 'party_name' });
     const rows = list.map(r0 => {
@@ -256,12 +306,24 @@
     const liveRows = list.filter(r => r.status !== 'void');
     const custOpts = parties.filter(p => p.type === 'customer')
       .map(p => `<option value="${p.id}">${esc(p.name)}${p.village ? '（' + esc(p.village) + (p.team ? p.team + '队' : '') + '）' : ''}</option>`).join('');
-    return `<div class="lg-panel">
+    return `${stepsHtml('receipts')}<div class="lg-panel">
+      <h2>快速录入（Tab 走字段 · 回车落库 · 焦点回到日期格）</h2>
+      <div class="lg-quickbar" id="lgQuickRc">
+        <input id="qrcDate" type="date" value="${todayStr()}" title="收款日期（B5/N-9：可补记昨日）">
+        <input id="qrcParty" list="qrcPartyList" placeholder="客户（输入筛选，回车登记）" autocomplete="off">
+        <datalist id="qrcPartyList">${parties.filter(p => p.type === 'customer').map(p => `<option value="${esc(p.name)}">`).join('')}</datalist>
+        <input id="qrcAmount" type="number" step="0.01" min="0.01" placeholder="金额(元)">
+        <select id="qrcMethod"><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option><option value="bank">银行</option></select>
+        <input id="qrcNote" placeholder="备注（选填）">
+      </div>
+    </div>
+    <div class="lg-panel">
       <h2>按客户收款（一笔钱自动按最早未清账单核销，余额转预收）</h2>
       <div class="lg-form">
         <label>客户<select id="rcCust">${custOpts}</select></label>
         <label>金额(元)<input id="rcCustAmount" type="number" step="0.01" min="0.01"></label>
         <label>方式<select id="rcCustMethod"><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option><option value="bank">银行</option></select></label>
+        <label>日期<input id="rcCustDate" type="date" value="${todayStr()}" title="B5/N-9：补记历史日期"></label>
         <label>经手人<input id="rcCustCollector" placeholder="默认记账人"></label>
         <label>备注<input id="rcCustNote" placeholder="选填"></label>
         <button class="lg-btn primary" data-act="rc-cust-save">按客户收款</button>
@@ -273,7 +335,8 @@
       ${monthStrip('receipts', listAll, 'occurred_at')}
       <table class="lg-table" data-colw="receipts"><thead><tr>
         <th>单号</th><th>客户</th><th>金额(元)</th><th>方式</th><th>账单</th><th>日期</th><th>备注/经手人</th><th>操作</th>
-      </tr></thead><tbody>${rows || '<tr><td colspan="8">暂无收款</td></tr>'}</tbody>
+      </tr></thead><tbody>${rows || `<tr><td colspan="8">${Core.emptyState('💰', '暂无收款——账单页点「登记收款」，或在上方表单按客户收款（自动 FIFO 核销）',
+        [{ act: 'goto-tab', tab: 'bills', label: '去账单页', icon: '🧾' }], { cell: true })}</td></tr>`}</tbody>
       ${tfootHtml(2, liveRows, [['实收', sumCents(liveRows, '_amount')]], 5)}</table>
     </div>`;
   }
@@ -290,6 +353,7 @@
       <div class="lg-form">
         <label>金额(元)<input id="rcAmount" type="number" step="0.01" min="0.01" value="${(unpaidCents / 100).toFixed(2)}"></label>
         <label>方式<select id="rcMethod"><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option><option value="bank">银行</option></select></label>
+        <label>日期<input id="rcDate" type="date" value="${todayStr()}" title="B5/N-9：补记历史日期"></label>
         <label>经手人<input id="rcCollector" placeholder="选填"></label>
         <label>预收抵扣(可选)<select id="rcAdvance"><option value="">不用预收</option>${advOpts}</select></label>
         <label>备注<input id="rcNote" placeholder="选填"></label>
@@ -322,6 +386,7 @@
         <label>类别<select id="pmCategory">${catOpts}</select></label>
         <label>金额(元)<input id="pmAmount" type="number" step="0.01" min="0.01"></label>
         <label>支付方式<select id="pmMethod"><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option></select></label>
+        <label>日期<input id="pmDate" type="date" value="${todayStr()}" title="B5/N-9：补记历史日期"></label>
         <label>从预支付款<select id="pmAdvance"><option value="">不使用</option>${advOpts}</select></label>
         <label>备注<input id="pmNote" placeholder="如：中石化加油站"></label>
         <button class="lg-btn primary" data-act="pm-save">登记</button>
@@ -366,6 +431,7 @@
         <label>对象<select id="advParty">${opts}</select></label>
         <label>类型<select id="advDirection"><option value="prepaid_by_customer">客户预收</option><option value="advance_to_worker">员工预支</option></select></label>
         <label>金额(元)<input id="advAmount" type="number" step="0.01" min="0.01"></label>
+        <label>日期<input id="advDate" type="date" value="${todayStr()}" title="B5/N-9：补记历史日期"></label>
         <label>备注<input id="advNote" placeholder="选填"></label>
         <button class="lg-btn primary" data-act="adv-save">登记</button>
       </div>
@@ -637,7 +703,7 @@
   }
 
   /* ---------- 渲染调度 ---------- */
-  const state = { tab: 'overview', _advances: [], month: {}, editMode: {}, filter: {}, custFilter: null, bar: loadBarState() };
+  const state = { tab: 'home', _advances: [], month: {}, editMode: {}, filter: {}, custFilter: null, bar: loadBarState() };
 
   function editMode(tab) { return !!state.editMode[tab]; }
 
@@ -711,7 +777,25 @@
     // P10-R4：旧页签值映射——health/import 一律落「审核」页（体检整体并入；不白屏不丢页）
     if (state.tab === 'health' || state.tab === 'import') state.tab = 'review';
     const tab = state.tab;
-    if (tab === 'overview') {
+    // B1：tab 注册表（原 13+ 分支 if-else 链；加页签从改三处变一处——
+    // 渲染器统一签名 async ($main)=>，await 后走统一收尾）
+    const renderer = TAB_RENDERERS[tab];
+    if (renderer) await renderer($main);
+    applyColWidths(); // P5-M3：全量重绘后统一恢复列宽（含明细插槽外各表的手柄注入）
+    restoreOpenSlots(); // B5：明细展开态记忆恢复（修"任何操作后明细合拢"）
+    refreshSummary();
+    updateFab();
+    // E9（P7-R4）：列表达到服务端截断上限时给出可感知提示（替代静默截断）
+    if (window.__lgHasMore) {
+      toast('注意：列表已达服务端单次返回上限，更早数据未显示（可用搜索/月份缩小范围）');
+      window.__lgHasMore = false;
+    }
+  }
+
+  /* ---------- B1：tab 注册表（每项 async ($main)=>；doRender 统一 await+收尾） ---------- */
+  const TAB_RENDERERS = {
+    home: ($m) => window.LedgerHome.renderTab($m),
+    overview: async () => {
       // 预收下拉依赖 state._advances（同 payments 分支）；支出面板块复用 payments 列表
       state._advances = await Api.advances();
       // P10-R2 数据条：生效区间走 core.barUiOf/dateRangeOf 纯函数——
@@ -730,43 +814,29 @@
       if (window.LedgerCharts && window.LedgerCharts.mountMini) {
         window.LedgerCharts.mountMini(document.getElementById('lgKpiBar'), { region, operator });
       }
-    } else if (tab === 'jobs') {
-      $main.innerHTML = renderJobs(await Api.jobs());
-    } else if (tab === 'settlements') {
-      $main.innerHTML = renderSettlements(await Api.settlements());
-    } else if (tab === 'bills') {
-      $main.innerHTML = renderBills(await Api.bills());
-    } else if (tab === 'receipts') {
+    },
+    jobs: async () => { $main.innerHTML = renderJobs(await Api.jobs()); },
+    settlements: async () => { $main.innerHTML = renderSettlements(await Api.settlements()); },
+    bills: async () => { $main.innerHTML = renderBills(await Api.bills()); },
+    receipts: async () => {
       try { parties = await Api.parties(); } catch (e) { /* 拉不到就用旧缓存 */ }
       $main.innerHTML = renderReceipts(await Api.receipts());
-    } else if (tab === 'reports') {
-      $main.innerHTML = await renderReports();
-    } else if (tab === 'charts') {
-      // 图表页（P4-M2，ledger/js/charts.js）：内联 SVG 手绘
-      await window.LedgerCharts.renderTab(tab, $main);
-    } else if (tab === 'payments') {
+    },
+    reports: async () => { $main.innerHTML = await renderReports(); },
+    charts: ($m) => window.LedgerCharts.renderTab('charts', $m),
+    payments: async () => {
       state._advances = await Api.advances();
       $main.innerHTML = renderPayments(await Api.payments());
-    } else if (tab === 'advances') {
+    },
+    advances: async () => {
       state._advances = await Api.advances();
       $main.innerHTML = renderAdvances(state._advances);
-    } else if (tab === 'splits') {
-      $main.innerHTML = renderSplits(await Api.splits());
-    } else if (tab === 'journal') {
-      $main.innerHTML = renderJournal(await Api.journal());
-    } else if (tab === 'review' || tab === 'master') {
-      // P10-R4：审核页（批次复核+数据体检并入）与主数据页归 app-extra.js——共用疑似重复组与合并弹窗
-      await window.LedgerExtra.renderTab(tab, $main);
-    }
-    applyColWidths(); // P5-M3：全量重绘后统一恢复列宽（含明细插槽外各表的手柄注入）
-    refreshSummary();
-    updateFab();
-    // E9（P7-R4）：列表达到服务端截断上限时给出可感知提示（替代静默截断）
-    if (window.__lgHasMore) {
-      toast('注意：列表已达服务端单次返回上限，更早数据未显示（可用搜索/月份缩小范围）');
-      window.__lgHasMore = false;
-    }
-  }
+    },
+    splits: async () => { $main.innerHTML = renderSplits(await Api.splits()); },
+    journal: async () => { $main.innerHTML = renderJournal(await Api.journal()); },
+    review: ($m) => window.LedgerExtra.renderTab('review', $m),
+    master: ($m) => window.LedgerExtra.renderTab('master', $m)
+  };
 
   async function refreshSummary() {
     try {
@@ -774,6 +844,27 @@
       document.getElementById('lgSummary').textContent =
         `应收 ${Core.fmtYuan(s.receivable_cents)} · 已收 ${Core.fmtYuan(s.received_cents)} · 支出 ${Core.fmtYuan(s.expense_cents)} · 预收余 ${Core.fmtYuan(s.prepaid_cents)}`;
     } catch (e) { /* 顶部汇总失败不打扰 */ }
+    updateNavBadges(); // B3：导航徽标（账单未收数红标 / 审核待复核数蓝标），失败静默
+  }
+
+  /** B3 待办徽标：导航按钮右上角圆形数字（.lg-badge 三色：红=欠款/蓝=待复核） */
+  function setNavBadge(tab, n, cls) {
+    const btn = document.querySelector(`#lgNav button[data-tab="${tab}"]`);
+    if (!btn) return;
+    let el = btn.querySelector('.lg-badge');
+    if (n > 0) {
+      if (!el) { el = document.createElement('span'); el.className = 'lg-badge'; btn.appendChild(el); }
+      el.className = 'lg-badge ' + (cls || '');
+      el.textContent = String(n);
+    } else if (el) el.remove();
+  }
+  async function updateNavBadges() {
+    if (!Api.aging) return; // 旧服务端无 aging 端点（E0 前部署）：跳过不报错
+    try {
+      const [aging, batches] = await Promise.all([Api.aging(), Api.importBatches()]);
+      setNavBadge('bills', (aging.total && aging.total.bills) || 0, 'red');
+      setNavBadge('review', (batches || []).filter(b => b.status === 'reviewing').length, 'blue');
+    } catch (e) { /* 徽标失败不打扰 */ }
   }
 
   /* ---------- 列宽拖拽与记忆（P5-M3 表格 Excel 化；纯函数在 core.js：colwKey/parseColw/clampColw） ----------
@@ -893,6 +984,22 @@
     document.addEventListener('mouseup', onColwUp);
   });
   $main.addEventListener('dblclick', e => {
+    // B6 首页 dashboard 卡标题双击改名（存 lg-home-grid-v1.titles）
+    const title = e.target.closest('.lg-hcard-title');
+    if (title) {
+      const id = title.dataset.hcardTitle;
+      const v = window.prompt('卡标题改为：', title.textContent.trim());
+      if (v == null) return;
+      let save = null;
+      try { save = JSON.parse(window.localStorage.getItem('lg-home-grid-v1') || 'null'); } catch (err) { save = null; }
+      save = save || { v: 1, cards: ['kpi', 'trend', 'debt'], titles: {}, layout: null };
+      save.titles = save.titles || {};
+      const name = v.trim().slice(0, 30);
+      if (name) save.titles[id] = name; else delete save.titles[id];
+      try { window.localStorage.setItem('lg-home-grid-v1', JSON.stringify(save)); } catch (err) { /* 忽略 */ }
+      render().catch(() => {});
+      return;
+    }
     const h = e.target.closest('.lg-colw-h');
     if (!h) return;
     const table = h.closest('table[data-colw]');
@@ -910,6 +1017,94 @@
     state.tab = btn.dataset.tab;
     render().catch(err => toast(err.message, true));
   });
+
+  /* ---------- B1 全局搜索（头部输入框；/ 聚焦；回车跳「作业明细」注入 q） ---------- */
+  const $gSearch = document.getElementById('lgGlobalSearch');
+  if ($gSearch) {
+    $gSearch.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      const q = ($gSearch.value || '').trim();
+      if (!q) { toast('输入要搜的内容（单号/客户/村队/备注…）'); return; }
+      state.filter.overview = { ...(state.filter.overview || {}), q };
+      state.tab = 'overview';
+      document.querySelectorAll('#lgNav button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'overview'));
+      render().catch(err => toast(err.message, true));
+    });
+  }
+  // `/` 全局聚焦搜索框（输入类控件内不抢键——正在打字的人不该被劫持）；
+  // B5 键盘流：Esc 取消编辑态 / Ctrl+Enter 保存 / ↑↓ 表格行间移动 / Enter 展开行首动作；
+  // 收款页快速录入条内 Enter=落库（qrcQuickSave，焦点回日期格）
+  document.addEventListener('keydown', e => {
+    const t = e.target;
+    const tag = t && t.tagName;
+    const inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable);
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !inField) {
+      if (!$gSearch) return;
+      e.preventDefault();
+      $gSearch.focus();
+      $gSearch.select();
+      return;
+    }
+    // B5：快速录入条内回车=落库（Tab 自然走字段）
+    if (e.key === 'Enter' && t && t.closest && t.closest('#lgQuickRc')) {
+      e.preventDefault();
+      qrcQuickSave();
+      return;
+    }
+    // B5：Esc 取消编辑态（任何输入态下）
+    if (e.key === 'Escape' && state.editMode[state.tab]) {
+      state.editMode[state.tab] = false;
+      render().catch(() => {});
+      return;
+    }
+    // B5：Ctrl+Enter 编辑态保存
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && state.editMode[state.tab]) {
+      e.preventDefault();
+      saveEditMode(state.tab);
+      return;
+    }
+    // B5：↑↓ 在表格行间移动焦点（roving focus）；Enter=触发行首动作按钮
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !inField) {
+      const rows = [...document.querySelectorAll('#lgMain .lg-table tbody tr')].filter(r => !r.hidden && r.style.display !== 'none');
+      if (rows.length < 2) return;
+      const cur = document.activeElement && document.activeElement.closest && document.activeElement.closest('#lgMain .lg-table tbody tr');
+      let idx = cur ? rows.indexOf(cur) : -1;
+      idx = e.key === 'ArrowDown' ? Math.min(rows.length - 1, idx + 1) : Math.max(0, idx - 1);
+      if (idx < 0) idx = 0;
+      e.preventDefault();
+      rows[idx].setAttribute('tabindex', '-1');
+      rows[idx].focus();
+      return;
+    }
+    if (e.key === 'Enter' && t && t.tagName === 'TR' && t.closest('#lgMain .lg-table tbody')) {
+      const btn = t.querySelector('button[data-act]');
+      if (btn) { e.preventDefault(); btn.click(); }
+    }
+  });
+
+  /** B5 收款页快速录入条落库：客户名精确匹配档案 → 按客户 FIFO 收款；成功后清格、焦点回日期 */
+  async function qrcQuickSave() {
+    const $ = id => document.getElementById(id);
+    const name = ($('qrcParty').value || '').trim();
+    const amount = Core.yuanInputToCents($('qrcAmount').value);
+    if (!name) { toast('先填客户（输入筛选后回车）', true); $('qrcParty').focus(); return; }
+    if (!needAmount(amount)) { $('qrcAmount').focus(); return; }
+    const party = parties.find(p => p.type === 'customer' && p.name === name);
+    if (!party) { toast(`没有找到客户「${name}」——先到主数据建档或用下拉选择`, true); $('qrcParty').focus(); return; }
+    try {
+      await run(() => Api.createReceipt({
+        party_id: party.id,
+        amount_cents: amount,
+        method: $('qrcMethod').value,
+        occurred_at: $('qrcDate').value || undefined,
+        note: $('qrcNote').value || undefined
+      }));
+      toast(`已登记：${name} ${Core.fmtYuan(amount)}`);
+      $('qrcAmount').value = '';
+      $('qrcNote').value = '';
+      $('qrcDate').focus(); // 焦点回第一格（连续录入）
+    } catch (err) { toast(err.message, true); }
+  }
 
   document.addEventListener('click', e => {
     const fb = e.target.closest('[data-fab]');
@@ -960,6 +1155,22 @@
   });
   $main.addEventListener('change', e => {
     const el = e.target;
+    if (el.classList && el.classList.contains('lg-bulk-check')) {
+      // B4 批量已收：行勾选进 Set（重绘由 Set 恢复；浮动条随重绘更新）
+      const bid = Number(el.dataset.bulk);
+      if (el.checked) state._bulkSel.add(bid); else state._bulkSel.delete(bid);
+      render().catch(err => toast(err.message, true));
+      return;
+    }
+    if (el.id === 'lgBulkAll') {
+      // B4 全选：按当前列表 DOM（勾选框可见=未收账单）批量入/出 Set
+      document.querySelectorAll('.lg-bulk-check').forEach(c => {
+        const bid = Number(c.dataset.bulk);
+        if (el.checked) state._bulkSel.add(bid); else state._bulkSel.delete(bid);
+      });
+      render().catch(err => toast(err.message, true));
+      return;
+    }
     if (el.dataset.cardDate) {
       // P10-R3 图表卡日期：老/新日期任一改动即重算该卡区间（清空=该边不设限，允许触发）
       if (window.LedgerCharts) window.LedgerCharts.handleCardDate(Number(el.dataset.card), el.dataset.cardDate, el.value);
@@ -1002,12 +1213,40 @@
   function toggleDetailSlot(slot, loader) {
     const tr = slot.closest('tr');
     tr.hidden = !tr.hidden;
+    // B5 展开态记忆：state.openSlots 记 'job:12'/'st:3'——任何操作重绘后自动恢复展开
+    const key = openSlotKeyOf(slot);
+    if (key) { if (!tr.hidden) state.openSlots.add(key); else state.openSlots.delete(key); }
     if (!tr.hidden && slot.innerHTML === '') {
       // P5-M3：明细插槽异步向 slot 插表（job-detail/st-detail/st-edit 三入口），
       // doRender 尾部与 renderTab 返回链都不会在明细展开后执行，loader 完成后单独恢复列宽
       const r = loader();
       if (r && typeof r.then === 'function') r.then(() => applyColWidths());
       else applyColWidths();
+    }
+  }
+  /** slot 元素 → 记忆键（data-slot 形态：job=纯数字 / 结算=st数字） */
+  function openSlotKeyOf(slot) {
+    const v = slot && slot.dataset && slot.dataset.slot;
+    if (!v) return null;
+    return /^st\d+$/.test(v) ? `st:${v.slice(2)}` : `job:${v}`;
+  }
+  /** B5：重绘后恢复展开的明细（loader 按键前缀重建；行已不在当前过滤视图则清记忆） */
+  function restoreOpenSlots() {
+    state.openSlots = state.openSlots || new Set();
+    for (const key of [...state.openSlots]) {
+      const m = /^(job|st):(\d+)$/.exec(key);
+      if (!m) { state.openSlots.delete(key); continue; }
+      const sel = m[1] === 'job' ? m[2] : 'st' + m[2];
+      const slot = document.querySelector(`td[data-slot="${sel}"]`);
+      if (!slot) { state.openSlots.delete(key); continue; }
+      const tr = slot.closest('tr');
+      if (tr && tr.hidden) {
+        tr.hidden = false;
+        if (slot.innerHTML === '') {
+          const p = m[1] === 'job' ? jobDetail(slot, Number(m[2])) : settlementDetail(slot, Number(m[2]));
+          Promise.resolve(p).then(() => applyColWidths()).catch(() => {});
+        }
+      }
     }
   }
   function needAmount(v) {
@@ -1022,9 +1261,10 @@
     const act = btn.dataset.act;
     const id = Number(btn.dataset.id);
     // 审核/主数据页签与导入 FAB 弹窗的处理在 app-extra.js（P2-4 拆分；P9-R2 增 dh- 体检动作前缀，
-    // P10-R4 增 fab- 弹窗动作前缀，P10-R5 增 lr- LLM 审查动作前缀，md- 合并弹窗复用既有 md- 前缀——
-    // 漏加前缀=按钮静默无效，P3 教训）
+    // P10-R4 增 fab- 弹窗动作前缀，P10-R5 增 lr- LLM 审查动作前缀，md- 合并弹窗复用既有 md- 前缀；
+    // B1 增 hm- 首页动作前缀——漏加前缀=按钮静默无效，P3 教训）
     if (window.LedgerExtra && /^(imp-|md-|op-|nc-|plot-|dh-|fab-|lr-)/.test(act)) return window.LedgerExtra.handleAct(btn, T);
+    if (window.LedgerHome && /^hm-/.test(act)) return window.LedgerHome.handleAct(btn, T);
     switch (act) {
       case 'csv-export': {
         // 导出「按钮所在面板」的第一张表（月份+筛选口径；编辑态取输入值；展开明细与隐藏 slot 不导）。
@@ -1128,22 +1368,44 @@
         break;
       }
       case 'bill-edit': {
-        const row$ = btn.closest('tr');
-        const amountCell = row$.children[3], adjustCell = row$.children[4];
-        amountCell.innerHTML = `<input data-be="amount" type="number" step="0.01" value="${amountCell.textContent.replace(/,/g, '')}">`;
-        adjustCell.innerHTML = `<input data-be="adjust" type="number" step="0.01" value="${adjustCell.textContent === '—' ? 0 : adjustCell.textContent.replace(/,/g, '')}">`;
-        btn.textContent = '保存';
-        btn.dataset.act = 'bill-edit-save';
+        // B4 范式收敛：单格「改金额/抹零」并入 FAB 编辑态——点单格=开编辑态并聚焦该格
+        state.editMode.bills = true;
+        render().then(() => {
+          const inp = document.querySelector(`input[data-ek="${id}"][data-f="amount_cents"]`);
+          if (inp) { inp.focus(); inp.select(); }
+        }).catch(() => {});
         break;
       }
-      case 'bill-edit-save': {
-        const row$ = btn.closest('tr');
-        const amount = Core.yuanInputToCents(row$.querySelector('[data-be="amount"]').value);
-        const adjust = Core.yuanInputToCents(row$.querySelector('[data-be="adjust"]').value);
-        run(() => Api.patchBill(id, {
-          amount_cents: amount == null ? undefined : amount,
-          adjust_cents: adjust == null ? undefined : adjust
-        }), '账单已更新');
+      case 'bill-bulk-clear': {
+        // B4 清空批量已收勾选
+        state._bulkSel = new Set();
+        render().catch(() => {});
+        break;
+      }
+      case 'bill-bulk-receive': {
+        // B4 批量已收：逐张走既有 createReceipt 挂单通路（金额=未收全额，现金口径）；
+        // 单张失败不中断整批（B0 守卫与服务端校验逐张生效），结束汇总
+        const sel = [...state._bulkSel];
+        if (!sel.length) return toast('先勾选要收款的账单', true);
+        confirmThen(`批量已收 ${sel.length} 张账单（按各自未收金额全额收款，现金口径）？`, async () => {
+          const all = await Api.bills();
+          const byId = new Map((all || []).map(b => [b.id, b]));
+          let ok = 0; const fails = [];
+          for (const bid of sel) {
+            try {
+              const bill = byId.get(bid);
+              if (!bill) throw new Error('账单不存在');
+              const unpaid = bill.amount_cents + bill.adjust_cents - bill.paid_cents;
+              if (!(unpaid > 0)) throw new Error('已无未收金额');
+              await Api.createReceipt({ bill_id: bid, party_id: bill.party_id, amount_cents: unpaid, method: 'cash' });
+              ok++;
+            } catch (err2) { fails.push(`#${bid}: ${err2.message}`); }
+            state._bulkSel.delete(bid);
+          }
+          if (fails.length) toast(`批量收款：成功 ${ok} 张，失败 ${fails.length} 张（${fails.slice(0, 2).join('；')}）`, true);
+          else if (ok) toast(`批量收款完成：${ok} 张`);
+          return ok;
+        });
         break;
       }
       case 'rc-cust-save': {
@@ -1153,6 +1415,7 @@
           party_id: Number(document.getElementById('rcCust').value),
           amount_cents: amount,
           method: document.getElementById('rcCustMethod').value,
+          occurred_at: (document.getElementById('rcCustDate') || {}).value || undefined, // B5/N-9：补记历史日期
           collector_name: document.getElementById('rcCustCollector').value || undefined,
           note: document.getElementById('rcCustNote').value || undefined
         }), '按客户收款已登记（FIFO 核销，余额转预收）');
@@ -1168,6 +1431,7 @@
           party_id: Number(btn.dataset.party) || undefined,
           amount_cents: amount,
           method: form.querySelector('#rcMethod').value,
+          occurred_at: (form.querySelector('#rcDate') || {}).value || undefined, // B5/N-9：补记历史日期
           collector_name: form.querySelector('#rcCollector').value || undefined,
           from_advance_id: advId ? Number(advId) : undefined,
           note: form.querySelector('#rcNote').value || undefined
@@ -1185,6 +1449,7 @@
           category: document.getElementById('pmCategory').value,
           amount_cents: amount,
           method: document.getElementById('pmMethod').value,
+          occurred_at: (document.getElementById('pmDate') || {}).value || undefined, // B5/N-9：补记历史日期
           from_advance_id: advId ? Number(advId) : undefined,
           note: document.getElementById('pmNote').value || undefined
         }), '支出已登记');
@@ -1200,6 +1465,7 @@
           party_id: Number(document.getElementById('advParty').value),
           direction: document.getElementById('advDirection').value,
           amount_cents: amount,
+          occurred_at: (document.getElementById('advDate') || {}).value || undefined, // B5/N-9：补记历史日期
           note: document.getElementById('advNote').value || undefined
         }), '已登记');
         break;
@@ -1218,6 +1484,19 @@
       case 'month-set':
         state.month[btn.dataset.tab] = btn.dataset.month;
         render().catch(err => toast(err.message, true));
+        break;
+      case 'goto-tab': {
+        // B3 通用跳页（步骤条/空状态直达动作）
+        const to = btn.dataset.tab;
+        if (!to) break;
+        state.tab = to;
+        document.querySelectorAll('#lgNav button').forEach(b => b.classList.toggle('active', b.dataset.tab === to));
+        render().catch(err => toast(err.message, true));
+        break;
+      }
+      case 'onboard-replay':
+        // B3 设置区「重看引导」
+        if (window.LedgerOnboard) window.LedgerOnboard.show();
         break;
       case 'bar-quick':
         // P10-R2 数据条快捷档：总/日/周/月/季/年（基于今天的本日/本周/本月/本季/本年，总=全期；
@@ -1290,6 +1569,19 @@
 
   /** 右下角浮动总编辑按钮（position:fixed，跟随滚动） */
   function updateFab() {
+    // B4 编辑态可感知：body.lg-editing（浅黄底输入）+ 顶部细条 #lgEditbar
+    //（body 级元素不随 #lgMain 重绘丢；非编辑页签一律清除）
+    const editing = !!state.editMode[state.tab];
+    document.body.classList.toggle('lg-editing', editing);
+    let bar = document.getElementById('lgEditbar');
+    if (editing) {
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'lgEditbar';
+        document.body.insertBefore(bar, document.body.firstChild);
+      }
+      bar.textContent = '✏️ 正在编辑本页 · 改完点右下角「💾 保存全部」生效（取消=放弃全部改动）';
+    } else if (bar) bar.remove();
     // P10-R4：#lgImportFab 导入 FAB（D2 裁决）——所有页签常显，独立元素独立语义，
     // 绝不与 #lgFab 编辑/保存/取消混用（位置在其正下方，CSS bottom 各自错开）
     let ifab = document.getElementById('lgImportFab');
@@ -1323,5 +1615,7 @@
   /* ---------- 启动 ---------- */
   Api.parties().then(p => { parties = p || []; }).catch(() => { parties = []; }).finally(() => {
     render().catch(err => toast(err.message, true));
+    // B3：首次访问弹三步引导（看完/跳过标记 lg-onboarded-v1，不再打扰）
+    if (window.LedgerOnboard) window.LedgerOnboard.maybeShow();
   });
 })();

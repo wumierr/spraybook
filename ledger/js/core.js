@@ -472,6 +472,35 @@
     return (cards || []).reduce((a, c) => Math.max(a, Number(c && c.id) || 0), 0) + 1;
   }
 
+  /** B3 空状态即教程：图标 + 一句话 + 直达动作（按钮走既有 data-act 委托，
+   *  跳页动作统一 data-act="goto-tab" data-tab="…"）。
+   *  opts.cell=true 返回表格空态内容（放在 <td colspan=N> 内）；
+   *  缺省返回独立面板 HTML。纯函数（core.js，可单测）。 */
+  function emptyState(icon, text, actions, opts) {
+    const acts = (actions || []).map(a =>
+      `<button class="lg-btn primary" data-act="${a.act}"${a.tab ? ` data-tab="${a.tab}"` : ''} title="${a.title || ''}">${a.icon || ''} ${a.label}</button>`).join(' ');
+    const inner = `<div class="lg-empty"><span class="lg-empty-icon">${icon || '📭'}</span>` +
+      `<span class="lg-empty-text">${text}</span>` +
+      (acts ? `<span class="lg-empty-actions">${acts}</span>` : '') + '</div>';
+    return (opts && opts.cell) ? inner : `<div class="lg-panel lg-empty-panel">${inner}</div>`;
+  }
+
+  /** B6 首页钱况 dashboard 存档解析（lg-home-grid-v1）：坏 JSON/形状不对/cards 空或全未知
+   *  → null 整包回退默认（charts 页 parseGridSave 同款纪律）；knownIds 由调用方给
+   *  （home.js 的卡定义），core 保持无首页细节依赖。 */
+  function parseHomeGridSave(raw, knownIds) {
+    if (!raw) return null;
+    let o = null;
+    try { o = JSON.parse(raw); } catch (e) { return null; }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    if (!Array.isArray(o.cards) || !o.cards.length) return null;
+    const known = new Set(knownIds || []);
+    const cards = [...new Set(o.cards.map(String))].filter(c => known.has(c));
+    if (!cards.length) return null;
+    const titles = (o.titles && typeof o.titles === 'object' && !Array.isArray(o.titles)) ? o.titles : {};
+    return { v: 1, cards, titles, layout: Array.isArray(o.layout) ? o.layout : null };
+  }
+
   const Core = {
     monthKeys, csvCell, csvRow, calculatorJobPayload,
     pickPipeline, pickPipelineForText, estimateLlmChunks,
@@ -479,7 +508,7 @@
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
     colwKey, clampColw, parseColw,
     normDate, dateRangeOf, quickRangeOf, weekRangeOf, barUiOf, parseBarState,
-    parseCardState, parseGridSave, gridLayoutOf, nextCardId,
+    parseCardState, parseGridSave, gridLayoutOf, nextCardId, emptyState, parseHomeGridSave,
     BAR_QUICKS, CARD_GRANS, GRID_COLUMNS,
     MAPS: { JOB_STATUS, SETTLEMENT_STATUS, BILL_STATUS, PAYMENT_CATEGORY, ADVANCE_DIRECTION, METHOD, PARTY_TYPE }
   };
