@@ -202,6 +202,65 @@ window.FIELD_DEFS = FIELD_DEFS;
 window.FIELD_ORDER = FIELD_ORDER;
 
 /* ============================================================
+   ★★★ 一屏简单模式（D1，2026-10-24 裁决：新用户默认简单）★★★
+   三输入 = 亩数 / 每亩收费 / 药型（药型走 selectType 既有通路，
+   不在此装配）。其余参数沿用上次值/预设，计算复用 computePlots。
+   防呆口径（裁决）：越界红框提示，不静默钳位——值不写入 state，
+   结果四卡保持上一次有效计算。
+   ============================================================ */
+const SIMPLE_MODE = {
+  area: {
+    label: '亩数', unit: '亩', step: 0.5,
+    min: 0.01, max: 9999,
+    minText: '需大于 0', maxText: '过大，请核对（上限 9999 亩）'
+  },
+  pricePerMu: {
+    label: '每亩收费', unit: '元/亩', step: 0.5,
+    min: 0, max: 10000,     // 0 合法（与完整模式 pricePerMu min:0 一致）
+    minText: '不能为负', maxText: '过大，请核对（上限 10000 元/亩）'
+  }
+};
+
+/* 简单模式输入校验（纯函数）：越界/非数字返回 {valid:false, reason}，
+   UI 层据此置红框；绝不改写输入值（不钳位） */
+function validateSimpleInput(key, raw) {
+  const def = SIMPLE_MODE[key];
+  if (!def) return { valid: true };
+  const v = Number(raw);
+  if (raw === '' || raw == null || isNaN(v)) return { valid: false, reason: '请填数字' };
+  if (v < def.min) return { valid: false, reason: def.minText };
+  if (v > def.max) return { valid: false, reason: def.maxText };
+  return { valid: true };
+}
+
+/* 简单模式装配（纯函数，D1 默认值装配测试对象）：
+   prev  = 当前 state（至少含 field.plots / income，可传 UI.state 或 freshState）
+   inputs = { area, pricePerMu }（原始输入值）
+   返回 patch：
+     area      —— 有效且非锁定时为数字（写 plots[0].area），否则 null
+     pricePerMu—— 有效时为数字（写 income.pricePerMu），否则 null
+     locked    —— 多地块保护（裁决 2026-10-24）：plots>1 时亩数锁定
+     totalArea —— Σ plots 面积（锁定态显示合计用）
+   UI 层负责应用 patch 并触发 compute/save。 */
+function assembleSimpleInputs(prev, inputs) {
+  const patch = { area: null, pricePerMu: null, locked: false, totalArea: 0 };
+  const plots = Array.isArray(prev && prev.field && prev.field.plots) ? prev.field.plots : [];
+  patch.totalArea = plots.reduce((s, p) => s + (Number(p && p.area) || 0), 0);
+  patch.locked = plots.length > 1;
+  if (!patch.locked && validateSimpleInput('area', inputs.area).valid) {
+    patch.area = Number(inputs.area);
+  }
+  if (validateSimpleInput('pricePerMu', inputs.pricePerMu).valid) {
+    patch.pricePerMu = Number(inputs.pricePerMu);
+  }
+  return patch;
+}
+
+window.SIMPLE_MODE = SIMPLE_MODE;
+window.validateSimpleInput = validateSimpleInput;
+window.assembleSimpleInputs = assembleSimpleInputs;
+
+/* ============================================================
    ★★★ 吊运模式（HAUL）—— 与打药模式完全独立 ★★★
    场景：无人机吊运水果/农产品从果园下山或跨地形运输
    收入：按每斤多少毛计费（用户填毛，实际 ×0.1 = 元）

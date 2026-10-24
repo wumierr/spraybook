@@ -1815,3 +1815,109 @@ html, body {
   color: var(--text-muted);
   text-align: center;
 }
+
+/* ---------- D1 一屏简单模式（2026-10-24）：结果四卡常驻 + 三输入大字 ---------- */
+/* 模式切换行的「⚡ 简单」入口（与 mode-btn 同族，独立类防 bindModeSwitcher 误绑） */
+.ui-mode-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-radius: 999px;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.ui-mode-btn:hover { color: var(--accent); background: var(--accent-soft); }
+.ui-mode-btn.active {
+  background: linear-gradient(135deg, var(--accent), #43a047);
+  color: #fff;
+}
+
+/* 简单面板独占主区（app-main 是 1fr/1.4fr 双列，简单态收成单列居中） */
+#simplePanel {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+}
+/* 四卡 2×2 常驻（覆盖 .result-grid 的 1 列移动端断点，特异性更高） */
+.simple-panel .result-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.simple-panel .result-card { padding: 12px; }
+.simple-panel .result-card.income { border-left-color: #66bb6a; }
+.simple-panel .result-card.trips  { border-left-color: #29b6f6; }
+.simple-panel .result-value { font-size: 26px; }
+/* 顶部小结行：药型 · 面积 · 水药量 */
+.simple-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  margin: -6px 0 12px;
+}
+/* 三输入大字（44px 触摸目标基准） */
+.simple-form { grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 4px; }
+.simple-panel .field label { font-size: 13px; }
+.simple-form .stepper .st-btn {
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
+}
+.simple-form .unit-suffix input {
+  height: 44px;
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  text-align: center;
+}
+/* 多地块锁定提示 */
+.simple-lock { margin-top: 4px; font-size: 11px; color: var(--warn); }
+/* 药型横向滚动条（复用 plant-card 视觉的紧凑变体） */
+.simple-type-field { margin: 4px 0 2px; }
+.simple-type-bar {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.stype-card {
+  flex: 0 0 auto;
+  min-width: 72px;
+  min-height: 64px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--input-bg);
+  border: 2px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.stype-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.stype-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.stype-card .p-icon { font-size: 22px; }
+/* 越界提示行（红框走既有 input[data-invalid] 样式，不另设） */
+.simple-hint {
+  min-height: 18px;
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--danger);
+  text-align: center;
+}
+@media (max-width: 500px) {
+  .simple-form { grid-template-columns: 1fr 1fr; }
+  .simple-panel .result-value { font-size: 22px; }
+  .simple-panel .result-card { padding: 10px; }
+}

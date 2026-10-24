@@ -5,6 +5,7 @@
 const UI = {
   state: {
     mode: 'spray',              // 'spray' | 'haul'
+    uiMode: 'simple',           // 打药界面态 'simple' | 'full'（D1；新用户默认简单，随 state 持久化）
     // 打药模式状态
     plant: null,
     field: { ...DEFAULT_FIELD },
@@ -32,6 +33,7 @@ const UI = {
     this.bindModeSwitcher();
     this.bindEvents();
     this.bindBatteryLedger();
+    this.bindSimpleMode();
     this.applyMode(this.state.mode);
     this.renderBatteryLedger();
     this.applyTheme(Storage.getTheme());
@@ -93,6 +95,8 @@ const UI = {
     const saved = Storage.getState();
     if (saved) {
       this.state.mode = saved.mode || 'spray';
+      // D1 界面态：只认 'full'，其余（含旧存档缺失）= 简单（新用户默认简单裁决）
+      this.state.uiMode = saved.uiMode === 'full' ? 'full' : 'simple';
       // 先合并 field（拿到存档里的 plantKey），再解析类型快照
       if (saved.field) this.state.field = { ...this.state.field, ...saved.field };
       if (saved.plant) this.state.plant = { ...saved.plant };
@@ -194,10 +198,46 @@ const UI = {
     // 电池循环台账：仅打药模式显示（充电次数来自打药计算）
     const batteryPanel = document.getElementById('batteryPanel');
     if (batteryPanel) batteryPanel.style.display = mode === 'spray' ? '' : 'none';
+    // D1 界面态（简单/完整）挂面板可见性（吊运模式不受 uiMode 影响）
+    this.applyUiMode();
     // 重新渲染表单和结果
     this.renderAll();
     // 渲染完后立即计算一次，确保结果区域有值
     this.compute();
+  },
+
+  /* ============================================================
+     ★★ D1 一屏简单模式：界面态切换与渲染 ★★
+     - uiMode 只作用于打药模式；吊运模式恒完整布局
+     - 简单态 = app-main 只显示 simplePanel（四卡+三输入+工单）
+     - 隐藏面板的表单/结果照常渲染（保持切回完整态即所见即所得，
+       也让工单/导出/同步等既有通路零改动）
+     ============================================================ */
+  applyUiMode() {
+    const isSpray = this.state.mode === 'spray';
+    const simple = isSpray && this.state.uiMode === 'simple';
+    const sp = document.getElementById('simplePanel');
+    if (sp) sp.style.display = simple ? '' : 'none';
+    if (isSpray) {
+      document.querySelectorAll('.app-main > .panel:not(#simplePanel)').forEach(p => {
+        p.style.display = simple ? 'none' : '';
+      });
+    }
+    const btn = document.getElementById('simpleModeBtn');
+    if (btn) {
+      btn.style.display = isSpray ? '' : 'none';
+      btn.classList.toggle('active', simple);
+    }
+  },
+
+  switchUiMode(mode) {
+    if (mode !== 'simple' && mode !== 'full') return;
+    if (this.state.uiMode === mode) return;
+    this.state.uiMode = mode;
+    // applyMode 内含 applyUiMode + renderAll + compute，重挂全部面板
+    this.applyMode(this.state.mode);
+    this.save();
+    this.toast(mode === 'simple' ? '已切到简单模式（三步出单）' : '已切到完整模式', 'success');
   },
 
   renderAll() {
@@ -208,6 +248,11 @@ const UI = {
       this.renderCostTabs();
       this.renderIncomeForm();
       this.renderTimingForm();
+      // 简单态表单同步（隐藏面板的渲染照走，切回完整态零成本）
+      if (this.state.uiMode === 'simple') {
+        this.renderSimpleTypeBar();
+        this.syncSimpleForm();
+      }
     } else {
       this.renderHaulParamForm();
       this.renderHaulCostTabs();
@@ -241,6 +286,8 @@ const UI = {
     document.querySelectorAll('.plant-card').forEach(c => {
       c.classList.toggle('active', c.dataset.key === key);
     });
+    // D1 简单态药型条同步（完整态类型格在上面已切换）
+    if (this.state.uiMode === 'simple') this.renderSimpleTypeBar();
     // 套用类型推荐参数（飞行高度随类型快照自带；间距/速度写入时间参数，覆盖当前值）
     const applied = [];
     if (t.lineSpacing != null) { this.state.timing.lineSpacing = t.lineSpacing; applied.push(`间距${t.lineSpacing}米`); }
@@ -1797,6 +1844,10 @@ const UI = {
       this.renderPlotsTable(r);
       this.renderSummary(r, 'spray');
       this._lastResult = r;
+      // D1 简单态四卡（隐藏面板的结果渲染照走，见 applyUiMode 注释）
+      if (this.state.uiMode === 'simple') {
+        this.renderSimpleResults(r);
+      }
       // 工单弹窗开着时同步刷新（如切换包药开关）
       if (document.getElementById('workOrderModal')?.classList.contains('show')) {
         this.renderWorkOrderQuick();
@@ -1812,6 +1863,116 @@ const UI = {
       this._lastResult = r;
     }
     return this._lastResult;
+  },
+
+  /* ============================================================
+     ★★ D1 一屏简单模式：渲染与交互 ★★
+     四卡=收入/成本/利润/趟数；三输入=亩数/每亩收费/药型；
+     越界红框不静默钳位（校验/装配纯函数在 data.js，有单测）。
+     ============================================================ */
+  renderSimpleResults(r) {
+    const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    const fmt = Calculator.fmt.bind(Calculator);
+    setText('srIncome', Calculator.fmtMoney(r.income));
+    setText('srCost', Calculator.fmtMoney(r.totalCost));
+    setText('srProfit', Calculator.fmtMoney(r.profit));
+    setText('srTrips', String(r.totalTrips));
+    setText('srIncomeSub', r.area > 0 ? `亩均 ¥${Calculator.fmtMoney(r.income / r.area)}` : '—');
+    setText('srCostSub', r.area > 0 ? `亩均 ¥${Calculator.fmtMoney(r.totalCost / r.area)}` : '—');
+    setText('srProfitSub', r.profit >= 0
+      ? `利润率 ${(r.profit / Math.max(1, r.income) * 100).toFixed(1)}%`
+      : `亏损 ¥${Calculator.fmtMoney(-r.profit)}`);
+    setText('srTripsSub', `水量 ${fmt(r.totalAddWater != null ? r.totalAddWater : r.water, 0)} 升`);
+    const pc = document.getElementById('srProfitCard');
+    if (pc) pc.dataset.loss = r.profit < 0 ? 'true' : 'false';
+    // 顶部小结行：药型 · 面积 · 用药
+    const plant = this.state.plant || {};
+    setText('srSub', `${plant.icon || '🧪'} ${plant.name || '—'} · ${fmt(r.area, 1)}亩 · 用药 ${fmt(r.pesticide, 1)}套（采购 ${r.pesticideRounded}）`);
+  },
+
+  renderSimpleTypeBar() {
+    const bar = document.getElementById('simpleTypeBar');
+    if (!bar) return;
+    bar.innerHTML = '';
+    this.typeLibrary.forEach(t => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'stype-card' + (this.state.field.plantKey === t.key ? ' active' : '');
+      card.dataset.key = t.key;
+      card.innerHTML = `<span class="p-icon">${t.icon}</span><span class="p-name">${this.escapeHtml(t.name)}</span>`;
+      card.addEventListener('click', () => this.selectType(t.key));
+      bar.appendChild(card);
+    });
+  },
+
+  /* 三输入同步（state → 表单；预设加载/导入/切模式后随 renderAll 调用） */
+  syncSimpleForm() {
+    const plots = Array.isArray(this.state.field.plots) ? this.state.field.plots : [];
+    const multi = plots.length > 1;
+    const total = plots.reduce((s, p) => s + (Number(p.area) || 0), 0);
+    const areaEl = document.getElementById('simpleArea');
+    const priceEl = document.getElementById('simplePrice');
+    const lock = document.getElementById('simpleAreaLock');
+    const hint = document.getElementById('simpleHint');
+    if (areaEl) {
+      areaEl.value = multi ? total : (plots.length === 1 ? (Number(plots[0].area) || 0) : 0);
+      areaEl.readOnly = multi;   // 多地块保护（裁决 2026-10-24）：锁定显示合计
+      areaEl.dataset.invalid = '';
+    }
+    if (lock) {
+      lock.style.display = multi ? '' : 'none';
+      if (multi) lock.textContent = `🔒 ${plots.length} 块地共 ${Calculator.fmt(total, 1)} 亩，分块编辑请切完整模式`;
+    }
+    if (priceEl) {
+      priceEl.value = this.state.income.pricePerMu;
+      priceEl.dataset.invalid = '';
+    }
+    if (hint) hint.textContent = '';
+  },
+
+  /* 简单模式输入：即时校验红框（不静默钳位——越界不写值，结果卡保持上次有效计算） */
+  onSimpleInput(key, el) {
+    const def = SIMPLE_MODE[key];
+    if (!def) return;
+    const v = validateSimpleInput(key, el.value);
+    el.dataset.invalid = v.valid ? '' : 'true';
+    const hint = document.getElementById('simpleHint');
+    if (!v.valid) {
+      if (hint) hint.textContent = `⚠️ ${def.label}${v.reason}（不自动修正，请自行调整）`;
+      return;
+    }
+    if (hint) hint.textContent = '';
+    const patch = assembleSimpleInputs(this.state, {
+      area: document.getElementById('simpleArea')?.value,
+      pricePerMu: document.getElementById('simplePrice')?.value
+    });
+    if (key === 'area' && patch.area != null) {
+      if (this.state.field.plots.length === 0) this.ensurePlots();
+      const plots = this.state.field.plots;
+      if (plots.length === 1) plots[0].area = patch.area;
+    }
+    if (key === 'pricePerMu' && patch.pricePerMu != null) {
+      this.state.income.pricePerMu = patch.pricePerMu;
+      this.syncIncomeFormFromState();   // 隐藏的完整模式收入表单同步
+    }
+    this.compute();
+    this.save();
+  },
+
+  bindSimpleMode() {
+    if (this._simpleBound) return;
+    this._simpleBound = true;
+    const areaEl = document.getElementById('simpleArea');
+    const priceEl = document.getElementById('simplePrice');
+    if (areaEl) areaEl.addEventListener('input', () => this.onSimpleInput('area', areaEl));
+    if (priceEl) priceEl.addEventListener('input', () => this.onSimpleInput('pricePerMu', priceEl));
+    const fullBtn = document.getElementById('simpleFullBtn');
+    if (fullBtn) fullBtn.addEventListener('click', () => this.switchUiMode('full'));
+    const toggleBtn = document.getElementById('simpleModeBtn');
+    if (toggleBtn) toggleBtn.addEventListener('click', () =>
+      this.switchUiMode(this.state.uiMode === 'simple' ? 'full' : 'simple'));
+    const woBtn = document.getElementById('simpleWorkOrderBtn');
+    if (woBtn) woBtn.addEventListener('click', () => this.openWorkOrder());
   },
 
   renderSprayResults(r) {
@@ -2260,6 +2421,7 @@ const UI = {
   save() {
     Storage.saveState({
       mode: this.state.mode,
+      uiMode: this.state.uiMode,   // D1 界面态持久化（'simple' | 'full'）
       plant: this.state.plant,
       field: this.state.field,
       costs: this.state.costs,

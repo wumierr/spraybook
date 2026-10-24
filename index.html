@@ -71,9 +71,70 @@
   <div class="mode-switcher">
     <button class="mode-btn active" data-mode="spray">🚁 打药模式</button>
     <button class="mode-btn" data-mode="haul">📦 吊运模式</button>
+    <button id="simpleModeBtn" class="ui-mode-btn" title="切换简单/完整界面">⚡ 简单</button>
   </div>
 
   <main class="app-main">
+      <!-- 一屏简单模式（D1）：结果四卡常驻顶部 + 三输入，其余参数沿用上次值/预设 -->
+      <section class="panel simple-panel" id="simplePanel" aria-label="简单模式" style="display:none;">
+      <div class="panel-title"><span>⚡</span> 快速计算 <span class="hint">亩数 · 单价 · 药型，三步出单</span></div>
+      <div class="result-grid simple-results">
+        <div class="result-card income">
+          <div class="result-icon">💵</div>
+          <div class="result-label">总收入</div>
+          <div class="result-value"><span id="srIncome">0</span><span class="unit">元</span></div>
+          <div class="result-sub" id="srIncomeSub">—</div>
+        </div>
+        <div class="result-card cost">
+          <div class="result-icon">💰</div>
+          <div class="result-label">总成本</div>
+          <div class="result-value"><span id="srCost">0</span><span class="unit">元</span></div>
+          <div class="result-sub" id="srCostSub">—</div>
+        </div>
+        <div class="result-card profit" id="srProfitCard">
+          <div class="result-icon">📈</div>
+          <div class="result-label">利润</div>
+          <div class="result-value"><span id="srProfit">0</span><span class="unit">元</span></div>
+          <div class="result-sub" id="srProfitSub">—</div>
+        </div>
+        <div class="result-card trips">
+          <div class="result-icon">🚁</div>
+          <div class="result-label">总趟数</div>
+          <div class="result-value"><span id="srTrips">0</span><span class="unit">趟</span></div>
+          <div class="result-sub" id="srTripsSub">—</div>
+        </div>
+      </div>
+      <div class="simple-sub" id="srSub">—</div>
+      <div class="form-grid simple-form">
+        <div class="field">
+          <label for="simpleArea">亩数 <i class="tip" data-tip="本次作业总面积。多地块时此处显示合计，分块编辑请切完整模式">i</i></label>
+          <div class="stepper" data-step="0.5">
+            <button type="button" class="st-btn st-minus" aria-label="减少">−</button>
+            <div class="unit-suffix" data-unit="亩"><input type="number" id="simpleArea" step="0.5" inputmode="decimal" placeholder="0"></div>
+            <button type="button" class="st-btn st-plus" aria-label="增加">＋</button>
+          </div>
+          <div class="simple-lock hint" id="simpleAreaLock" style="display:none;"></div>
+        </div>
+        <div class="field">
+          <label for="simplePrice">每亩收费 <i class="tip" data-tip="向农户收取的每亩服务费（元/亩），与完整模式「每亩收费」同值">i</i></label>
+          <div class="stepper" data-step="0.5">
+            <button type="button" class="st-btn st-minus" aria-label="减少">−</button>
+            <div class="unit-suffix" data-unit="元/亩"><input type="number" id="simplePrice" step="0.5" inputmode="decimal" placeholder="0"></div>
+            <button type="button" class="st-btn st-plus" aria-label="增加">＋</button>
+          </div>
+        </div>
+      </div>
+      <div class="field simple-type-field">
+        <label>药型 <span class="hint">点选即套用该类型推荐参数</span></label>
+        <div class="simple-type-bar" id="simpleTypeBar"><!-- JS 注入 --></div>
+      </div>
+      <div class="simple-hint hint" id="simpleHint" aria-live="polite"></div>
+      <div class="btn-row">
+        <button id="simpleWorkOrderBtn" class="btn btn-primary">🧾 生成工单</button>
+        <button id="simpleFullBtn" class="btn btn-secondary">完整模式 →</button>
+      </div>
+    </section>
+
       <section class="panel plant-panel" aria-label="用药类型">
       <div class="panel-title"><span>🧪</span> 用药类型 <span class="hint">点击选择，可自定义增减</span></div>
       <div class="plant-grid" id="plantGrid"><!-- JS 注入 --></div>
