@@ -2958,6 +2958,17 @@ const UI = {
 
     // 作业工单
     document.getElementById('workOrderBtn').addEventListener('click', () => this.openWorkOrder());
+    // D4 结算卡入口（工单弹窗内；渲染在 js/settlement-card.js）
+    document.getElementById('cardWorkOrderBtn').addEventListener('click', () => this.openSettlementCard());
+    // D4 结算卡二维码上传/清除（☁️ 弹窗）
+    ['qrPayFile', 'qrAcctFile'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', () => this.onQrFileChange(el));
+    });
+    const qrPayClear = document.getElementById('qrPayClear');
+    if (qrPayClear) qrPayClear.addEventListener('click', () => { Storage.saveQr({ pay: '' }); this.refreshQrState(); });
+    const qrAcctClear = document.getElementById('qrAcctClear');
+    if (qrAcctClear) qrAcctClear.addEventListener('click', () => { Storage.saveQr({ acct: '' }); this.refreshQrState(); });
     document.getElementById('copyWorkOrder').addEventListener('click', () => {
       const txt = this.buildWorkOrderText();
       if (!txt) {
@@ -3296,7 +3307,73 @@ const UI = {
     }
     document.getElementById('syncCfgEnabled').checked = !!s.enabled;
     document.getElementById('syncCfgTestResult').textContent = '';
+    this.refreshQrState();
     this.openModal('syncCfgModal');
+  },
+
+  /* ---------- D4 结算卡二维码（☁️ 弹窗上传/清除；dataURL 480px 规范化在 settlement-card.js） ---------- */
+  refreshQrState() {
+    const qr = Storage.getQr();
+    const payState = document.getElementById('qrPayState');
+    const acctState = document.getElementById('qrAcctState');
+    const payClear = document.getElementById('qrPayClear');
+    const acctClear = document.getElementById('qrAcctClear');
+    if (payState) payState.textContent = qr.pay ? '已配置' : '未配置';
+    if (acctState) acctState.textContent = qr.acct ? '已配置' : '未配置';
+    if (payClear) payClear.style.display = qr.pay ? '' : 'none';
+    if (acctClear) acctClear.style.display = qr.acct ? '' : 'none';
+  },
+
+  async onQrFileChange(el) {
+    const file = el.files && el.files[0];
+    el.value = '';   // 允许重选同一文件
+    if (!file) return;
+    const SC = window.CalcSettlementCard;
+    if (!SC) return;
+    try {
+      const du = await SC.normalizeImage(file);
+      if (!du) { this.toast('不是可读的图片文件', 'error'); return; }
+      const key = el.id === 'qrPayFile' ? 'pay' : 'acct';
+      if (!Storage.saveQr({ [key]: du })) {
+        this.toast('保存失败（存储空间不足或隐私模式）', 'error');
+        return;
+      }
+      this.refreshQrState();
+      this.toast('二维码已保存，生成结算卡时显示在右下角', 'success');
+    } catch (e) {
+      this.toast('读图失败', 'error');
+    }
+  },
+
+  /* D4 结算卡入口：工单弹窗 → Canvas 分享件（数据源=本地 _lastResult/state，零服务端往返） */
+  async openSettlementCard() {
+    const r = this._lastResult;
+    if (!r || this.state.mode !== 'spray') {
+      this.toast('请先完成一次计算', 'warn');
+      return;
+    }
+    const SC = window.CalcSettlementCard;
+    if (!SC) {
+      this.toast('结算卡组件未加载', 'error');
+      return;
+    }
+    const wo = this.getWorkOrder();
+    const today = window.SpraySync ? window.SpraySync.localDateStr(new Date()) : new Date().toISOString().slice(0, 10);
+    let operator = [];
+    try {
+      const cloud = window.SpraySync ? window.SpraySync.getCloud() : null;
+      operator = (cloud && cloud.operator) ? [cloud.operator] : [];
+    } catch (e) { operator = []; }
+    const entry = {
+      result: r,
+      state: { plant: this.state.plant, income: this.state.income },
+      jobNo: wo._synced_job_no || (window.SpraySync ? window.SpraySync.genJobNo(today) : ''),
+      date: today,
+      address: (this.state.field.plots && this.state.field.plots[0] && this.state.field.plots[0].name) || '',
+      operators: operator
+    };
+    this.openModal('cardModal');
+    await SC.open(entry);
   },
   testSyncConnection() {
     const url = document.getElementById('syncCfgUrl').value.trim().replace(/\/+$/, '');

@@ -1,68 +1,31 @@
 /* ============================================================
-   ledger/js/settlement-card.js — D4 结算卡（客户分享件，纯前端）
-   工单详情「📤 生成结算卡」→ Canvas 竖版 3:4 渲染（视觉基准
+   js/settlement-card.js — D4 结算卡（客户分享件，纯前端，计算器端）
+   工单弹窗「📤 生成结算卡」→ Canvas 竖版 3:4 渲染（视觉基准
    docs/SETTLEMENT-CARD-MOCK.html）→ toBlob 保存图片 / 系统分享。
-   口径红线：客户只见圈地面积——本文件只消费 core.settlementCardData 的
-   白名单字段（客户/圈地/药型/单价/应收/日期/地址/单号/飞手），
-   该纯函数之外的数据一概不取不显（守门断言见 tests）。
-   二维码两版：A 单码=收款码 88px 右下主位；B 双码=账号码 72px（次）
-   + 收款码 88px（主），主从用大小+描边区分；码在主数据「设置」上传
-   （localStorage dataURL），未配置不渲染。
+   口径红线：客户只见圈地面积——本文件只消费 data.settlementCardData
+   的白名单输出（客户/圈地/药型/单价/应收/日期/地址/单号/飞手），
+   白名单之外的字段一概不取不显（守门断言见 tests）。
+   二维码两版：A 单码=收款码右下主位；B 双码=账号码（次）+收款码（主），
+   主从用大小+描边区分；码在 ☁️ 同步设置弹窗上传（Storage.getQr/saveQr，
+   drone_spray_qr_v1 dataURL），未配置不渲染。
    分享卡是已裁例外：非数据图表，不受 echarts 铁律限制；零外链。
    ============================================================ */
 (function () {
   'use strict';
-  const Core = window.LedgerCore;
 
-  /* ---------- 二维码存取（设置页上传；localStorage dataURL，隐私模式静默降级） ---------- */
-  const QRS = {
-    PAY_KEY: 'lg-qr-pay-v1',   // 收款码（主码 88px）
-    ACCT_KEY: 'lg-qr-acct-v1', // 账号码（次码 72px）
-    get(key) { try { return window.localStorage.getItem(key) || ''; } catch (e) { return ''; } },
-    set(key, dataURL) {
-      if (!dataURL || !/^data:image\//.test(dataURL)) return false;
-      try { window.localStorage.setItem(key, dataURL); return true; } catch (e) { return false; }
-    },
-    clear(key) { try { window.localStorage.removeItem(key); } catch (e) { /* 忽略 */ } },
-    /** 上传规范化：File → 读图 → 最长边 480px 内 PNG dataURL（控制 localStorage 体积；QR 足够清晰） */
-    async normalize(file) {
-      if (!file || !/^image\//.test(file.type)) return null;
-      const raw = await new Promise((res, rej) => {
-        const fr = new FileReader();
-        fr.onload = () => res(String(fr.result || ''));
-        fr.onerror = () => rej(new Error('读图失败'));
-        fr.readAsDataURL(file);
-      });
-      const img = await loadImage(raw);
-      if (!img) return null;
-      const k = Math.min(1, 480 / Math.max(img.width, img.height));
-      if (k >= 1 && raw.length < 300 * 1024) return raw; // 小图原样存
-      const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round(img.width * k));
-      c.height = Math.max(1, Math.round(img.height * k));
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      return c.toDataURL('image/png');
-    }
-  };
-
-  /** dataURL → HTMLImageElement（坏图/空值 resolve null，调用方跳过不渲染） */
-  function loadImage(dataURL) {
-    return new Promise(resolve => {
-      if (!dataURL) { resolve(null); return; }
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = dataURL;
-    });
-  }
-
-  /* ---------- Canvas 基础（750×1000 = 3:4；尺寸按 mock 340 宽 ×2.2 手调） ---------- */
   const W = 750, H = 1000;
   const C_TEAL = '#0e7c66', C_TEAL2 = '#1e9e6a', C_TEXT = '#1c2733',
     C_MUTED = '#6b7a89', C_GRAY = '#98a6b3', C_LINE = '#e5e9ee';
   const FONT = '"PingFang SC","Microsoft YaHei","Noto Sans SC",Arial,sans-serif';
 
-  function rr(ctx, x, y, w, h, r) { // roundRect 兼容路径
+  /** 金额短格式：整数去 .00 零头，带零头保留两位（卡面大数字） */
+  function fmtYuanShort(cents) {
+    if (cents == null || isNaN(cents)) return '—';
+    const s = (cents / 100).toFixed(2);
+    return s.endsWith('.00') ? s.slice(0, -3) : s;
+  }
+
+  function rr(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -71,7 +34,6 @@
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
-  /** 文本超宽缩字号（客户标题/地址一行放下） */
   function fitFont(ctx, text, basePx, maxW, weight) {
     let px = basePx;
     ctx.font = `${weight || 700} ${px}px ${FONT}`;
@@ -88,15 +50,42 @@
     return t + '…';
   }
 
-  /**
-   * 渲染结算卡（同步；二维码图先由调用方 loadImage 预载传入）。
-   * data=Core.settlementCardData(job)；opts.manualEnclosedMu=旧单弹窗手填值（仅进图片）。
-   */
+  /** dataURL → HTMLImageElement（坏图/空值 resolve null，调用方跳过不渲染） */
+  function loadImage(dataURL) {
+    return new Promise(resolve => {
+      if (!dataURL) { resolve(null); return; }
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = dataURL;
+    });
+  }
+
+  /** 上传规范化：File → 读图 → 最长边 480px 内 PNG dataURL（控制 localStorage 体积） */
+  async function normalizeImage(file) {
+    if (!file || !/^image\//.test(file.type)) return null;
+    const raw = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result || ''));
+      fr.onerror = () => rej(new Error('读图失败'));
+      fr.readAsDataURL(file);
+    });
+    const img = await loadImage(raw);
+    if (!img) return null;
+    const k = Math.min(1, 480 / Math.max(img.width, img.height));
+    if (k >= 1 && raw.length < 300 * 1024) return raw;
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.width * k));
+    c.height = Math.max(1, Math.round(img.height * k));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  }
+
+  /** 渲染卡面（同步；二维码图先由调用方 loadImage 预载传入） */
   function renderCard(canvas, data, imgs, opts) {
     const ctx = canvas.getContext('2d');
     const o = opts || {};
     ctx.clearRect(0, 0, W, H);
-    // 卡体：白底圆角，外部透明（分享出去贴任何背景都干净）
     rr(ctx, 0, 0, W, H, 40);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
@@ -104,7 +93,7 @@
     rr(ctx, 0, 0, W, H, 40);
     ctx.clip();
 
-    /* ---- 头部：135° 青绿渐变 + 品牌行 + 客户标题 + 🚁 ---- */
+    /* ---- 头部：青绿渐变 + 品牌行 + 客户标题 + 🚁 ---- */
     const grad = ctx.createLinearGradient(0, 0, W, 176);
     grad.addColorStop(0, C_TEAL);
     grad.addColorStop(1, C_TEAL2);
@@ -125,7 +114,7 @@
     ctx.fillText('🚁', W - 48 - 76, 112);
     ctx.globalAlpha = 1;
 
-    /* ---- 金额区：标签 + 大数字（¥ 上标位）+ 状态戳 ---- */
+    /* ---- 金额区：本次作业应收 + 大数字 + 状态戳 ---- */
     let y = 226;
     ctx.textAlign = 'center';
     ctx.fillStyle = C_MUTED;
@@ -133,7 +122,7 @@
     ctx.fillText('本次作业应收', W / 2, y);
     ctx.textAlign = 'left';
     y = 330;
-    const big = Core.fmtYuanShort(data.amountCents);
+    const big = fmtYuanShort(data.amountCents);
     ctx.fillStyle = C_TEAL;
     ctx.font = `800 46px ${FONT}`;
     const curW = ctx.measureText('¥').width;
@@ -164,7 +153,7 @@
         ? Number(o.manualEnclosedMu) : null);
     const minis = [
       { n: enclosed != null ? `${enclosed} 亩` : '—', t: '圈地面积' },
-      { n: data.unitPriceCents != null ? `¥${Core.fmtYuanShort(data.unitPriceCents)}` : '—', t: '每亩' },
+      { n: data.unitPriceYuan != null ? `¥${data.unitPriceYuan}` : '—', t: '每亩' },
       { n: data.drugType || '—', t: '药型' }
     ];
     const cellW = (W - 96 - 36) / 3;
@@ -185,7 +174,7 @@
     }
     ctx.textAlign = 'left';
 
-    /* ---- 信息行：日期 / 地址 / 单号 / 飞手（虚线分隔；须收在码区上沿之前） ---- */
+    /* ---- 信息行：日期 / 地址 / 单号 / 飞手 ---- */
     const rows = [
       ['作业日期', data.date || '—'],
       ['地块地址', data.address || '—'],
@@ -215,7 +204,7 @@
       ry += 56;
     });
 
-    /* ---- 页脚（有码时左移留位；码后画覆盖其上） ---- */
+    /* ---- 页脚（有码时左移留位） ---- */
     const hasQr = !!(imgs.pay || imgs.acct);
     ctx.strokeStyle = '#eef1f4';
     ctx.lineWidth = 2;
@@ -235,7 +224,7 @@
       ctx.textAlign = 'left';
     }
 
-    /* ---- 二维码角（右下；主从=大小+描边；压页脚尾区不压信息行） ---- */
+    /* ---- 二维码角（右下；主从=大小+描边） ---- */
     const drawQr = (img, size, cap, capColor, xRight) => {
       if (!img) return 0;
       const bw = size + 16;
@@ -254,7 +243,6 @@
       ctx.textAlign = 'left';
       return bw;
     };
-    // B 双码：账号码 136 在左（次，浅描边）→ 收款码 168 在右（主，主色描边）；A 单码只有后者
     let rightX = W - 36;
     if (imgs.pay) {
       drawQr(imgs.pay, 168, '微信扫码付款', C_TEAL, rightX);
@@ -265,35 +253,16 @@
     ctx.restore();
   }
 
-  /* ---------- 弹窗（模块自有 DOM，直挂监听；不经 handleAct 委托） ---------- */
-  let $mask = null;
+  /* ---------- 弹窗（计算器既有 modal 体系内自管；模块自有监听） ---------- */
   let current = null; // { data, imgs, canvas }
-
-  function toast(msg, isErr) {
-    const t = document.getElementById('lgToast');
-    if (!t) return;
-    t.textContent = msg;
-    t.classList.toggle('err', !!isErr);
-    t.hidden = false;
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => { t.hidden = true; }, 2600);
-  }
 
   function paint() {
     if (!current) return;
-    const input = document.getElementById('lgScardEnclosed');
+    const input = document.getElementById('cardEnclosedInput');
     renderCard(current.canvas, current.data, current.imgs, {
       manualEnclosedMu: input ? input.value : null
     });
   }
-
-  function close() {
-    if ($mask && $mask.parentNode) $mask.parentNode.removeChild($mask);
-    $mask = null;
-    current = null;
-    document.removeEventListener('keydown', onKey);
-  }
-  function onKey(e) { if (e.key === 'Escape') close(); }
 
   function fileName(data) {
     return `结算卡-${data.jobNo || data.date || '作业'}.png`;
@@ -314,71 +283,67 @@
   }
   async function save() {
     const blob = await toBlob();
-    if (!blob) { toast('出图失败，请重试', true); return; }
+    if (!blob) return;
     download(blob, fileName(current.data));
-    toast('已保存结算卡图片');
   }
   async function share() {
     const blob = await toBlob();
-    if (!blob) { toast('出图失败，请重试', true); return; }
+    if (!blob) return;
     const file = new File([blob], fileName(current.data), { type: 'image/png' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: current.data.jobNo || '结算单' }); }
       catch (e) { /* 用户取消分享不算错误 */ }
     } else {
       download(blob, fileName(current.data));
-      toast('当前环境不支持系统分享，已改为下载图片');
     }
   }
 
-  /** 入口：open(job)——job=Api.job(id) 载荷（含 settlement_lines/plots 快照） */
-  async function open(job) {
-    const data = Core.settlementCardData(job);
-    const [pay, acct] = await Promise.all([loadImage(QRS.get(QRS.PAY_KEY)), loadImage(QRS.get(QRS.ACCT_KEY))]);
-    // 防御性单实例：清掉任何残留 mask（正常 close 只有一个；并发 open 时防叠层）
-    document.querySelectorAll('#lgScardMask').forEach(m => m.remove());
-    $mask = null;
-    current = null;
-    document.removeEventListener('keydown', onKey);
-    $mask = document.createElement('div');
-    $mask.className = 'lg-modal-mask';
-    $mask.id = 'lgScardMask';
+  /**
+   * 入口：open(entry)——entry={ result, state, jobNo, date, address, operators }
+   * result/state 取 UI._lastResult 与 UI.state；纯函数装配见 data.settlementCardData。
+   */
+  async function open(entry) {
+    const data = window.settlementCardData(entry.result, entry.state, entry);
+    const qr = window.Storage ? window.Storage.getQr() : { pay: '', acct: '' };
+    const [pay, acct] = await Promise.all([loadImage(qr.pay), loadImage(qr.acct)]);
+    // 填充行：无圈地快照（旧结果/全未填）时手填一次（仅进图片，不落任何存储）
     const fillRow = data.enclosedMu == null
-      ? `<div class="lg-scard-fill">
-           <label>圈地面积(亩) <input id="lgScardEnclosed" type="number" step="0.1" min="0" placeholder="旧单无圈地记录，可手填"></label>
-           <span class="lg-chart-foot">仅进图片，不写入任何数据</span>
+      ? `<div class="card-fill">
+           <label>圈地面积(亩) <input id="cardEnclosedInput" type="number" step="0.1" min="0" placeholder="本单未记圈地，可手填"></label>
+           <span class="hint">仅进图片，不写入任何数据</span>
          </div>`
       : '';
-    $mask.innerHTML = `<div class="lg-modal-panel lg-scard-panel">
-      <div class="lg-modal-head"><h2>📤 结算卡预览</h2>
-        <button class="lg-btn" data-scard="close">关闭</button></div>
+    const wrap = document.getElementById('cardModalBody');
+    if (!wrap) return;
+    wrap.innerHTML = `
       ${fillRow}
-      <div class="lg-scard-canvaswrap"><canvas id="lgScardCanvas" width="${W}" height="${H}"></canvas></div>
-      <div class="lg-scard-acts">
-        <button class="lg-btn primary" data-scard="save">⬇ 保存图片</button>
-        <button class="lg-btn" data-scard="share">📤 系统分享</button>
+      <div class="card-canvaswrap"><canvas id="cardCanvas" width="${W}" height="${H}"></canvas></div>
+      <div class="btn-row" style="justify-content:center">
+        <button class="btn btn-primary" data-card="save">⬇ 保存图片</button>
+        <button class="btn btn-secondary" data-card="share">📤 系统分享</button>
       </div>
-      <div class="lg-chart-foot">收款码/账号码在「主数据 · 设置」上传；未配置不渲染。分享件只含圈地面积口径。</div>
-    </div>`;
-    document.body.appendChild($mask);
+      <div class="hint" style="text-align:center">收款码/账号码在 ☁️ 同步设置上传；未配置不渲染。分享件只含圈地面积口径。</div>`;
     current = {
       data,
       imgs: { pay, acct },
-      canvas: document.getElementById('lgScardCanvas')
+      canvas: document.getElementById('cardCanvas')
     };
-    $mask.addEventListener('click', e => { if (e.target === $mask) close(); });
-    $mask.addEventListener('click', e => {
-      const b = e.target.closest('[data-scard]');
+    wrap.onclick = e => {
+      const b = e.target.closest('[data-card]');
       if (!b) return;
-      if (b.dataset.scard === 'close') close();
-      else if (b.dataset.scard === 'save') save();
-      else if (b.dataset.scard === 'share') share();
-    });
-    const input = document.getElementById('lgScardEnclosed');
+      if (b.dataset.card === 'save') save();
+      else if (b.dataset.card === 'share') share();
+    };
+    const input = document.getElementById('cardEnclosedInput');
     if (input) input.addEventListener('input', paint);
-    document.addEventListener('keydown', onKey);
     paint();
   }
 
-  window.LedgerSettlementCard = { open, QRS };
+  function resetBody() {
+    const wrap = document.getElementById('cardModalBody');
+    if (wrap) { wrap.innerHTML = ''; wrap.onclick = null; }
+    current = null;
+  }
+
+  window.CalcSettlementCard = { open, resetBody, renderCard, fmtYuanShort, normalizeImage, loadImage };
 })();

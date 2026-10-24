@@ -465,24 +465,3 @@ body.compact .lg-kpi-big { font-size: 19px; }
 @keyframes lg-fadein { from { opacity: 0; } to { opacity: 1; } }
 #lgMain.lg-fade { animation: lg-fadein 120ms ease-out; }
 @media (prefers-reduced-motion: reduce) { #lgMain.lg-fade { animation: none; } }
-
-/* ============================================================
-   D4 结算卡（客户分享件；Canvas 3:4 预览 + 设置区二维码上传）
-   卡面固定白底不随主题（给客户看的印刷品）；视觉基准=SETTLEMENT-CARD-MOCK.html
-   ============================================================ */
-.lg-scard-panel { width: min(420px, 94vw); text-align: center; }
-.lg-scard-canvaswrap { display: flex; justify-content: center; }
-.lg-scard-canvaswrap canvas {
-  width: min(340px, 82vw); height: auto; border-radius: 14px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .25); background: #fff;
-}
-.lg-scard-fill { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin-bottom: 10px; }
-.lg-scard-fill input {
-  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
-  background: var(--bg); color: var(--text); width: 150px;
-}
-.lg-scard-acts { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
-.lg-scard-qrset {
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-  margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 10px;
-}

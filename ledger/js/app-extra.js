@@ -664,27 +664,12 @@
     // P10-R1：市/县筛选下拉（默认「全部」；值记忆 localStorage，键 lg-md-county）
     const countyOpts = counties.map(c =>
       `<option value="${esc(c)}" ${c === mdCountyFilter ? 'selected' : ''}>${esc(c)}</option>`).join('');
-    // D4 结算卡二维码配置状态（QRS 在 settlement-card.js；组件未加载视同未配置）
-    const QRS_ = window.LedgerSettlementCard && window.LedgerSettlementCard.QRS;
-    const payQr = QRS_ && QRS_.get(QRS_.PAY_KEY);
-    const acctQr = QRS_ && QRS_.get(QRS_.ACCT_KEY);
     return `${dupePanel}<div class="lg-panel">
       <h2>设置</h2>
       <div class="lg-form">
         <label>记账人（写入 edit_logs 与工单 operator）<input id="mdOperator" value="${esc(settings.operator || 'local')}"></label>
         <button class="lg-btn primary" data-act="md-save-operator">保存</button>
         <button class="lg-btn" data-act="onboard-replay" title="重看三步引导（工单→结算→收款）">🎓 重看新手引导</button>
-      </div>
-      <!-- D4 结算卡二维码：上传后存 localStorage dataURL，工单详情「📤 生成结算卡」右下角渲染；未配置不渲染 -->
-      <div class="lg-scard-qrset">
-        <span class="lg-kpi-label">结算卡二维码（客户扫码用）</span>
-        <label class="lg-btn" title="选一张收款码图片（自动缩到 480px 存本地）">📷 上传收款码<input type="file" id="qrPayFile" accept="image/*" hidden></label>
-        <span id="qrPayState" class="lg-kpi-sub">${(window.LedgerSettlementCard && window.LedgerSettlementCard.QRS.get(window.LedgerSettlementCard.QRS.PAY_KEY)) ? '已配置' : '未配置'}</span>
-        <button class="lg-btn" data-act="qr-pay-clear" title="清除收款码" ${payQr ? '' : 'hidden'}>✕</button>
-        <label class="lg-btn" title="选一张账号码图片（自动缩到 480px 存本地）">📷 上传账号码<input type="file" id="qrAcctFile" accept="image/*" hidden></label>
-        <span id="qrAcctState" class="lg-kpi-sub">${(window.LedgerSettlementCard && window.LedgerSettlementCard.QRS.get(window.LedgerSettlementCard.QRS.ACCT_KEY)) ? '已配置' : '未配置'}</span>
-        <button class="lg-btn" data-act="qr-acct-clear" title="清除账号码" ${acctQr ? '' : 'hidden'}>✕</button>
-        <span class="lg-kpi-sub">收款码=主码大位（微信扫码付款）；账号码=次码；两者都传=双码版</span>
       </div>
     </div>
     <div class="lg-panel">
@@ -998,15 +983,6 @@
       case 'md-save-operator':
         run(() => Api.saveSettings({ operator: document.getElementById('mdOperator').value || 'local' }), '记账人已保存');
         break;
-      case 'qr-pay-clear':
-      case 'qr-acct-clear': {
-        // D4 结算卡二维码清除（上传走 app.js change 委托；此处只清档+重绘设置区）
-        const QRS = window.LedgerSettlementCard && window.LedgerSettlementCard.QRS;
-        if (QRS) QRS.clear(act === 'qr-pay-clear' ? QRS.PAY_KEY : QRS.ACCT_KEY);
-        toast('已清除二维码');
-        if (tools && tools.render) tools.render().catch(() => {});
-        break;
-      }
       case 'op-save': {
         const amount = Core.yuanInputToCents(document.getElementById('opAmount').value);
         if (!needAmount(amount)) return;

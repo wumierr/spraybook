@@ -491,44 +491,6 @@
   /** 字号档解析：只认 'compact'（紧凑小字档），其余一律标准档（坏存档安全回退） */
   function normalizeFontsize(saved) { return saved === 'compact' ? 'compact' : 'normal'; }
 
-  /* ---------- D4 结算卡（客户分享件；纯函数，node:test 可测） ---------- */
-  /** 金额短格式：整数去两位小数零头（卡面大数字对照 mock 口径），带零头保留两位 */
-  function fmtYuanShort(cents) {
-    if (cents == null || isNaN(cents)) return '—';
-    const s = fmtYuan(cents);
-    return s.endsWith('.00') ? s.slice(0, -3) : s;
-  }
-  /**
-   * 工单详情（Api.job 载荷）→ 结算卡数据。
-   * 口径红线：客户只见圈地面积——本函数只从分家明细/地块快照取数，
-   * 绝不读作业面积合计、成本、利润字段；旧 2.1 作业包无圈地快照 →
-   * enclosedMu=null，调用方在弹窗手填一次（仅进图片，不落任何存储）。
-   * 客户名=分家明细农户去重（空则地块农户兜底）；单价=首个 spray 行（007 列）。
-   */
-  function settlementCardData(job) {
-    const j = job || {};
-    const lines = Array.isArray(j.settlement_lines) ? j.settlement_lines : [];
-    const plots = Array.isArray(j.plots) ? j.plots : [];
-    const names = (list) => [...new Set(list.map(x => x && x.farmer_name).filter(Boolean))];
-    const customers = names(lines);
-    const sprayLine = lines.find(l => l && l.kind === 'spray' && l.unit_price_cents != null);
-    const enclosedSum = plots.reduce(
-      (s, p) => s + (p && p.area_enclosed_mu != null ? (Number(p.area_enclosed_mu) || 0) : 0), 0);
-    const hasEnclosed = plots.some(p => p && p.area_enclosed_mu != null && Number(p.area_enclosed_mu) > 0);
-    return {
-      jobNo: j.job_no || '',
-      date: (j.job_date || '').slice(0, 10),
-      customers: customers.length ? customers : names(plots),
-      enclosedMu: hasEnclosed ? Math.round(enclosedSum * 100) / 100 : null,
-      drugType: j.plant_type_name || '',
-      unitPriceCents: sprayLine ? sprayLine.unit_price_cents : null,
-      amountCents: j.income_cents != null ? j.income_cents : null,
-      address: j.address || '',
-      operators: Array.isArray(j.operator_names) ? j.operator_names.filter(Boolean) : [],
-      done: j.status === 'completed' || j.status === 'settled' || j.status === 'reopened'
-    };
-  }
-
   /** B3 空状态即教程：图标 + 一句话 + 直达动作（按钮走既有 data-act 委托，
    *  跳页动作统一 data-act="goto-tab" data-tab="…"）。
    *  opts.cell=true 返回表格空态内容（放在 <td colspan=N> 内）；
@@ -565,7 +527,6 @@
     billPayable, billUnpaid, jobRow, settlementRow, billRow, journalRow, overviewRow,
     colwKey, clampColw, parseColw,
     THEME_KEY, FONTSIZE_KEY, resolveTheme, normalizeFontsize,
-    fmtYuanShort, settlementCardData,
     normDate, dateRangeOf, quickRangeOf, weekRangeOf, barUiOf, parseBarState,
     parseCardState, parseGridSave, gridLayoutOf, nextCardId, emptyState, parseHomeGridSave,
     BAR_QUICKS, CARD_GRANS, GRID_COLUMNS,

@@ -498,6 +498,17 @@
           <input type="checkbox" id="syncCfgEnabled"> 启用同步
         </label>
       </div>
+      <!-- D4 结算卡二维码（上传存 drone_spray_qr_v1 dataURL；未配置不渲染） -->
+      <div class="card-qrset">
+        <span class="card-qr-label">结算卡二维码（客户扫码用）</span>
+        <label class="btn btn-secondary btn-sm" title="选一张收款码图片（自动缩到 480px 存本地）">📷 上传收款码<input type="file" id="qrPayFile" accept="image/*" hidden></label>
+        <span id="qrPayState" class="hint">未配置</span>
+        <button class="btn btn-secondary btn-sm" id="qrPayClear" style="display:none;">✕</button>
+        <label class="btn btn-secondary btn-sm" title="选一张账号码图片（自动缩到 480px 存本地）">📷 上传账号码<input type="file" id="qrAcctFile" accept="image/*" hidden></label>
+        <span id="qrAcctState" class="hint">未配置</span>
+        <button class="btn btn-secondary btn-sm" id="qrAcctClear" style="display:none;">✕</button>
+        <span class="hint">收款码=主码大位（扫码付款）；两者都传=双码版</span>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" id="syncCfgTest">🔍 测试连接</button>
         <button class="btn btn-secondary" data-close>取消</button>
@@ -566,9 +577,18 @@
       <div id="syncStatusRow" class="wo-sync-row hint" hidden></div>
       <div class="modal-actions">
         <button class="btn btn-secondary" id="copyWorkOrder">📋 复制纯文本工单</button>
+        <button class="btn btn-secondary" id="cardWorkOrderBtn">📤 生成结算卡</button>
         <button class="btn btn-secondary" id="syncWorkOrder">☁️ 同步到账本</button>
         <button class="btn btn-primary" data-close>完成</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 模态框：结算卡（D4 客户分享件；Canvas 3:4，圈地口径白名单） -->
+  <div class="modal" id="cardModal" aria-hidden="true">
+    <div class="modal-box card-modal-box">
+      <div class="modal-title">📤 结算卡预览 <button class="modal-close" data-close>✕</button></div>
+      <div id="cardModalBody"><!-- JS 注入 --></div>
     </div>
   </div>
 
@@ -612,6 +632,7 @@
   <script src="js/storage.js"></script>
   <script src="js/sync.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/settlement-card.js"></script>
   <script src="js/app.js"></script>
 
   <!-- PWA Service Worker（仅在线上/localhost 生效，file:// 协议下自动跳过） -->

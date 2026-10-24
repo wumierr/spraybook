@@ -1998,3 +1998,22 @@ html, body {
 .pa-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .pa-meta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 .pa-count { font-size: 11px; color: var(--accent); white-space: nowrap; }
+
+/* ---------- D4 结算卡（2026-10-24b 修正批：计算器端客户分享件） ---------- */
+.card-modal-box { width: min(420px, 94vw); text-align: center; }
+.card-canvaswrap { display: flex; justify-content: center; margin-bottom: 4px; }
+.card-canvaswrap canvas {
+  width: min(340px, 82vw); height: auto; border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .25); background: #fff;
+}
+.card-fill { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin-bottom: 10px; font-size: 12px; }
+.card-fill input {
+  border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px 8px;
+  background: var(--input-bg); color: var(--text-primary); width: 110px;
+}
+.card-qrset {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-top: 10px; border-top: 1px dashed var(--panel-border); padding-top: 10px;
+}
+.card-qr-label { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.card-qrset input[hidden] { display: none; }

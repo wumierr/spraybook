@@ -22,6 +22,7 @@ const ASSETS = [
   './js/storage.js',
   './js/sync.js',
   './js/ui.js',
+  './js/settlement-card.js',
   './js/app.js',
   './assets/icons/favicon.svg'
 ];

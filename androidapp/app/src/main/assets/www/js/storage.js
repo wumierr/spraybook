@@ -12,7 +12,8 @@ const Storage = {
     types: 'drone_spray_types_v1',
     farmers: 'drone_spray_farmers_v1',
     batteries: 'drone_spray_batteries_v1',
-    plots: 'drone_spray_plots_v1'
+    plots: 'drone_spray_plots_v1',
+    qr: 'drone_spray_qr_v1'
   },
 
   get(key, fallback) {
@@ -68,6 +69,20 @@ const Storage = {
   savePlots(archive) {
     const clean = window.normalizePlotArchive ? window.normalizePlotArchive(archive) : { list: [] };
     return this.set(this.KEYS.plots, clean);
+  },
+
+  /* ---------- D4 结算卡二维码（{pay: dataURL, acct: dataURL}；dataURL 须 image/*） ---------- */
+  getQr() {
+    const d = this.get(this.KEYS.qr, null) || {};
+    return { pay: /^data:image\//.test(d.pay || '') ? d.pay : '', acct: /^data:image\//.test(d.acct || '') ? d.acct : '' };
+  },
+  saveQr(qr) {
+    const cur = this.getQr();
+    const next = {
+      pay: /^data:image\//.test(qr && qr.pay) ? qr.pay : cur.pay,
+      acct: /^data:image\//.test(qr && qr.acct) ? qr.acct : cur.acct
+    };
+    return this.set(this.KEYS.qr, next);
   },
 
   getState() { return this.get(this.KEYS.state, null); },

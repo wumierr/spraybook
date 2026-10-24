@@ -475,6 +475,38 @@ window.applyPlotSave = applyPlotSave;
 window.recordPlotUse = recordPlotUse;
 
 /* ============================================================
+   ★★★ D4 结算卡（客户分享件）——卡面装配纯函数 ★★★
+   口径红线（裁决 10-21）：客户只见圈地面积——本函数输出即白名单，
+   绝不读作业面积合计(totalArea)/成本/利润字段；金额=客户应付
+   Σ结算行(打药钱+药钱)，不含补贴（补贴不是客户付的，修正 ledger 初版口径）。
+   渲染器 js/settlement-card.js 只消费本函数输出（守门断言见 tests）。
+   ============================================================ */
+function settlementCardData(result, state, meta) {
+  const r = result || {};
+  const s = state || {};
+  const m = meta || {};
+  const st = Array.isArray(r.settlement) ? r.settlement : [];
+  const names = [...new Set(st.map(x => x && x.farmerName).filter(Boolean))];
+  // 金额：Σ结算行（元）→ 分；旧结果无 settlement（空地块）退 income 补贴外口径不可得 → null 由渲染器显示 —
+  const amountYuan = st.reduce((sum, x) => sum + (Number(x.sprayFee) || 0) + (Number(x.pesticideFee) || 0), 0);
+  const hasSettlement = st.length > 0;
+  return {
+    jobNo: m.jobNo || '',
+    date: String(m.date || '').slice(0, 10),
+    customers: names,
+    enclosedMu: (r.areaEnclosed != null && Number(r.areaEnclosed) > 0)
+      ? Math.round(Number(r.areaEnclosed) * 100) / 100 : null,
+    drugType: (s.plant && s.plant.name) || '',
+    unitPriceYuan: (Number(s.income && s.income.pricePerMu) > 0) ? Number(s.income.pricePerMu) : null,
+    amountCents: hasSettlement ? Math.round(amountYuan * 100) : null,
+    address: m.address || '',
+    operators: (Array.isArray(m.operators) && m.operators.length) ? m.operators.filter(Boolean) : [],
+    done: true
+  };
+}
+window.settlementCardData = settlementCardData;
+
+/* ============================================================
    ★★★ 吊运模式（HAUL）—— 与打药模式完全独立 ★★★
    场景：无人机吊运水果/农产品从果园下山或跨地形运输
    收入：按每斤多少毛计费（用户填毛，实际 ×0.1 = 元）
