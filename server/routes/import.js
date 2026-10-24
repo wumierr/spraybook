@@ -165,6 +165,19 @@ function createImportRouter(db) {
     }
     const { action, parsed } = req.body || {};
     const now = new Date().toISOString();
+    // B0.2/N-18：evidence 失败行（金额疑似幻觉/编造）不得被批量确认放行——
+    // 「确认全部待复核」循环走这里，服务端挡一道；人工订正路径不受影响：
+    // 先编辑（parsed 分支已把 needs_review 清空=人工已核对）再确认即放行。
+    if (action === 'confirm') {
+      let pj = null;
+      try { pj = JSON.parse(row.parsed_json || '{}'); } catch (e) { pj = null; }
+      const evFail = pj && Array.isArray(pj.needs_review) &&
+        pj.needs_review.some(n => n && n.code === 'evidence');
+      if (evFail) {
+        throw new ApiError('INVALID_STATE',
+          '该行金额证据校验未通过（疑似幻觉/编造/跨行），请先人工订正（编辑保存即视为已核对）再确认');
+      }
+    }
     const tx = db.transaction(() => {
       if (parsed) {
         const merged = JSON.parse(row.parsed_json || '{}');

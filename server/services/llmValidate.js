@@ -24,7 +24,9 @@ function normalizeForMatch(s) {
     .replace(/\.0+$/, ''); // 300.0 → 300
 }
 
-/** 金额数值是否能在原文片段中定位（整数与小数两种写法任一命中即可） */
+/** 金额数值是否能在原文片段中定位（整数与小数两种写法任一命中即可）。
+ *  B0.2/N-16：数字边界匹配——两侧不得再贴数字，防 300⊂1300、50⊂150 的
+ *  子串误命中（实测 1300 可满足 300 的证据校验，幻觉金额因此穿过硬门）。 */
 function amountInQuote(amount, quote) {
   const q = normalizeForMatch(quote);
   if (!q) return false;
@@ -39,8 +41,11 @@ function amountInQuote(amount, quote) {
     candidates.add(n.toFixed(1));
     candidates.add(String(n));
   }
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   for (const c of candidates) {
-    if (c && q.includes(c)) return true;
+    if (!c) continue;
+    const re = new RegExp(`(?<!\\d)${esc(c)}(?!\\d)`);
+    if (re.test(q)) return true;
   }
   return false;
 }
@@ -50,19 +55,21 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * 校验 LLM 抽取的一行。row 形状见 ollamaClient.buildPrompt 的输出协议。
  * fullText 为用户原始粘贴文本（证据回源基准）。
+ * lineText（B0.2/N-17，可选）：该行依据的原文行文本——给了则证据回源限定在
+ *   该行内（跨行证据=换位金额的典型形态，标记 evidence）；不给回退全文
+ *   （旧口径，分块直通/旧调用方零变化）。
  * defaultDate（P9-R3，可选 YYYY-MM-DD）：job/income_pair 缺（有效）日期时
  *   parsed.date=defaultDate 且 needs_review 标 date_default（仍进复核，宁多勿少）；
  *   已有合法日期或未传 defaultDate 时行为与旧版完全一致。expense/note 不适用。
  * 返回 { kind, parsed, needs_review, confidence, ok } —— ok = needs_review 为空。
  */
-function validateRow(row, fullText, defaultDate) {
+function validateRow(row, fullText, defaultDate, lineText) {
   const needs = [];
   const reasons = [];
   const push = (code, detail) => needs.push({ code, detail });
   // defaultDate 只认合法 YYYY-MM-DD（非法值按没传处理，绝不吃掉用户数据）
   const def = typeof defaultDate === 'string' && DATE_RE.test(defaultDate) ? defaultDate : null;
 
-  const normText = normalizeForMatch(fullText);
   const kind = row && row.kind;
   if (!LLM_KINDS.includes(kind)) {
     return { kind: 'note', parsed: { text: JSON.stringify(row).slice(0, 200) },
@@ -87,8 +94,14 @@ function validateRow(row, fullText, defaultDate) {
       push('evidence', `${field} 缺原文证据`);
       return Math.round(n * 100);
     }
-    if (!normText.includes(normalizeForMatch(quote))) {
-      push('evidence', `${field} 的证据"${String(quote).slice(0, 40)}"不在原文中（疑似编造）`);
+    // N-17：证据回源行级化——lineText 给了就以该行为 scope（跨行证据=换位金额形态），
+    // 否则回退全文（旧口径）。金额定位（amountInQuote）始终在该 scope 内做。
+    const scope = (lineText != null && String(lineText).length) ? lineText : fullText;
+    const scopeNorm = normalizeForMatch(scope);
+    if (!scopeNorm.includes(normalizeForMatch(quote))) {
+      push('evidence', lineText != null
+        ? `${field} 的证据"${String(quote).slice(0, 40)}"不在该行原文中（疑似跨行/编造，请核对行号与证据）`
+        : `${field} 的证据"${String(quote).slice(0, 40)}"不在原文中（疑似编造）`);
       return Math.round(n * 100);
     }
     if (!amountInQuote(n, quote)) {
@@ -188,9 +201,12 @@ function validateRow(row, fullText, defaultDate) {
 }
 
 /** 批量校验：rows = LLM 输出的 rows 数组，fullText = 原文（evidence 回源基准，分块时不改）。
- *  defaultDate 透传 validateRow 第三参（可选）。 */
-function validateRows(rows, fullText, defaultDate) {
-  return (Array.isArray(rows) ? rows : []).map(r => validateRow(r, fullText, defaultDate));
+ *  defaultDate 透传 validateRow 第三参（可选）。
+ *  lineTextOf（B0.2/N-17，可选）：(row, index) → 该行依据的原文行文本（null=回退全文），
+ *  分块编排层按 LLM 行号取块内对应行喂进来，实现证据行级回源。 */
+function validateRows(rows, fullText, defaultDate, lineTextOf) {
+  return (Array.isArray(rows) ? rows : []).map((r, i) =>
+    validateRow(r, fullText, defaultDate, typeof lineTextOf === 'function' ? lineTextOf(r, i) : null));
 }
 
 module.exports = { validateRow, validateRows, amountInQuote, normalizeForMatch, LLM_KINDS, EXPENSE_CATEGORIES };

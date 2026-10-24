@@ -6,6 +6,7 @@ const { ApiError } = require('./apiError');
 const { logEdit } = require('./audit');
 const ollama = require('./ollamaClient');
 const { chunkText } = require('./llmChunk');
+const llmSchema = require('./llmSchema');
 
 /* 审查 prompt 版本（与导入 prompt 的 PROMPT_VERSION 相互独立） */
 const REVIEW_PROMPT_VERSION = 'p10-r1';
@@ -118,6 +119,11 @@ async function reviewBatch(db, batchId) {
   for (const ch of chunks) {
     const gen = await ollama.generateJson(db, buildBatchPrompt(ch.text));
     if (!gen.ok) throw new ApiError(gen.error, gen.hint || 'LLM 审查失败', 502);
+    // B0.2/N-22：结构闸——findings 形状畸形（row_id 非正整数/severity 越界/what 空）
+    // 整块按坏输出处理，不进关笼（normBatchFinding 的白名单回退只兜值域，不兜形状）
+    const schema = llmSchema.validateBatchFindings(gen.json);
+    if (!schema.ok) throw new ApiError('LLM_BAD_OUTPUT',
+      `审查输出结构不符契约: ${schema.errors.slice(0, 3).join('；')}`, 502);
     const fs = Array.isArray(gen.json && gen.json.findings) ? gen.json.findings : [];
     for (const f of fs) {
       const n = normBatchFinding(f, byId);
@@ -138,8 +144,12 @@ async function reviewBatch(db, batchId) {
       try { pj = JSON.parse(row.parsed_json || '{}'); } catch (e) { pj = {}; }
       pj.needs_review = Array.isArray(pj.needs_review) ? pj.needs_review : [];
       const detail = findingDetail(f);
-      // 去重：同行同文案不重复 append（重复点「审查这批」幂等）
-      if (pj.needs_review.some(n => n.code === 'llm_review' && n.detail === detail)) continue;
+      // 去重：同行同文案不重复 append（重复点「审查这批」幂等）。
+      // B0.2/N-15：键不含 severity——同一发现两次审查严重度升降（low→medium）
+      // 会绕过旧 detail 全串比较造成重复 append；剥离 [llm:x] 前缀后比较。
+      const dedupKey = detail.replace(/^\[llm:\w+\]\s*/, '');
+      if (pj.needs_review.some(n => n.code === 'llm_review' &&
+        String(n.detail).replace(/^\[llm:\w+\]\s*/, '') === dedupKey)) continue;
       pj.needs_review.push({ code: 'llm_review', detail });
       db.prepare('UPDATE raw_import_rows SET parsed_json = ?, updated_at = ? WHERE id = ?')
         .run(JSON.stringify(pj), now, f.row_id);
@@ -209,6 +219,10 @@ async function reviewHealth(db) {
   for (const ch of chunks) {
     const gen = await ollama.generateJson(db, buildHealthPrompt(ch.text));
     if (!gen.ok) throw new ApiError(gen.error, gen.hint || 'LLM 审查失败', 502);
+    // B0.2/N-22：结构闸（同批次审查口径）
+    const schema = llmSchema.validateHealthFindings(gen.json);
+    if (!schema.ok) throw new ApiError('LLM_BAD_OUTPUT',
+      `审查输出结构不符契约: ${schema.errors.slice(0, 3).join('；')}`, 502);
     const fs = Array.isArray(gen.json && gen.json.findings) ? gen.json.findings : [];
     for (const f of fs) {
       const n = normHealthFinding(f, lineByWhere);

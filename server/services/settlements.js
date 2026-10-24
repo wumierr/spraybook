@@ -176,16 +176,18 @@ function confirmSettlement(db, id) {
   return settlementWithDetails(db, id);
 }
 
-/** A0-B-C2：撤回/作废结算前置守卫——该结算下账单仍有 active 收款则拒绝，
- *  否则账单被 void 而收款分录仍挂 1122 贷方，账实断裂（reconcile C2/C5 双破） */
+/** A0-B-C2 / B0-N-1：撤回/作废结算前置守卫——该结算下账单只要有已收金额即拒绝。
+ *  守卫按 bills.paid_cents>0 判定（B0-N-1 本质化）：挂单收款、FIFO 按客户收款、
+ *  预收抵扣三条核销路径最终都写 paid_cents；旧实现按 r.bill_id JOIN 查收款，
+ *  FIFO 收款 bill_id=NULL 会绕过（实证差 2400 元，账单 void 而收款分录仍挂 1122，
+ *  reconcile C2/C5 双破） */
 function assertNoActiveReceipts(db, settlementId, settlementNo) {
   const n = db.prepare(
-    `SELECT COUNT(*) AS c, COALESCE(SUM(r.amount_cents),0) AS amt
-     FROM receipts r JOIN bills b ON b.id = r.bill_id
-     WHERE b.settlement_id = ? AND r.status = 'active'`).get(settlementId);
+    `SELECT COUNT(*) AS c, COALESCE(SUM(paid_cents),0) AS amt
+     FROM bills WHERE settlement_id = ? AND status != 'void' AND paid_cents > 0`).get(settlementId);
   if (n.c > 0) {
     throw new ApiError('INVALID_STATE',
-      `结算单 ${settlementNo} 已有 ${n.c} 笔收款（共 ${(n.amt / 100).toFixed(2)} 元），请先作废对应收款再操作`);
+      `结算单 ${settlementNo} 名下账单已收 ${(n.amt / 100).toFixed(2)} 元（挂单/FIFO 按客户/预收抵扣均计入），请先作废对应收款再操作`);
   }
 }
 
@@ -263,7 +265,10 @@ function listBills(db, { status, party_id } = {}) {
      WHERE ${where.join(' AND ')} ORDER BY b.id DESC LIMIT 500`).all(...args);
 }
 
-/** 未收款账单可改金额/抹零；已收款拒绝（走撤回） */
+/** 未收款账单可改金额/抹零；已收款拒绝（走撤回）。
+ *  B0-H-2a：confirmed 结算的账单（已过账）直改金额/抹零会绕过分录 → C2 红——
+ *  前置拒绝并引导撤回结算（与 A0-B-C2 同哲学）；期初账单有独立 opening 分录，
+ *  改金额走红冲重过账（保留订正能力且账实一致；抹零不进分录无需重过）。 */
 function patchBill(db, id, { amount_cents, adjust_cents, note }) {
   const bill = db.prepare('SELECT * FROM bills WHERE id = ?').get(id);
   if (!bill) throw new ApiError('NOT_FOUND', `账单不存在: ${id}`, 404);
@@ -278,15 +283,40 @@ function patchBill(db, id, { amount_cents, adjust_cents, note }) {
   if (adjust_cents != null && typeof adjust_cents !== 'number') {
     throw new ApiError('VALIDATION', 'adjust_cents 必须是整数分（抹零/优惠为负）');
   }
+  const journalAffecting = (amount_cents != null && amount_cents !== bill.amount_cents);
+  if (journalAffecting) {
+    if (bill.settlement_id) {
+      const st = db.prepare('SELECT status, settlement_no FROM settlements WHERE id = ?').get(bill.settlement_id);
+      if (st && st.status === 'confirmed') {
+        throw new ApiError('INVALID_STATE',
+          `已确认结算 ${st.settlement_no} 的账单直改金额会与凭证脱节（对账 C2 将不平），请先撤回结算再改`);
+      }
+    }
+  }
   const before = { amount_cents: bill.amount_cents, adjust_cents: bill.adjust_cents };
+  const newAmount = amount_cents != null ? amount_cents : bill.amount_cents;
+  const now = nowISO();
   const tx = db.transaction(() => {
+    if (journalAffecting && bill.opening === 1) {
+      // 期初账单：红冲原 opening 分录，按新金额重过账（账实同步）
+      const entry = findActiveEntry(db, 'bill', id, { eventType: 'opening' });
+      if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '改金额重过账 ' + bill.bill_no });
+      postEntry(db, {
+        event_type: 'opening', ref_type: 'bill', ref_id: id,
+        occurred_at: bill.issued_at || now, memo: '期初应收(改) ' + bill.bill_no,
+        lines: [
+          { account_code: '1122', direction: 'debit', amount_cents: newAmount, party_id: bill.party_id, memo: '期初应收' },
+          { account_code: '4103', direction: 'credit', amount_cents: newAmount, party_id: bill.party_id, memo: '期初权益' }
+        ]
+      });
+    }
     db.prepare(
       `UPDATE bills SET amount_cents = COALESCE(?, amount_cents),
          adjust_cents = COALESCE(?, adjust_cents), note = COALESCE(?, note), updated_at = ?
        WHERE id = ?`).run(
         amount_cents != null ? amount_cents : null,
         adjust_cents != null ? adjust_cents : null,
-        note != null ? note : null, nowISO(), id);
+        note != null ? note : null, now, id);
     logEdit(db, { table: 'bills', recordId: id, action: 'update', before, after: { amount_cents, adjust_cents, note } });
   });
   tx();

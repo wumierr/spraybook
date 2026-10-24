@@ -19,9 +19,17 @@ function accountIdByCode(db, code) {
 /**
  * 过账。lines: [{account_code, direction('debit'|'credit'), amount_cents, party_id?, job_id?, memo?}]
  * 零金额行自动忽略；全部为零则不生成凭证（返回 null）。
+ * B0-N-7：负金额行不再静默过滤——负数经对过滤后会以"行丢失→UNBALANCED"的
+ * 间接面目失败或静默改写凭证形状，一律前置 throw VALIDATION（冲销走 reverseEntry）。
  */
 function postEntry(db, { event_type, ref_type, ref_id, occurred_at, memo, lines, reversal_of }) {
-  const clean = (lines || []).filter(l => l.amount_cents != null && l.amount_cents > 0);
+  const incoming = lines || [];
+  const negative = incoming.filter(l => l.amount_cents != null && l.amount_cents < 0);
+  if (negative.length) {
+    throw new ApiError('VALIDATION',
+      `分录行金额必须为正整数分（${event_type} 收到 ${negative.length} 行负金额：${negative.map(l => l.account_code).join('/')}）；冲销请走红冲而非负数行`);
+  }
+  const clean = incoming.filter(l => l.amount_cents != null && l.amount_cents > 0);
   if (!clean.length) return null;
   const debit = clean.filter(l => l.direction === 'debit').reduce((a, l) => a + l.amount_cents, 0);
   const credit = clean.filter(l => l.direction === 'credit').reduce((a, l) => a + l.amount_cents, 0);

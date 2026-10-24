@@ -447,16 +447,25 @@ function createSplit(db, { party_id, job_id, amount_cents, occurred_at, note }) 
 /* ---------------- 作废（不删记录，反向分录） ---------------- */
 
 function voidFinanceRecord(db, table, id) {
-  const ALLOWED = { receipts: 'receipt_no', payments: 'payment_no', advances: 'advance_no' };
-  const noCol = ALLOWED[table];
-  if (!noCol) throw new ApiError('VALIDATION', `不支持作废: ${table}`);
-  const row = getActive(db, table, id);
+  // B0.3/N-3：splits（manual_splits）补作废——URL 段与表名/refType 不同，显式映射；
+  // 照 advances 模式红冲（分成=红冲 5007/1001）；表无业务单号列，memo 用 #id 标识；
+  // 迁移 015 已补 updated_at
+  const ALLOWED = {
+    receipts: { tbl: 'receipts',      noCol: 'receipt_no', refType: 'receipt' },
+    payments: { tbl: 'payments',      noCol: 'payment_no', refType: 'payment' },
+    advances: { tbl: 'advances',      noCol: 'advance_no', refType: 'advance' },
+    splits:   { tbl: 'manual_splits', noCol: null,         refType: 'manual_split' }
+  };
+  const spec = ALLOWED[table];
+  if (!spec) throw new ApiError('VALIDATION', `不支持作废: ${table}`);
+  const row = getActive(db, spec.tbl, id);
   if (row.status === 'void') return row;
+  const noText = spec.noCol ? row[spec.noCol] : `${table}#${id}`;
   const now = nowISO();
   const tx = db.transaction(() => {
     // 1) 红冲原分录（目标 = 未被红冲的最新 active 分录，编辑过的单据不得重复红冲最初分录）
-    const entry = findActiveEntry(db, table.replace(/s$/, ''), id, { notEventType: 'reversal' });
-    if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '作废 ' + row[noCol] });
+    const entry = findActiveEntry(db, spec.refType, id, { notEventType: 'reversal' });
+    if (entry) reverseEntry(db, entry.id, { occurred_at: now, memo: '作废 ' + noText });
     // 2) 回滚业务副作用
     if (table === 'receipts') {
       // 分摊明细（按客户收款）优先：逐张账单回退 + 余额预收联动作废
@@ -473,8 +482,16 @@ function voidFinanceRecord(db, table, id) {
         const restId = allocPayload && allocPayload.remainder_advance_id;
         if (restId) {
           const rest = db.prepare('SELECT * FROM advances WHERE id = ?').get(restId);
-          if (rest && rest.status !== 'void' && rest.balance_cents === rest.amount_cents) {
-            // 余额预收未被使用过 → 联动作废；已被抵扣则留给人工处理（保留余额，记 edit_log）
+          if (rest && rest.status !== 'void') {
+            // B0-N-2：余额预收已被抵扣使用 → 作废原收款会红冲 1122 而预收余额
+            // 仍在（C6 永久分叉，实证差 20 元）——顺序约束显式化：先作废抵扣收款
+            const restUsed = db.prepare(
+              "SELECT COUNT(*) AS c FROM advance_usages WHERE advance_id = ? AND status = 'active'").get(restId).c;
+            if (restUsed > 0 || rest.balance_cents !== rest.amount_cents) {
+              throw new ApiError('INVALID_STATE',
+                `本收款余额转的预收 ${rest.advance_no} 已被抵扣使用，请先作废该预收的抵扣收款，再作废本收款（否则账簿与预收余额永久分叉）`);
+            }
+            // 未被使用 → 联动作废（收款分录红冲时 1123 同步消失，账实一致）
             db.prepare("UPDATE advances SET status = 'void', balance_cents = 0, updated_at = ? WHERE id = ?").run(now, restId);
           }
         }
@@ -506,14 +523,20 @@ function voidFinanceRecord(db, table, id) {
       const used = db.prepare(
         "SELECT COALESCE(SUM(amount_cents),0) AS n FROM advance_usages WHERE advance_id = ? AND status = 'active'").get(id).n;
       if (used > 0) throw new ApiError('INVALID_STATE', '预收/预支已有抵扣或冲销流水，请先作废对应流水');
+      // B0-N-2c：收款余额转的预收（自身无独立凭证，账挂在原收款分录里）禁止单独
+      // 作废——只清余额不冲账簿会令 C6 分叉；作废原收款时会联动作废本预收
+      if (!entry && row.balance_cents > 0) {
+        throw new ApiError('INVALID_STATE',
+          `预收 ${row.advance_no} 是收款余额转入（无独立凭证），请作废对应的按客户收款（其作废时将联动作废本预收）`);
+      }
       // A0-B-M1a：作废时余额清零——红冲已把账簿恢复，余额残留会让"作废的钱"继续可用
       db.prepare('UPDATE advances SET balance_cents = 0, updated_at = ? WHERE id = ?').run(now, id);
     }
-    db.prepare(`UPDATE ${table} SET status = 'void', updated_at = ? WHERE id = ?`).run(now, id);
-    logEdit(db, { table, recordId: id, action: 'void', before: { status: row.status }, after: { status: 'void' } });
+    db.prepare(`UPDATE ${spec.tbl} SET status = 'void', updated_at = ? WHERE id = ?`).run(now, id);
+    logEdit(db, { table: spec.tbl, recordId: id, action: 'void', before: { status: row.status }, after: { status: 'void' } });
   });
   tx();
-  return getActive(db, table, id);
+  return getActive(db, spec.tbl, id);
 }
 
 /* ---------------- 查询 ---------------- */

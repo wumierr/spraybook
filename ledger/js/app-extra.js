@@ -732,7 +732,9 @@
 
   /* ---------- P9-R2：数据体检页（问题分组清单 + 忽略登记） ---------- */
   async function renderHealth() {
-    mdHealth = await Api.dataHealth().catch(() => null);
+    // B0.3/N-12：与主数据页体检同口径——读取同一市筛选存档（lg-md-county），
+    // 两页体检结果一致；清空筛选即全库视图
+    mdHealth = await Api.dataHealth(String(lsGet(MD_COUNTY_KEY) || '') || undefined).catch(() => null);
     if (!mdHealth) {
       return '<div class="lg-panel"><h2>数据体检</h2><div class="lg-detail">体检数据拉取失败（服务端较旧？需重启服务生效）</div></div>';
     }
@@ -1030,11 +1032,14 @@
         break;
       }
       case 'fab-send': {
+        const btn = document.getElementById('fabSendBtn');
+        if (btn && btn.disabled) return; // backlog#1：解析进行中防重（连点会造重复 LLM 批次）
         const text = (document.getElementById('fabText') || {}).value || '';
         if (!text.trim()) return toast('先粘贴内容：记账文本 / 作业包 JSON，或拖入/选择文件', true);
         const pipe = Core.pickPipelineForText(text);
         if (!pipe) return toast('先粘贴内容：记账文本，或计算器导出的作业包 JSON', true);
         const busy = fabLog(`⏳ <b>粘贴文本.txt</b> → ${pipe === 'calcjson' ? '计算器作业导入' : 'LLM 管线'}：处理中…`);
+        if (btn) btn.disabled = true;
         (pipe === 'calcjson' ? pipeCalcJson(text, '粘贴文本.txt', fabLog) : pipeLlm(text, '粘贴文本.txt', fabLog))
           .then(r => {
             if (!r) return;
@@ -1042,7 +1047,10 @@
             if (tx) tx.value = '';
             return fabConsume(r);
           })
-          .finally(() => { if (busy && typeof busy.remove === 'function') busy.remove(); });
+          .finally(() => {
+            if (busy && typeof busy.remove === 'function') busy.remove();
+            if (btn) btn.disabled = false; // 解析结束恢复（失败/成功都恢复）
+          });
         break;
       }
       case 'fab-apply':
@@ -1192,8 +1200,15 @@
       case 'imp-confirm-all':
         confirmThen('确认全部待复核行？（对照清单后再点）', async () => {
           const rows = await Api.importRows(importState.batchId, 'pending');
-          for (const r of rows) await Api.importRowPatch(r.id, { action: 'confirm' });
-          return rows.length;
+          // B0.2/N-18：证据校验未过的行服务端会拒绝确认（防批量放行幻觉金额）——
+          // 逐行 try/catch 跳过，结尾汇总提示，其余行照常确认
+          let done = 0, skipped = 0;
+          for (const r of rows) {
+            try { await Api.importRowPatch(r.id, { action: 'confirm' }); done++; }
+            catch (e) { skipped++; }
+          }
+          if (skipped) toast(`⚠ ${skipped} 行证据校验未过被跳过（须先人工订正）`);
+          return done;
         }).then(n => { if (n) { toast('已确认 ' + n + ' 行'); loadImportRows(importState.batchId); } });
         break;
       case 'imp-apply':

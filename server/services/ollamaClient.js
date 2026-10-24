@@ -151,8 +151,18 @@ function callTimeoutMs(text, opts) {
 /**
  * 生成：非流式 + json 约束 + temperature 0。
  * opts 透传 buildPrompt（分块上下文/默认日期），坏输出重试沿用同一 prompt。
+ * B0.2/N-19：① 请求带 truncate:false（Ollama 默认对超 num_ctx 的 prompt 静默左截断，
+ *  丢掉 prompt 开头的铁律与示例——显式关闭，宁可报错）；② done_reason=length =
+ *  输出被 num_predict 截断，JSON 恰好闭合也不可信，直接判失败不重试
+ *  （temperature 0 重试同参数结果相同）；③ token 预算粗估：prompt.length 按
+ *  1char≈1token 保守上界（中文主导；英文/数字实际 3-4:1，早拆不晚拆），
+ *  超出 num_ctx−num_predict 预留即返回 LLM_PROMPT_TOO_LONG，由编排层降块重试。
+ * B0.2/N-22：rows 过 llmSchema.validateImportRows，形状畸形按坏输出处理。
  * 返回 {ok:true, rows} 或 {ok:false, error, hint}
  */
+const NUM_CTX = 8192;
+const NUM_PREDICT = 4096;
+
 async function generateRows(db, text, opts) {
   const base = ollamaBase(db);
   const model = ollamaModel(db);
@@ -161,29 +171,48 @@ async function generateRows(db, text, opts) {
     const res = await ollamaRequest(`${base}/api/generate`, {
       method: 'POST', timeoutMs,
       body: {
-        model, prompt, stream: false, format: 'json',
+        model, prompt, stream: false, format: 'json', truncate: false,
         // P9-R3 实测：30 行块若每行都输出全字段，JSON ≈5-6k token——num_predict 4096
         // 截断（done_reason=length）且 7B CPU 生成 10 分钟+。已改提示词省略空字段
         //（行均 ≈90 token，30 行 ≈2.7k）；num_ctx 8192 容住 prompt+输出不被左截。
-        options: { temperature: 0, num_predict: 4096, num_ctx: 8192 }
+        options: { temperature: 0, num_predict: NUM_PREDICT, num_ctx: NUM_CTX }
       }
     });
     if (res.status !== 200) return { ok: false, error: 'OLLAMA_UNREACHABLE', hint: `Ollama 返回 ${res.status}` };
-    return { ok: true, text: (res.json && res.json.response) || '' };
+    const doneReason = res.json && res.json.done_reason;
+    return { ok: true, text: (res.json && res.json.response) || '', done_reason: doneReason };
   };
 
-  let r = await call(buildPrompt(text, opts));
+  const prompt0 = buildPrompt(text, opts);
+  // N-19：token 预算粗估（保守 1char≈1token）——超预算的块交编排层二分降块
+  if (prompt0.length > NUM_CTX - NUM_PREDICT) {
+    return { ok: false, error: 'LLM_PROMPT_TOO_LONG',
+      hint: `块+提示词约 ${prompt0.length} 字符，超出上下文预算 ${NUM_CTX - NUM_PREDICT}，请减小分块` };
+  }
+
+  let r = await call(prompt0);
   if (!r.ok) return r;
+  if (r.done_reason === 'length') {
+    return { ok: false, error: 'LLM_TRUNCATED', hint: '模型输出被 num_predict 截断（done_reason=length），请减小分块或减少输出字段' };
+  }
   let rows = tryParse(r.text);
   if (!rows) {
     // 重试 1 次：把坏输出喂回去要求修正
-    r = await call(buildPrompt(text, opts) +
+    r = await call(prompt0 +
       `\n\n【注意】你上一次的输出不是合法 JSON（开头为：${r.text.slice(0, 80)}）。请只输出合法 JSON，不要任何解释。`);
     if (!r.ok) return r;
+    if (r.done_reason === 'length') {
+      return { ok: false, error: 'LLM_TRUNCATED', hint: '模型输出被 num_predict 截断（重试同样截断），请减小分块' };
+    }
     rows = tryParse(r.text);
     if (!rows) return { ok: false, error: 'LLM_BAD_OUTPUT', hint: '模型两次输出均无法解析为 JSON，请换更小文本分批导入' };
   }
   if (!Array.isArray(rows.rows)) return { ok: false, error: 'LLM_BAD_OUTPUT', hint: '输出缺少 rows 数组' };
+  // N-22：结构闸——形状畸形（kind 非法/金额非数字/line 非正整数…）按坏输出处理
+  const schema = require('./llmSchema').validateImportRows(rows);
+  if (!schema.ok) {
+    return { ok: false, error: 'LLM_BAD_OUTPUT', hint: `输出结构不符契约: ${schema.errors.slice(0, 3).join('；')}` };
+  }
   return { ok: true, rows: rows.rows, model };
 }
 
@@ -204,20 +233,30 @@ async function generateJson(db, prompt, opts) {
     const res = await ollamaRequest(`${base}/api/generate`, {
       method: 'POST', timeoutMs,
       body: {
-        model, prompt: p, stream: false, format: 'json',
-        options: { temperature: 0, num_predict: 4096, num_ctx: 8192 }
+        model, prompt: p, stream: false, format: 'json', truncate: false,
+        options: { temperature: 0, num_predict: NUM_PREDICT, num_ctx: NUM_CTX }
       }
     });
     if (res.status !== 200) return { ok: false, error: 'OLLAMA_UNREACHABLE', hint: `Ollama 返回 ${res.status}` };
-    return { ok: true, text: (res.json && res.json.response) || '' };
+    return { ok: true, text: (res.json && res.json.response) || '', done_reason: res.json && res.json.done_reason };
   };
+  // N-19：审查 prompt 同样受 token 预算约束（1char≈1token 保守上界）
+  if (prompt.length > NUM_CTX - NUM_PREDICT) {
+    return { ok: false, error: 'LLM_PROMPT_TOO_LONG', hint: `审查 prompt 约 ${prompt.length} 字符超出上下文预算，请减小体检范围` };
+  }
   let r = await call(prompt);
   if (!r.ok) return r;
+  if (r.done_reason === 'length') {
+    return { ok: false, error: 'LLM_TRUNCATED', hint: '输出被 num_predict 截断（done_reason=length），请减小单次审查范围' };
+  }
   let out = tryParse(r.text);
   if (!out || typeof out !== 'object' || Array.isArray(out)) {
     r = await call(prompt +
       `\n\n【注意】你上一次的输出不是合法 JSON 对象（开头为：${r.text.slice(0, 80)}）。请只输出合法 JSON，不要任何解释。`);
     if (!r.ok) return r;
+    if (r.done_reason === 'length') {
+      return { ok: false, error: 'LLM_TRUNCATED', hint: '输出被 num_predict 截断（重试同样截断），请减小单次审查范围' };
+    }
     out = tryParse(r.text);
     if (!out || typeof out !== 'object' || Array.isArray(out)) {
       return { ok: false, error: 'LLM_BAD_OUTPUT', hint: '模型两次输出均无法解析为 JSON' };

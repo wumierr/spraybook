@@ -22,6 +22,7 @@ function createLedgerRouter(db) {
     const data = settlements.listSettlements(db, {
       status: req.query.status, job_id: req.query.job_id ? Number(req.query.job_id) : undefined
     });
+    if ((data || []).length >= 500) res.set('X-Has-More', '1'); // B0.3/N-10：截断可感知
     res.json({ ok: true, data });
   });
   router.get('/settlements/:id', (req, res) => {
@@ -43,9 +44,11 @@ function createLedgerRouter(db) {
 
   /* ---------- 账单（M4） ---------- */
   router.get('/bills', (req, res) => {
-    res.json({ ok: true, data: settlements.listBills(db, {
+    const rows = settlements.listBills(db, {
       status: req.query.status, party_id: req.query.party_id ? Number(req.query.party_id) : undefined
-    }) });
+    });
+    if (rows.length >= 500) res.set('X-Has-More', '1'); // B0.3/N-10：截断可感知
+    res.json({ ok: true, data: rows });
   });
   router.patch('/bills/:id', (req, res) => {
     res.json({ ok: true, data: settlements.patchBill(db, Number(req.params.id), req.body) });
@@ -55,14 +58,22 @@ function createLedgerRouter(db) {
   router.post('/receipts', (req, res) => {
     res.json({ ok: true, data: finance.createReceipt(db, req.body) });
   });
-  router.get('/receipts', (req, res) => res.json({ ok: true, data: finance.listReceipts(db) }));
+  router.get('/receipts', (req, res) => { // B0.3/N-10：500 条截断上限可感知
+    const rows = finance.listReceipts(db);
+    if (rows.length >= 500) res.set('X-Has-More', '1');
+    res.json({ ok: true, data: rows });
+  });
   router.patch('/receipts/:id', (req, res) => {
     res.json({ ok: true, data: finance.updateReceipt(db, Number(req.params.id), req.body) });
   });
   router.post('/payments', (req, res) => {
     res.json({ ok: true, data: finance.createPayment(db, req.body) });
   });
-  router.get('/payments', (req, res) => res.json({ ok: true, data: finance.listPayments(db) }));
+  router.get('/payments', (req, res) => {
+    const rows = finance.listPayments(db);
+    if (rows.length >= 500) res.set('X-Has-More', '1');
+    res.json({ ok: true, data: rows });
+  });
   router.patch('/payments/:id', (req, res) => {
     res.json({ ok: true, data: finance.updatePayment(db, Number(req.params.id), req.body) });
   });
@@ -72,14 +83,22 @@ function createLedgerRouter(db) {
   router.post('/advances', (req, res) => {
     res.json({ ok: true, data: finance.createAdvance(db, req.body) });
   });
-  router.get('/advances', (req, res) => res.json({ ok: true, data: finance.listAdvances(db) }));
+  router.get('/advances', (req, res) => {
+    const rows = finance.listAdvances(db);
+    if (rows.length >= 500) res.set('X-Has-More', '1');
+    res.json({ ok: true, data: rows });
+  });
   router.post('/advances/:id/settle', (req, res) => {
     res.json({ ok: true, data: finance.settleAdvance(db, Number(req.params.id), req.body) });
   });
   router.post('/splits', (req, res) => {
     res.json({ ok: true, data: finance.createSplit(db, req.body) });
   });
-  router.get('/splits', (req, res) => res.json({ ok: true, data: finance.listSplits(db) }));
+  router.get('/splits', (req, res) => {
+    const rows = finance.listSplits(db);
+    if (rows.length >= 500) res.set('X-Has-More', '1');
+    res.json({ ok: true, data: rows });
+  });
 
   router.post('/:table/:id/void', (req, res) => {
     const data = finance.voidFinanceRecord(db, req.params.table, Number(req.params.id));
